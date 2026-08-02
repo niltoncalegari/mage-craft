@@ -1,6 +1,12 @@
 import { render, type JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { SELECTABLE_ELEMENTS, type ElementId } from '../game/elements';
+import {
+  getElement,
+  isElementId,
+  SELECTABLE_ELEMENTS,
+  toCssColor,
+  type ElementId,
+} from '../game/elements';
 import { PortalScene } from '../render/PortalScene';
 import styles from './App.module.css';
 import {
@@ -9,7 +15,6 @@ import {
   loginAccount,
   loginGuest,
   registerAccount,
-  updateProfile,
   type UserProfile,
 } from './auth';
 import {
@@ -125,12 +130,6 @@ function AppShell(props: AppProps): JSX.Element {
           <DashboardScreen
             user={user}
             stats={props.stats}
-            selectedElement={selectedElement}
-            onSelectElement={(el) => {
-              chooseElement(el);
-              updateProfile({ favoriteElement: el });
-              setUser(getSession());
-            }}
             onPractice={() => props.actions.startPractice()}
             onBrowseRooms={() => {
               setRooms(listRooms());
@@ -274,8 +273,6 @@ function LoginScreen(props: {
 function DashboardScreen(props: {
   user: UserProfile;
   stats?: { wins: number; losses: number };
-  selectedElement: ElementId;
-  onSelectElement(element: ElementId): void;
   onPractice(): void;
   onBrowseRooms(): void;
   onCreateRoom(): void;
@@ -283,6 +280,11 @@ function DashboardScreen(props: {
 }): JSX.Element {
   const wins = props.stats?.wins ?? props.user.wins;
   const losses = props.stats?.losses ?? props.user.losses;
+  const favoriteId = isElementId(props.user.favoriteElement)
+    ? props.user.favoriteElement
+    : 'fire';
+  const favorite = getElement(favoriteId);
+  const favoriteColor = toCssColor(favorite.color);
   return (
     <div class={`${styles.panel} ${styles.panelWide}`}>
       <div class={styles.panelHeader}>
@@ -312,19 +314,13 @@ function DashboardScreen(props: {
           <p class={styles.panelHint} style={{ marginTop: 14 }}>
             Favorite element
           </p>
-          <div class={styles.elementChips}>
-            {SELECTABLE_ELEMENTS.map((el) => (
-              <button
-                type="button"
-                key={el.id}
-                class={
-                  props.selectedElement === el.id ? `${styles.chip} ${styles.chipActive}` : styles.chip
-                }
-                onClick={() => props.onSelectElement(el.id)}
-              >
-                {el.name}
-              </button>
-            ))}
+          <div
+            class={styles.favoriteElement}
+            style={{ '--element-color': favoriteColor } as JSX.CSSProperties}
+            title={favorite.role}
+          >
+            <span class={styles.favoriteSwatch} aria-hidden="true" />
+            <span class={styles.favoriteName}>{favorite.name}</span>
           </div>
         </div>
 
