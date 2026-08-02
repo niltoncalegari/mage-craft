@@ -71,6 +71,14 @@ function AppShell(props: AppProps): JSX.Element {
   const [user, setUser] = useState<UserProfile | null>(() => getSession());
   const [room, setRoom] = useState<RoomDetail | null>(null);
   const [rooms, setRooms] = useState<RoomSummary[]>(() => listRooms());
+  // `props.selectedElement` only reflects the value at mount time (mountApp never
+  // re-renders on its own), so the picker needs its own state to update live.
+  const [selectedElement, setSelectedElement] = useState<ElementId>(props.selectedElement);
+
+  const chooseElement = (element: ElementId): void => {
+    setSelectedElement(element);
+    props.onSelectElement(element);
+  };
 
   useEffect(() => {
     if (!portalRef.current) return;
@@ -117,9 +125,9 @@ function AppShell(props: AppProps): JSX.Element {
           <DashboardScreen
             user={user}
             stats={props.stats}
-            selectedElement={props.selectedElement}
+            selectedElement={selectedElement}
             onSelectElement={(el) => {
-              props.onSelectElement(el);
+              chooseElement(el);
               updateProfile({ favoriteElement: el });
               setUser(getSession());
             }}
@@ -136,17 +144,17 @@ function AppShell(props: AppProps): JSX.Element {
           <RoomBrowserScreen
             rooms={rooms}
             playerName={user.name}
-            element={props.selectedElement}
+            element={selectedElement}
             onBack={() => setScreen('dashboard')}
             onCreate={() => setScreen('createRoom')}
-            onJoin={(id) => openLobby(joinLocalRoom(id, user.name, props.selectedElement))}
+            onJoin={(id) => openLobby(joinLocalRoom(id, user.name, selectedElement))}
             onRefresh={() => setRooms(listRooms())}
           />
         ) : null}
         {screen === 'createRoom' && user ? (
           <CreateRoomScreen
             hostName={user.name}
-            element={props.selectedElement}
+            element={selectedElement}
             onBack={() => setScreen('dashboard')}
             onCreated={openLobby}
           />
