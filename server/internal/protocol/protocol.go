@@ -14,10 +14,12 @@ import (
 const (
 	TypeCreateRoom    = "create_room"
 	TypeJoinRoom      = "join_room"
+	TypeListRooms     = "list_rooms"
 	TypeSelectTeam    = "select_team"
 	TypeSelectElement = "select_element"
 	TypeAddBot        = "add_bot"
 	TypeRemoveBot     = "remove_bot"
+	TypeClaimSlot     = "claim_slot"
 	TypeSetReady      = "set_ready"
 	TypeStartMatch    = "start_match"
 	TypeInput         = "input"
@@ -26,6 +28,7 @@ const (
 // Server -> client message types.
 const (
 	TypeRoomState  = "room_state"
+	TypeRoomList   = "room_list"
 	TypeMatchStart = "match_start"
 	TypeSnapshot   = "snapshot"
 	TypeRoundEnd   = "round_end"
@@ -64,17 +67,27 @@ func PeekType(data []byte) (string, error) {
 // --- Client -> server messages ---
 
 // CreateRoomMsg requests a new room with the given team size (1-6, i.e. up
-// to 6x6, see GDD §7).
+// to 6x6, see GDD §7). When FillBots is true the server will fill remaining
+// seats with bots after humans take their slots (typically via FillEmptyWithBots).
 type CreateRoomMsg struct {
-	Type     string `json:"type"`
-	TeamSize int    `json:"teamSize"`
+	Type          string `json:"type"`
+	TeamSize      int    `json:"teamSize"`
+	FillBots      bool   `json:"fillBots,omitempty"`
+	BotDifficulty string `json:"botDifficulty,omitempty"` // easy|normal|hard; default normal
 }
 
 // JoinRoomMsg requests joining an existing room by its short room code.
+// In lobby the player joins as a seat candidate; during in_progress they
+// join as a spectator until rematch.
 type JoinRoomMsg struct {
 	Type   string `json:"type"`
 	RoomID string `json:"roomId"`
 	Name   string `json:"name"`
+}
+
+// ListRoomsMsg asks the server for the current public room catalog.
+type ListRoomsMsg struct {
+	Type string `json:"type"`
 }
 
 // SelectTeamMsg picks team 0 or 1 within the current room.
@@ -106,6 +119,13 @@ type RemoveBotMsg struct {
 	SlotID string `json:"slotId"`
 }
 
+// ClaimSlotMsg lets a spectator reserve a bot (or empty) slot for the next
+// rematch round. The bot keeps playing until round_end.
+type ClaimSlotMsg struct {
+	Type   string `json:"type"`
+	SlotID string `json:"slotId"`
+}
+
 // SetReadyMsg toggles the sender's ready state in the lobby.
 type SetReadyMsg struct {
 	Type  string `json:"type"`
@@ -132,23 +152,52 @@ type InputMsg struct {
 // PlayerSlotDTO describes one slot (human or bot) inside a room, as shown to
 // clients in RoomStateMsg.
 type PlayerSlotDTO struct {
-	SlotID   string `json:"slotId"`
-	Team     int    `json:"team"`
-	PlayerID string `json:"playerId,omitempty"`
-	Name     string `json:"name,omitempty"`
-	IsBot    bool   `json:"isBot"`
-	Element  string `json:"element,omitempty"`
-	Ready    bool   `json:"ready"`
+	SlotID               string `json:"slotId"`
+	Team                 int    `json:"team"`
+	PlayerID             string `json:"playerId,omitempty"`
+	Name                 string `json:"name,omitempty"`
+	IsBot                bool   `json:"isBot"`
+	Element              string `json:"element,omitempty"`
+	Ready                bool   `json:"ready"`
+	PendingClaimPlayerID string `json:"pendingClaimPlayerId,omitempty"`
+}
+
+// SpectatorDTO is a human watching an in-progress match (or waiting in
+// rematch lobby after claiming a slot that has not yet been applied).
+type SpectatorDTO struct {
+	PlayerID      string `json:"playerId"`
+	Name          string `json:"name"`
+	ClaimedSlotID string `json:"claimedSlotId,omitempty"`
 }
 
 // RoomStateMsg is broadcast to everyone in a room whenever the lobby state
-// changes (join/leave/select_team/select_element/add_bot/remove_bot/ready).
+// changes (join/leave/select_team/select_element/add_bot/remove_bot/ready/claim).
 type RoomStateMsg struct {
-	Type     string          `json:"type"`
-	RoomID   string          `json:"roomId"`
-	TeamSize int             `json:"teamSize"`
-	State    string          `json:"state"` // lobby | starting | in_progress | ended
-	Slots    []PlayerSlotDTO `json:"slots"`
+	Type       string          `json:"type"`
+	RoomID     string          `json:"roomId"`
+	TeamSize   int             `json:"teamSize"`
+	State      string          `json:"state"` // lobby | in_progress | ended
+	FillBots   bool            `json:"fillBots,omitempty"`
+	Slots      []PlayerSlotDTO `json:"slots"`
+	Spectators []SpectatorDTO  `json:"spectators,omitempty"`
+	YouRole    string          `json:"youRole,omitempty"` // player | spectator (per-recipient)
+}
+
+// RoomSummaryDTO is one entry in a room_list response.
+type RoomSummaryDTO struct {
+	RoomID            string `json:"roomId"`
+	TeamSize          int    `json:"teamSize"`
+	State             string `json:"state"`
+	Filled            int    `json:"filled"`
+	Capacity          int    `json:"capacity"`
+	OpenBotSlots      int    `json:"openBotSlots"`
+	AcceptsSpectators bool   `json:"acceptsSpectators"`
+}
+
+// RoomListMsg is the catalog of joinable rooms (lobby + in_progress).
+type RoomListMsg struct {
+	Type  string           `json:"type"`
+	Rooms []RoomSummaryDTO `json:"rooms"`
 }
 
 // MatchStartMsg tells clients the match's 60Hz simulation loop has started.
@@ -197,7 +246,7 @@ type SnapshotMsg struct {
 }
 
 // RoundEndMsg announces the winning team once a round ends (opposing team
-// reaches zero lives).
+// reaches zero lives). After this the server resets the room to lobby for rematch.
 type RoundEndMsg struct {
 	Type       string `json:"type"`
 	WinnerTeam int    `json:"winnerTeam"`

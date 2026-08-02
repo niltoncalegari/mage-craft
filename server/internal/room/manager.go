@@ -65,6 +65,21 @@ func (m *Manager) RemoveRoom(id string) {
 	delete(m.rooms, id)
 }
 
+// Summaries returns a snapshot of every room that is still joinable
+// (lobby or in_progress). Ended rooms are omitted.
+func (m *Manager) Summaries() []Summary {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Summary, 0, len(m.rooms))
+	for _, r := range m.rooms {
+		if r.state == StateEnded {
+			continue
+		}
+		out = append(out, r.Summary())
+	}
+	return out
+}
+
 func randomRoomID() string {
 	b := make([]byte, roomIDLength)
 	buf := make([]byte, roomIDLength)

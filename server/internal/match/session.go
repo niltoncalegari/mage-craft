@@ -87,10 +87,18 @@ func New(r *room.Room, cb Callbacks) *Session {
 	return &Session{Room: r, cb: cb, rng: rand.New(rand.NewSource(time.Now().UnixNano()))}
 }
 
+// Join registers a player in lobby, or as a spectator when the match is live.
 func (s *Session) Join(playerID, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.Room.Join(playerID, name)
+	switch s.Room.State() {
+	case room.StateInProgress:
+		return s.Room.JoinAsSpectator(playerID, name)
+	case room.StateLobby:
+		return s.Room.Join(playerID, name)
+	default:
+		return fmt.Errorf("match: cannot join, room is %s", s.Room.State())
+	}
 }
 
 func (s *Session) Leave(playerID string) error {
@@ -127,6 +135,19 @@ func (s *Session) RemoveBot(slotID string) error {
 	return s.Room.RemoveBot(slotID)
 }
 
+// FillEmptyWithBots fills remaining seats; uses room.BotDifficulty when difficulty is empty.
+func (s *Session) FillEmptyWithBots(difficulty string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Room.FillEmptyWithBots(difficulty)
+}
+
+func (s *Session) ClaimSlot(playerID, slotID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Room.ClaimSlot(playerID, slotID)
+}
+
 func (s *Session) SetReady(playerID string, ready bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -141,8 +162,22 @@ func (s *Session) Slots() []room.Slot {
 	return s.Room.Slots()
 }
 
-// MemberIDs returns every human player's ID on the room's lobby roster
-// (including players who haven't picked a team/slot yet).
+// Spectators returns current spectators.
+func (s *Session) Spectators() []room.Spectator {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Room.Spectators()
+}
+
+// RoleOf reports player|spectator|"" for the given id.
+func (s *Session) RoleOf(playerID string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Room.RoleOf(playerID)
+}
+
+// MemberIDs returns every human player's ID on the room's roster
+// (seated players and spectators).
 func (s *Session) MemberIDs() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -155,7 +190,15 @@ func (s *Session) State() room.State {
 	return s.Room.State()
 }
 
-// Ended reports whether this session's match has finished.
+// Summary returns the list_rooms entry for this session's room.
+func (s *Session) Summary() room.Summary {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Room.Summary()
+}
+
+// Ended reports whether this session's current match loop has finished
+// (rematch lobby may still be open).
 func (s *Session) Ended() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -183,6 +226,8 @@ func (s *Session) StartMatch() error {
 
 	s.world = world
 	s.bots = difficulties
+	s.tick = 0
+	s.ended = false
 	return nil
 }
 
@@ -222,10 +267,9 @@ func (s *Session) Tick() {
 	roundEnded := false
 	winner := 0
 	if s.world.RoundOver && !s.ended {
-		s.ended = true
-		s.Room.MarkEnded()
-		roundEnded = true
 		winner = int(*s.world.Winner)
+		s.beginRematchLocked()
+		roundEnded = true
 	}
 	s.mu.Unlock()
 
@@ -235,6 +279,16 @@ func (s *Session) Tick() {
 	if roundEnded && s.cb.OnRoundEnd != nil {
 		s.cb.OnRoundEnd(winner)
 	}
+}
+
+// beginRematchLocked applies spectator claims, resets the room to lobby, and
+// stops the current RunLoop (ended=true). Caller must hold s.mu.
+func (s *Session) beginRematchLocked() {
+	s.Room.ApplyClaims()
+	s.Room.ResetToLobby()
+	s.world = nil
+	s.bots = nil
+	s.ended = true
 }
 
 // RunLoop drives Tick at the fixed simulation rate until the match ends or

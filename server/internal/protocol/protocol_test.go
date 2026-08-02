@@ -37,12 +37,14 @@ func TestClientMessages_RoundTrip(t *testing.T) {
 		typ  string
 		msg  interface{}
 	}{
-		{"create_room", TypeCreateRoom, CreateRoomMsg{Type: TypeCreateRoom, TeamSize: 3}},
+		{"create_room", TypeCreateRoom, CreateRoomMsg{Type: TypeCreateRoom, TeamSize: 3, FillBots: true, BotDifficulty: "normal"}},
 		{"join_room", TypeJoinRoom, JoinRoomMsg{Type: TypeJoinRoom, RoomID: "AB12", Name: "Gandalf"}},
+		{"list_rooms", TypeListRooms, ListRoomsMsg{Type: TypeListRooms}},
 		{"select_team", TypeSelectTeam, SelectTeamMsg{Type: TypeSelectTeam, Team: 1}},
 		{"select_element", TypeSelectElement, SelectElementMsg{Type: TypeSelectElement, Element: "poison"}},
 		{"add_bot", TypeAddBot, AddBotMsg{Type: TypeAddBot, Team: 0, Difficulty: "hard"}},
 		{"remove_bot", TypeRemoveBot, RemoveBotMsg{Type: TypeRemoveBot, SlotID: "slot-3"}},
+		{"claim_slot", TypeClaimSlot, ClaimSlotMsg{Type: TypeClaimSlot, SlotID: "slot-3"}},
 		{"set_ready", TypeSetReady, SetReadyMsg{Type: TypeSetReady, Ready: true}},
 		{"start_match", TypeStartMatch, StartMatchMsg{Type: TypeStartMatch}},
 		{"input", TypeInput, InputMsg{
@@ -78,6 +80,18 @@ func TestClientMessages_RoundTrip(t *testing.T) {
 				}
 			case JoinRoomMsg:
 				var got JoinRoomMsg
+				mustUnmarshal(t, data, &got)
+				if got != want {
+					t.Errorf("got %+v, want %+v", got, want)
+				}
+			case ListRoomsMsg:
+				var got ListRoomsMsg
+				mustUnmarshal(t, data, &got)
+				if got != want {
+					t.Errorf("got %+v, want %+v", got, want)
+				}
+			case ClaimSlotMsg:
+				var got ClaimSlotMsg
 				mustUnmarshal(t, data, &got)
 				if got != want {
 					t.Errorf("got %+v, want %+v", got, want)
@@ -137,10 +151,15 @@ func TestServerMessages_RoundTrip(t *testing.T) {
 		RoomID:   "AB12",
 		TeamSize: 2,
 		State:    "lobby",
+		FillBots: true,
 		Slots: []PlayerSlotDTO{
 			{SlotID: "slot-0", Team: 0, PlayerID: "p1", Name: "Gandalf", IsBot: false, Element: "fire", Ready: true},
-			{SlotID: "slot-1", Team: 0, IsBot: true, Element: "ice", Ready: true},
+			{SlotID: "slot-1", Team: 0, IsBot: true, Element: "ice", Ready: true, PendingClaimPlayerID: "p2"},
 		},
+		Spectators: []SpectatorDTO{
+			{PlayerID: "p2", Name: "Merlin", ClaimedSlotID: "slot-1"},
+		},
+		YouRole: "spectator",
 	}
 	data, err := json.Marshal(roomState)
 	if err != nil {
@@ -213,6 +232,25 @@ func TestServerMessages_RoundTrip(t *testing.T) {
 	mustUnmarshal(t, data, &gotMatchStart)
 	if gotMatchStart != matchStart {
 		t.Errorf("got %+v, want %+v", gotMatchStart, matchStart)
+	}
+
+	roomList := RoomListMsg{
+		Type: TypeRoomList,
+		Rooms: []RoomSummaryDTO{
+			{RoomID: "AB12", TeamSize: 1, State: "in_progress", Filled: 2, Capacity: 2, OpenBotSlots: 1, AcceptsSpectators: true},
+		},
+	}
+	data, err = json.Marshal(roomList)
+	if err != nil {
+		t.Fatalf("Marshal RoomListMsg: %v", err)
+	}
+	var gotRoomList RoomListMsg
+	mustUnmarshal(t, data, &gotRoomList)
+	if gotType, _ := PeekType(data); gotType != TypeRoomList {
+		t.Fatalf("PeekType = %q, want %q", gotType, TypeRoomList)
+	}
+	if len(gotRoomList.Rooms) != 1 || gotRoomList.Rooms[0].OpenBotSlots != 1 {
+		t.Errorf("round-tripped RoomListMsg lost data: %+v", gotRoomList)
 	}
 }
 

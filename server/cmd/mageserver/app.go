@@ -25,6 +25,7 @@ type App struct {
 	mu         sync.Mutex
 	sessions   map[string]*match.Session // roomID -> session
 	clientRoom map[string]string         // clientID -> roomID
+	loopStop   map[string]chan struct{}  // roomID -> stop signal for RunLoop
 }
 
 func NewApp(hub *ws.Hub) *App {
@@ -33,6 +34,7 @@ func NewApp(hub *ws.Hub) *App {
 		rooms:      room.NewManager(),
 		sessions:   make(map[string]*match.Session),
 		clientRoom: make(map[string]string),
+		loopStop:   make(map[string]chan struct{}),
 	}
 }
 
@@ -50,6 +52,8 @@ func (a *App) HandleMessage(clientID string, data []byte) {
 		a.handleCreateRoom(clientID, data)
 	case protocol.TypeJoinRoom:
 		a.handleJoinRoom(clientID, data)
+	case protocol.TypeListRooms:
+		a.handleListRooms(clientID)
 	case protocol.TypeSelectTeam:
 		a.handleSelectTeam(clientID, data)
 	case protocol.TypeSelectElement:
@@ -58,6 +62,8 @@ func (a *App) HandleMessage(clientID string, data []byte) {
 		a.handleAddBot(clientID, data)
 	case protocol.TypeRemoveBot:
 		a.handleRemoveBot(clientID, data)
+	case protocol.TypeClaimSlot:
+		a.handleClaimSlot(clientID, data)
 	case protocol.TypeSetReady:
 		a.handleSetReady(clientID, data)
 	case protocol.TypeStartMatch:
@@ -80,10 +86,6 @@ func (a *App) HandleDisconnect(clientID string) {
 	if !ok {
 		return
 	}
-	// Leave is a no-op error (not a bug) once the match has started — the
-	// room only allows leaving during the lobby (GDD §7). Mid-match
-	// disconnects currently just freeze that mage's input; a bot-takeover
-	// or forfeit rule is left as a follow-up (see server/README.md).
 	if err := sess.Leave(clientID); err == nil {
 		a.broadcastRoomState(roomID, sess)
 	}
@@ -100,6 +102,10 @@ func (a *App) handleCreateRoom(clientID string, data []byte) {
 	if err != nil {
 		a.sendError(clientID, err.Error())
 		return
+	}
+	r.FillBots = msg.FillBots
+	if msg.BotDifficulty != "" {
+		r.BotDifficulty = msg.BotDifficulty
 	}
 
 	roomID := r.ID
@@ -143,6 +149,33 @@ func (a *App) handleJoinRoom(clientID string, data []byte) {
 	a.broadcastRoomState(msg.RoomID, sess)
 }
 
+func (a *App) handleListRooms(clientID string) {
+	a.mu.Lock()
+	sessions := make([]*match.Session, 0, len(a.sessions))
+	for _, s := range a.sessions {
+		sessions = append(sessions, s)
+	}
+	a.mu.Unlock()
+
+	rooms := make([]protocol.RoomSummaryDTO, 0, len(sessions))
+	for _, sess := range sessions {
+		sum := sess.Summary()
+		if sum.State == room.StateEnded {
+			continue
+		}
+		rooms = append(rooms, protocol.RoomSummaryDTO{
+			RoomID:            sum.RoomID,
+			TeamSize:          sum.TeamSize,
+			State:             string(sum.State),
+			Filled:            sum.Filled,
+			Capacity:          sum.Capacity,
+			OpenBotSlots:      sum.OpenBotSlots,
+			AcceptsSpectators: sum.AcceptsSpectators,
+		})
+	}
+	a.sendJSON(clientID, protocol.RoomListMsg{Type: protocol.TypeRoomList, Rooms: rooms})
+}
+
 func (a *App) handleSelectTeam(clientID string, data []byte) {
 	var msg protocol.SelectTeamMsg
 	if err := json.Unmarshal(data, &msg); err != nil {
@@ -175,6 +208,10 @@ func (a *App) handleSelectElement(clientID string, data []byte) {
 	if err := sess.SelectElement(clientID, game.ElementID(msg.Element)); err != nil {
 		a.sendError(clientID, err.Error())
 		return
+	}
+	// Auto-fill remaining seats when the room was created with fillBots.
+	if sess.Room.FillBots {
+		_ = sess.FillEmptyWithBots(sess.Room.BotDifficulty)
 	}
 	a.broadcastRoomState(roomID, sess)
 }
@@ -215,6 +252,24 @@ func (a *App) handleRemoveBot(clientID string, data []byte) {
 	a.broadcastRoomState(roomID, sess)
 }
 
+func (a *App) handleClaimSlot(clientID string, data []byte) {
+	var msg protocol.ClaimSlotMsg
+	if err := json.Unmarshal(data, &msg); err != nil {
+		a.sendError(clientID, "invalid claim_slot payload")
+		return
+	}
+	sess, roomID, ok := a.sessionAndRoomForClient(clientID)
+	if !ok {
+		a.sendError(clientID, "you have not joined a room")
+		return
+	}
+	if err := sess.ClaimSlot(clientID, msg.SlotID); err != nil {
+		a.sendError(clientID, err.Error())
+		return
+	}
+	a.broadcastRoomState(roomID, sess)
+}
+
 func (a *App) handleSetReady(clientID string, data []byte) {
 	var msg protocol.SetReadyMsg
 	if err := json.Unmarshal(data, &msg); err != nil {
@@ -247,9 +302,19 @@ func (a *App) handleStartMatch(clientID string) {
 	a.broadcastRoomState(roomID, sess)
 	a.broadcastToHumans(sess, protocol.MatchStartMsg{Type: protocol.TypeMatchStart})
 
-	// One goroutine per in-progress room, ticking at the fixed 60Hz rate
-	// (GDD §14) until game.World reports a winner.
-	go sess.RunLoop(nil)
+	a.startLoop(roomID, sess)
+}
+
+func (a *App) startLoop(roomID string, sess *match.Session) {
+	a.mu.Lock()
+	if prev, ok := a.loopStop[roomID]; ok {
+		close(prev)
+	}
+	stop := make(chan struct{})
+	a.loopStop[roomID] = stop
+	a.mu.Unlock()
+
+	go sess.RunLoop(stop)
 }
 
 func (a *App) handleInput(clientID string, data []byte) {

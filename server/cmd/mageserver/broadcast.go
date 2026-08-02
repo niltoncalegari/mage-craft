@@ -12,34 +12,51 @@ import (
 // sendRoomState sends a room_state message to a single client (used right
 // after create_room, before the creator has actually joined a slot).
 func (a *App) sendRoomState(clientID, roomID string, sess *match.Session) {
-	a.sendJSON(clientID, buildRoomStateMsg(roomID, sess))
+	msg := buildRoomStateMsg(roomID, sess)
+	msg.YouRole = sess.RoleOf(clientID)
+	a.sendJSON(clientID, msg)
 }
 
 // broadcastRoomState sends the current room_state to every connected human
-// in the room (join/leave/select_team/select_element/add_bot/remove_bot/
-// set_ready all funnel through here, per the project plan §4).
+// in the room. Each recipient gets a personalized YouRole.
 func (a *App) broadcastRoomState(roomID string, sess *match.Session) {
-	a.broadcastToHumans(sess, buildRoomStateMsg(roomID, sess))
+	base := buildRoomStateMsg(roomID, sess)
+	for _, id := range sess.MemberIDs() {
+		msg := base
+		msg.YouRole = sess.RoleOf(id)
+		a.sendJSON(id, msg)
+	}
 }
 
 func buildRoomStateMsg(roomID string, sess *match.Session) protocol.RoomStateMsg {
 	slots := sess.Slots()
+	specs := sess.Spectators()
 	out := protocol.RoomStateMsg{
-		Type:     protocol.TypeRoomState,
-		RoomID:   roomID,
-		TeamSize: sess.Room.TeamSize,
-		State:    string(sess.State()),
-		Slots:    make([]protocol.PlayerSlotDTO, 0, len(slots)),
+		Type:       protocol.TypeRoomState,
+		RoomID:     roomID,
+		TeamSize:   sess.Room.TeamSize,
+		State:      string(sess.State()),
+		FillBots:   sess.Room.FillBots,
+		Slots:      make([]protocol.PlayerSlotDTO, 0, len(slots)),
+		Spectators: make([]protocol.SpectatorDTO, 0, len(specs)),
 	}
 	for _, s := range slots {
 		out.Slots = append(out.Slots, protocol.PlayerSlotDTO{
-			SlotID:   s.ID,
-			Team:     int(s.Team),
-			PlayerID: s.PlayerID,
-			Name:     s.Name,
-			IsBot:    s.IsBot,
-			Element:  string(s.Element),
-			Ready:    s.Ready,
+			SlotID:               s.ID,
+			Team:                 int(s.Team),
+			PlayerID:             s.PlayerID,
+			Name:                 s.Name,
+			IsBot:                s.IsBot,
+			Element:              string(s.Element),
+			Ready:                s.Ready,
+			PendingClaimPlayerID: s.PendingClaimPlayerID,
+		})
+	}
+	for _, sp := range specs {
+		out.Spectators = append(out.Spectators, protocol.SpectatorDTO{
+			PlayerID:      sp.PlayerID,
+			Name:          sp.Name,
+			ClaimedSlotID: sp.ClaimedSlotID,
 		})
 	}
 	return out
@@ -87,14 +104,13 @@ func (a *App) broadcastSnapshot(sess *match.Session, snap match.Snapshot) {
 
 func (a *App) broadcastRoundEnd(sess *match.Session, winnerTeam int) {
 	a.broadcastToHumans(sess, protocol.RoundEndMsg{Type: protocol.TypeRoundEnd, WinnerTeam: winnerTeam})
+	// Rematch resets the room to lobby; push the new roster (claims applied).
+	a.broadcastRoomState(sess.Room.ID, sess)
 }
 
 func toVec2DTO(v game.Vec2) protocol.Vec2DTO { return protocol.Vec2DTO{X: v.X, Y: v.Y} }
 
-// broadcastToHumans sends msg to every connected human in the room: lobby
-// roster members (join_room already happened, even if they have no team
-// yet) plus, once the match is running, anyone with a human-owned slot.
-// Bots are always skipped, since they have no connection.
+// broadcastToHumans sends msg to every connected human in the room.
 func (a *App) broadcastToHumans(sess *match.Session, msg any) {
 	payload, err := json.Marshal(msg)
 	if err != nil {

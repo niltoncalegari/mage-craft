@@ -1,10 +1,10 @@
 /**
- * Client-side room browser / lobby state. Until the Go server exposes a public
- * room list, we keep a local catalog (recent + demo halls) and treat create/join
- * by code as the real online path.
+ * Client-side room browser / lobby state. Online rooms come from the Go
+ * server; local demos remain as offline fallback.
  */
 
 import type { ElementId } from '../game/elements';
+import type { RoomStateMsg, RoomSummaryDTO } from '../net/protocol';
 
 export type RoomPhase = 'lobby' | 'starting' | 'in_progress' | 'ended';
 
@@ -17,6 +17,14 @@ export interface RoomSlot {
   ready: boolean;
   /** True when this slot is the local player. */
   isYou?: boolean;
+  pendingClaimPlayerId?: string;
+  playerId?: string;
+}
+
+export interface SpectatorInfo {
+  playerId: string;
+  name: string;
+  claimedSlotId?: string;
 }
 
 export interface RoomSummary {
@@ -29,12 +37,18 @@ export interface RoomSummary {
   hostName: string;
   /** Demo halls are local-only previews; real rooms use a code for join. */
   isDemo?: boolean;
+  openBotSlots?: number;
+  acceptsSpectators?: boolean;
 }
 
 export interface RoomDetail extends RoomSummary {
   slots: RoomSlot[];
   /** Local player is host of this lobby. */
   isHost: boolean;
+  youRole?: 'player' | 'spectator' | '';
+  spectators?: SpectatorInfo[];
+  fillBots?: boolean;
+  online?: boolean;
 }
 
 const RECENT_KEY = 'mage-craft.recent-rooms.v1';
@@ -87,10 +101,15 @@ function saveRecent(rooms: RoomSummary[]): void {
   localStorage.setItem(RECENT_KEY, JSON.stringify(rooms.slice(0, 8)));
 }
 
-export function listRooms(): RoomSummary[] {
+export function listLocalRooms(): RoomSummary[] {
   const recent = loadRecent().map((r) => ({ ...r, isDemo: false }));
   const ids = new Set(recent.map((r) => r.roomId));
   return [...recent, ...DEMO_HALLS.filter((d) => !ids.has(d.roomId))];
+}
+
+/** @deprecated use listLocalRooms — kept for offline fallback callers */
+export function listRooms(): RoomSummary[] {
+  return listLocalRooms();
 }
 
 function makeRoomCode(): string {
@@ -124,11 +143,12 @@ export function createLocalRoom(opts: {
   teamSize: number;
   hostName: string;
   element: ElementId;
+  fillBots?: boolean;
 }): RoomDetail {
   const teamSize = Math.min(6, Math.max(1, Math.round(opts.teamSize)));
   const roomId = makeRoomCode();
-  const slots = emptySlots(teamSize, opts.hostName, opts.element);
-  const room: RoomDetail = {
+  let slots = emptySlots(teamSize, opts.hostName, opts.element);
+  let room: RoomDetail = {
     roomId,
     name: opts.name.trim() || `${opts.hostName}'s Hall`,
     teamSize,
@@ -138,7 +158,16 @@ export function createLocalRoom(opts: {
     hostName: opts.hostName,
     slots,
     isHost: true,
+    fillBots: opts.fillBots,
+    online: false,
   };
+  if (opts.fillBots) {
+    for (const team of [0, 1] as const) {
+      while (room.slots.some((s) => s.team === team && !s.name)) {
+        room = addBotToRoom(room, team, 'normal');
+      }
+    }
+  }
   rememberRoom(room);
   return room;
 }
@@ -149,11 +178,10 @@ export function joinLocalRoom(
   element: ElementId,
 ): RoomDetail {
   const code = roomId.trim().toUpperCase();
-  const summary = listRooms().find((r) => r.roomId.toUpperCase() === code);
+  const summary = listLocalRooms().find((r) => r.roomId.toUpperCase() === code);
   const teamSize = summary?.teamSize ?? 1;
   const slots = emptySlots(teamSize, summary?.hostName ?? 'Host', 'fire');
 
-  // Put the joining player on team 1 first empty slot (or team 0 if demo empty).
   let placed = false;
   for (const slot of slots) {
     if (!slot.name) {
@@ -166,7 +194,6 @@ export function joinLocalRoom(
     }
   }
   if (!placed) {
-    // Replace a non-host empty by expanding narrative: sit as spectator-turned-player on last slot.
     const last = slots[slots.length - 1];
     last.name = playerName;
     last.element = element;
@@ -174,7 +201,6 @@ export function joinLocalRoom(
     last.isBot = false;
   }
 
-  // Clear isYou from host placeholder if we overwrote narrative
   for (const slot of slots) {
     if (slot.name !== playerName) slot.isYou = false;
   }
@@ -190,6 +216,7 @@ export function joinLocalRoom(
     hostName: summary?.hostName ?? 'Host',
     slots,
     isHost: false,
+    online: false,
   };
   rememberRoom(room);
   return room;
@@ -198,6 +225,79 @@ export function joinLocalRoom(
 export function rememberRoom(room: RoomSummary): void {
   const next = [room, ...loadRecent().filter((r) => r.roomId !== room.roomId)];
   saveRecent(next);
+}
+
+export function roomFromServerState(
+  msg: RoomStateMsg,
+  localClientId: string,
+  opts?: { name?: string; isHost?: boolean },
+): RoomDetail {
+  const slots: RoomSlot[] = msg.slots.map((s) => ({
+    slotId: s.slotId,
+    team: (s.team === 1 ? 1 : 0) as 0 | 1,
+    name: s.name ?? '',
+    isBot: s.isBot,
+    element: (s.element ?? '') as ElementId | '',
+    ready: s.ready,
+    isYou: s.playerId === localClientId,
+    pendingClaimPlayerId: s.pendingClaimPlayerId,
+    playerId: s.playerId,
+  }));
+
+  // Capacity grid: ensure empty visual slots when server only lists occupied.
+  const teamSize = msg.teamSize;
+  for (const team of [0, 1] as const) {
+    const onTeam = slots.filter((s) => s.team === team).length;
+    for (let i = onTeam; i < teamSize; i++) {
+      slots.push({
+        slotId: `empty-${team}-${i}`,
+        team,
+        name: '',
+        isBot: false,
+        element: '',
+        ready: false,
+      });
+    }
+  }
+
+  const filled = msg.slots.length;
+  const youRole = (msg.youRole === 'spectator' || msg.youRole === 'player'
+    ? msg.youRole
+    : '') as RoomDetail['youRole'];
+
+  return {
+    roomId: msg.roomId,
+    name: opts?.name ?? `Hall ${msg.roomId}`,
+    teamSize,
+    filled,
+    capacity: teamSize * 2,
+    state: (msg.state as RoomPhase) || 'lobby',
+    hostName: opts?.name ? 'Host' : 'Host',
+    slots,
+    isHost: opts?.isHost ?? false,
+    youRole,
+    spectators: (msg.spectators ?? []).map((s) => ({
+      playerId: s.playerId,
+      name: s.name,
+      claimedSlotId: s.claimedSlotId,
+    })),
+    fillBots: msg.fillBots,
+    online: true,
+  };
+}
+
+export function summariesFromServer(rooms: RoomSummaryDTO[]): RoomSummary[] {
+  return rooms.map((r) => ({
+    roomId: r.roomId,
+    name: `Hall ${r.roomId}`,
+    teamSize: r.teamSize,
+    filled: r.filled,
+    capacity: r.capacity,
+    state: (r.state as RoomPhase) || 'lobby',
+    hostName: '—',
+    openBotSlots: r.openBotSlots,
+    acceptsSpectators: r.acceptsSpectators,
+  }));
 }
 
 export function setSlotElement(room: RoomDetail, element: ElementId): RoomDetail {
