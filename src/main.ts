@@ -4,6 +4,7 @@ import { Game } from './core/Game';
 import { AudioManager } from './engine/AudioManager';
 import { Settings, sanitizeName, PLAYER_NAME_MAX, type AiDifficulty, type BuffTarget } from './engine/Settings';
 import { SNOWBALL } from './game/config';
+import type { ElementId } from './game/elements';
 import { computeScore } from './game/score';
 import { Team } from './game/types';
 import { ArenaRenderer } from './render/ArenaRenderer';
@@ -35,11 +36,11 @@ if (!container) {
 }
 
 const MAPS = [
-  { label: 'Snowy Clearing', value: 'arena1.json' },
-  { label: 'Frozen Pond', value: 'arena2.json' },
-  { label: 'Village Skirmish', value: 'arena3.json' },
-  { label: 'Pine Forest', value: 'arena4.json' },
-  { label: 'Schoolyard Scramble', value: 'arena5.json' },
+  { label: 'Ruined Courtyard', value: 'arena1.json' },
+  { label: 'Mirror Pool', value: 'arena2.json' },
+  { label: 'Village Ruins', value: 'arena3.json' },
+  { label: 'Totem Grove', value: 'arena4.json' },
+  { label: 'Training Yard', value: 'arena5.json' },
 ] as const;
 
 const DIFFICULTIES = [
@@ -53,7 +54,7 @@ const LIVES_OPTIONS = [1, 2, 3, 4, 5].map((n) => ({ label: String(n), value: Str
 const PLAYER_LIVES_OPTIONS = [1, 2, 3, 4, 5].map((n) => ({ label: String(n), value: String(n) }));
 const BUFF_OPTIONS = [
   { label: 'Off', value: 'off' },
-  { label: 'My squad', value: 'player' },
+  { label: 'You only', value: 'player' },
   { label: 'Both teams', value: 'both' },
 ] as const;
 
@@ -158,6 +159,10 @@ const menus = new Menus(container, game.events, {
   playerNameMax: PLAYER_NAME_MAX,
   onSetName: (name) => {
     settings.set('playerName', name);
+  },
+  selectedElement: settings.get('selectedElement'),
+  onSelectElement: (element: ElementId) => {
+    settings.set('selectedElement', element);
   },
   showFps: settings.get('showFps'),
   onToggleFps: (show) => {

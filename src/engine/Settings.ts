@@ -4,6 +4,8 @@
  * defaults so older saves keep working.
  */
 
+import { DEFAULT_ELEMENT, isElementId, type ElementId } from '../game/elements';
+
 export type AiDifficulty = 'easy' | 'normal' | 'hard';
 
 /** Which team(s) may collect arena pickup buffs (`off` disables them). */
@@ -41,6 +43,8 @@ export interface SaveData {
   buffs: BuffTarget;
   /** Player display name recorded onto leaderboard entries. */
   playerName: string;
+  /** Element chosen for the next match (Alpha: one fixed conjuration). */
+  selectedElement: ElementId;
   /** Whether the in-game FPS/frame-time pill is shown. */
   showFps: boolean;
   wins: number;
@@ -60,7 +64,7 @@ export const PLAYER_LIVES_RANGE = { min: 1, max: 5 } as const;
 /** Maximum number of high-score entries kept on the local leaderboard. */
 export const LEADERBOARD_MAX = 10;
 /** Default player display name (on-theme, tidy for the leaderboard). */
-export const DEFAULT_PLAYER_NAME = 'Frosty';
+export const DEFAULT_PLAYER_NAME = 'Acolyte';
 /** Maximum length of a player display name. */
 export const PLAYER_NAME_MAX = 20;
 
@@ -74,6 +78,7 @@ const DEFAULTS: SaveData = {
   playerLives: 3,
   buffs: 'player',
   playerName: DEFAULT_PLAYER_NAME,
+  selectedElement: DEFAULT_ELEMENT,
   showFps: false,
   wins: 0,
   losses: 0,
@@ -112,6 +117,7 @@ function coerce(raw: unknown): SaveData {
     playerLives: clampInt(obj.playerLives, PLAYER_LIVES_RANGE.min, PLAYER_LIVES_RANGE.max, DEFAULTS.playerLives),
     buffs: isBuffTarget(obj.buffs) ? obj.buffs : DEFAULTS.buffs,
     playerName: sanitizeName(obj.playerName),
+    selectedElement: isElementId(obj.selectedElement) ? obj.selectedElement : DEFAULTS.selectedElement,
     showFps: typeof obj.showFps === 'boolean' ? obj.showFps : DEFAULTS.showFps,
     wins: typeof obj.wins === 'number' ? obj.wins : DEFAULTS.wins,
     losses: typeof obj.losses === 'number' ? obj.losses : DEFAULTS.losses,

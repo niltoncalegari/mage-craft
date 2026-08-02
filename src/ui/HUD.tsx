@@ -61,7 +61,7 @@ function HudView({ refs }: { refs: HudRefs }): JSX.Element {
 }
 
 /**
- * DOM/CSS overlay that observes the SnowCraft world and presents a compact
+ * DOM/CSS overlay that observes the Mage Craft world and presents a compact
  * top-center readout of the player's fighter — lives, enemies remaining, run
  * timer, health, throw readiness and active buffs — plus an FPS diagnostic.
  * Rendered once with Preact; per-frame updates are written straight to refs.

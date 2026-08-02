@@ -35,7 +35,8 @@ describe('Settings', () => {
     expect(s.get('enemyCount')).toBe(3);
     expect(s.get('enemyLives')).toBe(3);
     expect(s.get('playerLives')).toBe(3);
-    expect(s.get('playerName')).toBe('Frosty');
+    expect(s.get('playerName')).toBe('Acolyte');
+    expect(s.get('selectedElement')).toBe('fire');
     expect(s.get('showFps')).toBe(false);
   });
 
@@ -122,13 +123,25 @@ describe('Settings', () => {
       'snowcraft.save.v1',
       JSON.stringify({ playerName: '   ' }),
     );
-    expect(new Settings().get('playerName')).toBe('Frosty');
+    expect(new Settings().get('playerName')).toBe('Acolyte');
 
     (globalThis as unknown as { localStorage: FakeStorage }).localStorage.setItem(
       'snowcraft.save.v1',
       JSON.stringify({ playerName: 'x'.repeat(50) }),
     );
     expect(new Settings().get('playerName').length).toBe(20);
+  });
+
+  it('persists selected element and falls back for unknown values', () => {
+    const a = new Settings();
+    a.set('selectedElement', 'poison');
+    expect(new Settings().get('selectedElement')).toBe('poison');
+
+    (globalThis as unknown as { localStorage: FakeStorage }).localStorage.setItem(
+      'snowcraft.save.v1',
+      JSON.stringify({ selectedElement: 'void' }),
+    );
+    expect(new Settings().get('selectedElement')).toBe('fire');
   });
 
   it('records high scores sorted, capped, and returns rank', () => {
@@ -184,7 +197,7 @@ describe('Settings', () => {
       'snowcraft.save.v1',
       JSON.stringify({ leaderboard: [{ score: 111, difficulty: 'easy', timeSeconds: 3, livesSpent: 0, map: 'm', date: 1 }] }),
     );
-    expect(new Settings().get('leaderboard')[0].name).toBe('Frosty');
+    expect(new Settings().get('leaderboard')[0].name).toBe('Acolyte');
     s.clearLeaderboard();
     expect(s.get('leaderboard')).toEqual([]);
   });

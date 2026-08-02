@@ -2,6 +2,12 @@ import { render, type JSX } from 'preact';
 import type { EventBus } from '../core/EventBus';
 import type { ScoreEntry } from '../engine/Settings';
 import { TEAM_COLORS } from '../game/config';
+import {
+  SELECTABLE_ELEMENTS,
+  getElement,
+  toCssColor,
+  type ElementId,
+} from '../game/elements';
 import { formatClock } from '../game/score';
 import { Team } from '../game/types';
 import styles from './Menus.module.css';
@@ -37,6 +43,9 @@ export interface MenuActions {
   buffOptions?: ReadonlyArray<{ label: string; value: string }>;
   selectedBuffs?: string;
   onSelectBuffs?(value: string): void;
+  /** Optional element picker (Alpha: one fixed conjuration per match). */
+  selectedElement?: ElementId;
+  onSelectElement?(element: ElementId): void;
   /** Optional player-name field shown on the main menu. */
   playerName?: string;
   onSetName?(name: string): void;
@@ -71,6 +80,7 @@ interface MenusHandlers {
   onTab(id: TabId): void;
   onToggleMute(): void;
   onSetName(name: string): void;
+  onSelectElement(element: ElementId): void;
   onToggleFps(): void;
   onResume(): void;
   onRestart(): void;
@@ -86,32 +96,43 @@ const TABS: ReadonlyArray<[TabId, string]> = [
 const HOWTO: ReadonlyArray<{ heading: string; lines: ReadonlyArray<string> }> = [
   {
     heading: 'Objective',
-    lines: ['You control a single fighter. Wipe out the entire enemy squad to clear the level.'],
+    lines: [
+      'You are a solo mage in a top-down arena. Read cover, charge a conjuration, and wipe the rival squad before they wipe you.',
+      "Matches are short: spend the enemy's lives, adapt your aim, and don't get caught charging in the open.",
+    ],
   },
   {
     heading: 'Controls',
     lines: [
-      'Move: WASD, or right-click a destination.',
-      'Aim & throw: hold the left mouse over the battlefield to charge (power grows), release to throw. Aiming cannot be cancelled once started.',
-      'Pause: Esc or P.',
+      'Move: WASD, or right-click a destination on the ground.',
+      'Aim & cast: hold left mouse to charge (power grows while you hold), release to launch. Once you start charging, you cannot cancel.',
+      'Pause (offline only): Esc or P.',
+    ],
+  },
+  {
+    heading: 'Elements',
+    lines: [
+      'Before the match, pick one element — your conjuration for the whole fight (Alpha).',
+      'Fire: baseline pressure. Ice: slows on hit. Lightning: faster poke. Poison: leaves a ground puddle. Stone: heavy hit that can interrupt a charge.',
+      'Same input for every element; the difference is what happens on hit and on the ground.',
     ],
   },
   {
     heading: 'Lives & respawns',
     lines: [
-      'When your fighter is eliminated it respawns at a random spot with 5s immunity — as long as you have lives left. Run out of lives and it is game over.',
+      'When you go down you respawn with a short immunity window — as long as you still have lives. Hit zero lives and the match is over.',
     ],
   },
   {
     heading: 'Buffs',
     lines: [
-      'Grab arena pickups: a heart (extra life), a shield (5s immunity) and a lightning bolt (speed boost).',
+      'Arena pickups: heart (extra life), shield (short immunity), lightning bolt (speed boost).',
     ],
   },
   {
     heading: 'Scoring',
     lines: [
-      'Clearing a level earns a score. Higher difficulty, faster clears and fewer lives spent all mean more points — see the Leaderboard tab.',
+      'Clearing a level earns a score. Higher difficulty, faster clears, and fewer lives spent all mean more points — see the Leaderboard tab.',
     ],
   },
 ];
@@ -172,25 +193,64 @@ function TextField(props: {
   );
 }
 
+function ElementPicker(props: {
+  selected: ElementId | undefined;
+  onSelect: (element: ElementId) => void;
+}): JSX.Element {
+  const selected = props.selected ?? SELECTABLE_ELEMENTS[0].id;
+  const info = getElement(selected);
+  return (
+    <div class={styles.elementPicker}>
+      <div class={styles.elementLabel}>Your element</div>
+      <div class={styles.elementGrid} role="listbox" aria-label="Element">
+        {SELECTABLE_ELEMENTS.map((el) => {
+          const active = el.id === selected;
+          const color = toCssColor(el.color);
+          return (
+            <button
+              type="button"
+              role="option"
+              aria-selected={active}
+              class={active ? `${styles.elementChip} ${styles.elementChipActive}` : styles.elementChip}
+              style={{ '--element-color': color } as JSX.CSSProperties}
+              onClick={() => props.onSelect(el.id)}
+              title={el.role}
+            >
+              <span class={styles.elementSwatch} />
+              <span class={styles.elementName}>{el.name}</span>
+            </button>
+          );
+        })}
+      </div>
+      <p class={styles.elementHint}>{info.role}</p>
+    </div>
+  );
+}
+
 function OptionsTab(props: {
   actions: MenuActions;
   muted: boolean;
   onToggleMute: () => void;
   playerName: string;
   onSetName: (name: string) => void;
+  selectedElement: ElementId | undefined;
+  onSelectElement: (element: ElementId) => void;
   showFps: boolean;
   onToggleFps: () => void;
 }): JSX.Element {
   const { actions } = props;
   return (
     <div class={styles.tabPanel}>
-      <p class={styles.text}>Set up your match, then hit Start Battle.</p>
+      <p class={styles.text}>Pick your element, set up the duel, then start.</p>
+      {actions.onSelectElement ? (
+        <ElementPicker selected={props.selectedElement} onSelect={props.onSelectElement} />
+      ) : null}
       <div class={styles.options}>
         {actions.onSetName ? (
           <TextField caption="Name" value={props.playerName} maxLength={actions.playerNameMax} onInput={props.onSetName} />
         ) : null}
         {actions.maps?.length ? (
-          <SelectField caption="Map" options={actions.maps} selected={actions.selectedMap} onChange={(v) => actions.onSelectMap?.(v)} />
+          <SelectField caption="Arena" options={actions.maps} selected={actions.selectedMap} onChange={(v) => actions.onSelectMap?.(v)} />
         ) : null}
         {actions.difficulties?.length ? (
           <SelectField caption="AI" options={actions.difficulties} selected={actions.selectedDifficulty} onChange={(v) => actions.onSelectDifficulty?.(v)} />
@@ -240,7 +300,7 @@ function LeaderboardTab({ actions }: { actions: MenuActions }): JSX.Element {
   if (entries.length === 0) {
     return (
       <div class={styles.tabPanel}>
-        <p class={styles.text}>No scores yet — clear a level to set your first high score!</p>
+        <p class={styles.text}>No scores yet — win a duel to set your first high score.</p>
       </div>
     );
   }
@@ -288,6 +348,7 @@ function MainScreen(props: {
   muted: boolean;
   showFps: boolean;
   playerName: string;
+  selectedElement: ElementId | undefined;
   handlers: MenusHandlers;
 }): JSX.Element {
   const { actions, activeTab, handlers } = props;
@@ -295,7 +356,8 @@ function MainScreen(props: {
     <div class={styles.screen}>
       <div class={styles.backdrop} />
       <div class={`${styles.panel} ${styles.panelMain}`}>
-        <h1 class={`${styles.title} ${styles.titleMain}`}>SnowCraft</h1>
+        <p class={styles.brandMark}>Arena duel</p>
+        <h1 class={`${styles.title} ${styles.titleMain}`}>Mage Craft</h1>
         <div class={styles.tabbar}>
           {TABS.map(([id, label]) => (
             <div
@@ -322,6 +384,8 @@ function MainScreen(props: {
               onToggleMute={handlers.onToggleMute}
               playerName={props.playerName}
               onSetName={handlers.onSetName}
+              selectedElement={props.selectedElement}
+              onSelectElement={handlers.onSelectElement}
               showFps={props.showFps}
               onToggleFps={handlers.onToggleFps}
             />
@@ -330,7 +394,7 @@ function MainScreen(props: {
           {activeTab === 'leaderboard' ? <LeaderboardTab actions={actions} /> : null}
         </div>
         <div class={styles.footer}>
-          <Button label="Start Battle" onClick={handlers.onStart} />
+          <Button label="Start Duel" onClick={handlers.onStart} />
           {actions.scores ? (
             <p class={styles.scores}>{`Wins ${actions.scores.wins}  •  Losses ${actions.scores.losses}`}</p>
           ) : null}
@@ -346,7 +410,7 @@ function PauseScreen({ handlers }: { handlers: MenusHandlers }): JSX.Element {
       <div class={styles.backdrop} />
       <div class={styles.panel}>
         <h2 class={styles.title}>Paused</h2>
-        <p class={styles.text}>Take a cocoa break, then jump back into the flurry.</p>
+        <p class={styles.text}>Catch your breath — the arena waits.</p>
         <div class={styles.actions}>
           <Button label="Resume" onClick={handlers.onResume} />
           <Button label="Restart" onClick={handlers.onRestart} />
@@ -368,8 +432,8 @@ function ResultScreen({ result, handlers }: { result: RunResult; handlers: Menus
         </h2>
         <p class={styles.text}>
           {won
-            ? 'You cleared the level. Warm mittens all around!'
-            : 'The rival squad claimed this round. Dust off the snow and try again.'}
+            ? 'You cleared the arena. The rival squad falls.'
+            : 'The rival mages claimed this round. Adjust your element and try again.'}
         </p>
         {won ? (
           <p class={styles.resultScore}>
@@ -393,6 +457,7 @@ function MenusView(props: {
   muted: boolean;
   showFps: boolean;
   playerName: string;
+  selectedElement: ElementId | undefined;
   result: RunResult | undefined;
   actions: MenuActions;
   handlers: MenusHandlers;
@@ -408,6 +473,7 @@ function MenusView(props: {
         muted={props.muted}
         showFps={props.showFps}
         playerName={props.playerName}
+        selectedElement={props.selectedElement}
         handlers={props.handlers}
       />
     );
@@ -436,6 +502,7 @@ export class Menus {
   private muted: boolean;
   private showFps: boolean;
   private playerName: string;
+  private selectedElement: ElementId | undefined;
   private result?: RunResult;
 
   constructor(
@@ -446,6 +513,7 @@ export class Menus {
     this.muted = actions.muted ?? false;
     this.showFps = actions.showFps ?? false;
     this.playerName = actions.playerName ?? '';
+    this.selectedElement = actions.selectedElement;
 
     this.host = document.createElement('div');
     this.host.className = styles.root;
@@ -475,6 +543,11 @@ export class Menus {
         // cursor); the field value stays in sync on the next natural re-render.
         this.playerName = name;
         actions.onSetName?.(name);
+      },
+      onSelectElement: (element) => {
+        this.selectedElement = element;
+        actions.onSelectElement?.(element);
+        this.rerender();
       },
       onToggleFps: () => {
         this.showFps = !this.showFps;
@@ -535,6 +608,7 @@ export class Menus {
         muted={this.muted}
         showFps={this.showFps}
         playerName={this.playerName}
+        selectedElement={this.selectedElement}
         result={this.result}
         actions={this.actions}
         handlers={this.handlers}
