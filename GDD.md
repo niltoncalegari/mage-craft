@@ -126,6 +126,13 @@ Aiming: deadzone perto do mago, rotação suave para o cursor, reticle a raio fi
 | **Beta** | Troca no match via teclas / pickups de elemento na arena |
 | **Release** | Loadout pré-partida: escolher 2–3 elementos; hotkeys in-match |
 
+O menu Alpha (single-player) permite escolher entre os **7 elementos** do
+catálogo completo (§8.1), não só os 5 originalmente listados como "MVP
+obrigatório" — `arcane` e `wind` também ficam selecionáveis desde já. A
+simulação single-player ainda não diferencia o projétil por elemento (usa o
+`SNOWBALL` genérico); a diferenciação real de combate por elemento chega
+junto com a integração ao servidor Go (§14), que já implementa os 7.
+
 ### Sala pré-jogo e times (servidor autoritativo)
 
 O jogo é organizado em **salas** com times de tamanho configurável, de **1x1 até 6x6** (capacidade total = 2× o tamanho do time, definido na criação da sala).

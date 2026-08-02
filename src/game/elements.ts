@@ -18,7 +18,7 @@ export interface ElementInfo {
   selectable: boolean;
 }
 
-/** Full catalog — MVP five are selectable; arcane/wind reserved for later. */
+/** Full catalog — all 7 elements are selectable in the Alpha menu. */
 export const ELEMENTS: ReadonlyArray<ElementInfo> = [
   {
     id: 'fire',
@@ -60,14 +60,14 @@ export const ELEMENTS: ReadonlyArray<ElementInfo> = [
     name: 'Arcane',
     role: 'Flex — medium damage with a small impact blast.',
     color: 0x9b5de5,
-    selectable: false,
+    selectable: true,
   },
   {
     id: 'wind',
     name: 'Wind',
     role: 'Utility — low damage, strong shove.',
     color: 0xa8dadc,
-    selectable: false,
+    selectable: true,
   },
 ] as const;
 
