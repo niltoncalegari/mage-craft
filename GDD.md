@@ -386,7 +386,26 @@ MOBA permanece em hold; não bloqueia este roadmap.
 - `design.md` — design técnico original SnowCraft (detalhe de sim/ECS)
 - `multiplayer-plan.md` — plano 1v1 server-authoritative
 - `src/game/config.ts` — tuning herdado (ponto de partida numérico)
+- `docs/accounts-ranking-dashboard.md` — sistema de contas, ranking, logs de partida e dashboard (§19)
 - Este `GDD.md` — **fonte da verdade de produto/gameplay** da nova IP
+
+---
+
+## 19. Contas, ranking e dashboard
+
+Sistema de contas de jogador, ranking global, logs de partida e dashboard
+pessoal (KDR, elemento mais jogado, gráficos de uso de habilidades),
+implementado como um serviço Node/TypeScript separado (`api/`) + MongoDB,
+consumido por novas telas no client existente (`src/ui/`). Alimentado hoje
+pelo modo **SP-vs-AI** (já funcional); o servidor Go de salas/PvP (`server/`,
+§14) reportará partidas PvP no mesmo contrato assim que `internal/room`
+estiver pronto.
+
+**Detalhe completo (modelo de dados, endpoints, arquitetura):**
+[`docs/accounts-ranking-dashboard.md`](docs/accounts-ranking-dashboard.md).
+
+**Deploy:** `docker-compose.yml` na raiz orquestra `mongo`, `api`,
+`gameserver` (Go) e `client` (Nginx) para rodar em uma VPS.
 
 ---
 
@@ -394,5 +413,6 @@ MOBA permanece em hold; não bloqueia este roadmap.
 
 | Versão | Data | Notas |
 | --- | --- | --- |
+| 0.3 | 2026-08-02 | Novo §19 — contas de jogador, ranking global, logs de partida e dashboard (KDR, elemento favorito, uso por elemento), serviço `api/` (Node + MongoDB) separado do servidor Go; docker-compose para deploy em VPS; ver `docs/accounts-ranking-dashboard.md` |
 | 0.2 | 2026-08-02 | Sala pré-jogo com times NxN (até 6x6, §7/§10.2); regra de elemento único por mago dentro do time, usando catálogo completo de 7 elementos; bots preenchem vagas vazias; pivot de servidor de Node.js (assumido em `multiplayer-plan.md`) para servidor **Go** independente (`server/`) (§14) |
 | 0.1 | 2026-08-02 | Primeiro rascunho: mago, 5 elementos MVP (veneno+poça, pedra), PvP/Tauri/Steam, herança SnowCraft; título **Mage Craft** |
