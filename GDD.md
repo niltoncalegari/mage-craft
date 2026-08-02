@@ -126,6 +126,20 @@ Aiming: deadzone perto do mago, rotação suave para o cursor, reticle a raio fi
 | **Beta** | Troca no match via teclas / pickups de elemento na arena |
 | **Release** | Loadout pré-partida: escolher 2–3 elementos; hotkeys in-match |
 
+### Sala pré-jogo e times (servidor autoritativo)
+
+O jogo é organizado em **salas** com times de tamanho configurável, de **1x1 até 6x6** (capacidade total = 2× o tamanho do time, definido na criação da sala).
+
+Fluxo da sala (fase Alpha — 1 elemento fixo por mago, ver tabela acima):
+
+1. Jogadores entram na sala e escolhem um time (0 ou 1).
+2. Cada mago escolhe **exatamente 1 elemento** do catálogo completo de **7 elementos** (`fire`, `ice`, `lightning`, `poison`, `stone`, `arcane`, `wind` — ver §8.1). Esse catálogo de 7 é usado desde já **na seleção de sala** mesmo com `arcane`/`wind` marcados como pós-MVP no combate (§8.1), justamente para garantir que um time de até 6 jogadores sempre tenha um elemento livre.
+3. **Regra de unicidade:** um elemento só pode estar selecionado por **um mago por vez dentro do mesmo time**; dois magos do mesmo time nunca podem usar o mesmo elemento simultaneamente. Times adversários podem repetir elementos livremente entre si.
+4. O host pode **preencher vagas vazias com bots** (dificuldade easy/normal/hard); o bot seleciona automaticamente um elemento ainda livre no seu time.
+5. A partida começa quando todas as vagas do(s) time(s) estão preenchidas (humano ou bot) e cada mago tem um elemento válido selecionado.
+
+Ao desconectar durante a sala (fase de lobby), a vaga e o elemento do jogador voltam a ficar livres para os demais.
+
 ---
 
 ## 8. Catálogo de projéteis
@@ -262,16 +276,18 @@ Mapas novos = JSON / data (herança `public/maps/`), não hardcode.
 - Dificuldades: easy / normal / hard (pesos de AI + handicaps só na AI, nunca no PvP humano).
 - Útil para tutorial, practice de elemento e QA.
 
-### 10.2 PvP 1v1 (prioridade de produto)
+### 10.2 PvP em salas por time — NxN, até 6x6 (prioridade de produto)
 
+- Servidor autoritativo (Go, ver §14) organiza partidas em **salas de time** configuráveis de 1x1 a 6x6 (§7 — Sala pré-jogo e times); 1v1 é apenas o caso `teamSize = 1`.
 - Servidor autoritativo (snapshots); clientes enviam input commands.
-- Simetria de regras; handicaps de AI **desligados**.
+- Simetria de regras entre jogadores humanos; handicaps de AI só valem para bots (nunca entre humanos).
 - Cores POV-relative.
+- Bots podem preencher vagas vazias de qualquer time na sala (§7).
 - Desconexão: forfeit ou bot takeover curto (decidir na fase netcode).
 
 ### 10.3 Fora do escopo inicial
 
-- 2v2, FFA, ranked seasons, battle pass — só depois do 1v1 estável.
+- FFA, ranked seasons, battle pass, matchmaking por rating/contas — times NxN (até 6x6) já deixam de ser "fora de escopo" a partir do servidor Go (§10.2, §14).
 
 ---
 
@@ -312,11 +328,20 @@ Ordem: **jogo online estável no browser → wrap Tauri → Steam page**.
 
 ## 14. Arquitetura (intenção de implementação)
 
-- Manter simulação pura (sem Three.js) em `core/game/systems/physics`.
+- Manter simulação pura (sem Three.js) em `core/game/systems/physics` no cliente.
 - `ProjectileDef` + `GroundEffect` como dados; systems genéricos (`ProjectileSystem`, `GroundEffectSystem`).
 - Veneno = projétil que **spawna** entidade `Puddle` no mundo; tick de dano num system dedicado.
-- Netcode: seguir espírito do `multiplayer-plan.md` (server-authoritative), adaptado ao novo nome/IP.
 - Testes unitários da simulação (já cultura do SnowCraft) para defs e poças.
+
+### Pivot de servidor: Go (`server/`)
+
+`multiplayer-plan.md` assumia um servidor **Node.js** reaproveitando diretamente a simulação TypeScript do cliente (monorepo `shared/`). Essa suposição foi substituída: o servidor autoritativo real é um **módulo Go independente** em `server/` (WebSocket + JSON), que **reimplementa** a simulação — dados equivalentes a `ProjectileDef`/catálogo de elementos, movimento, projéteis, dano/knockback, vidas/respawn e o sistema de salas/times (§7, §10.2) — já que não há reaproveitamento direto de código entre TypeScript e Go. `multiplayer-plan.md` permanece como referência conceitual (server-authoritative, snapshots, cores POV-relative), não como plano de stack.
+
+Notas de processo adotadas no desenvolvimento do servidor Go:
+
+- Desenvolvimento **test-first** (TDD): seams definidos por pacote (`room`, `game`, `bot`, `protocol`) antes de implementar cada fatia.
+- Padrões de arquitetura de jogo (state machine explícita para sala/mago, configuração data-driven em vez de números soltos, sem alocações no hot loop de simulação a 60 Hz) seguem a mesma disciplina descrita para o cliente.
+- Quando a integração do **cliente** (Three.js/Preact) com o novo protocolo WebSocket do servidor Go começar, essa é uma fase à parte deste documento, ainda não iniciada.
 
 ---
 
@@ -369,4 +394,5 @@ MOBA permanece em hold; não bloqueia este roadmap.
 
 | Versão | Data | Notas |
 | --- | --- | --- |
+| 0.2 | 2026-08-02 | Sala pré-jogo com times NxN (até 6x6, §7/§10.2); regra de elemento único por mago dentro do time, usando catálogo completo de 7 elementos; bots preenchem vagas vazias; pivot de servidor de Node.js (assumido em `multiplayer-plan.md`) para servidor **Go** independente (`server/`) (§14) |
 | 0.1 | 2026-08-02 | Primeiro rascunho: mago, 5 elementos MVP (veneno+poça, pedra), PvP/Tauri/Steam, herança SnowCraft; título **Mage Craft** |
