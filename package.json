@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "smoke": "node scripts/smoke.mjs",
     "smoke:interaction": "node scripts/interaction.mjs",
-    "smoke:combat": "node scripts/combat.mjs"
+    "smoke:combat": "node scripts/combat.mjs",
+    "test:e2e": "docker compose up --build -d && (playwright test; s=$?; docker compose down; exit $s)"
   },
   "dependencies": {
     "preact": "^10.29.4",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
     "@types/three": "^0.185.0",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",

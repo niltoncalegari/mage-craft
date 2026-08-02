@@ -9,6 +9,8 @@ import { SNOWBALL } from './game/config';
 import type { ElementId } from './game/elements';
 import { computeScore } from './game/score';
 import { Team } from './game/types';
+import { ApiClient } from './net/ApiClient';
+import { MatchReporter } from './net/MatchReporter';
 import { ArenaRenderer } from './render/ArenaRenderer';
 import { PlayerRenderer } from './render/PlayerRenderer';
 import { NavIndicatorRenderer } from './render/NavIndicatorRenderer';
@@ -102,6 +104,12 @@ async function bootOfflineMatch(): Promise<void> {
 
   // Hold at the match options menu until Start Duel.
   game.setRunning(false);
+
+  const matchReporter = new MatchReporter(
+    game.events,
+    (id) => game.world.players.find((p) => p.id === id),
+    settings.get('selectedElement'),
+  );
 
   let playing = false;
   let showFps = settings.get('showFps');
@@ -217,6 +225,15 @@ async function bootOfflineMatch(): Promise<void> {
       });
     }
     menus.showResult({ won, score, rank, timeSeconds, livesSpent, difficulty });
+
+    const token = getSession()?.token;
+    if (token) {
+      const report = matchReporter.buildReport({ won, score, difficulty, timeSeconds, livesSpent, map: selectedMap });
+      ApiClient.reportMatch(token, report).catch((err) => {
+        console.warn('mage-craft: failed to report match to the accounts API', err);
+      });
+    }
+    matchReporter.dispose();
   });
 
   const autoSelect = new AutoSelectSystem(game.world);

@@ -1,7 +1,12 @@
 /**
- * Local session for the Mage Craft shell. Real accounts / server auth come later;
- * this persists a display name + simple pass hash so login/dashboard feel real.
+ * Session for the Mage Craft shell. Guests stay fully local/offline (no
+ * server call). Named accounts are real accounts on the accounts/ranking API
+ * (`api/`, see docs/accounts-ranking-dashboard.md) — `token` is set once
+ * signed in and unlocks server-backed dashboard stats, match history and the
+ * global ranking.
  */
+
+import { ApiClient, ApiError } from '../net/ApiClient';
 
 export interface UserProfile {
   id: string;
@@ -15,41 +20,12 @@ export interface UserProfile {
   favoriteElement: string;
   /** Optional bio shown on the dashboard. */
   title: string;
+  /** JWT for the accounts API; absent for guest sessions (offline-only). */
+  token?: string;
+  email?: string;
 }
 
-interface StoredAccount {
-  name: string;
-  /** SHA-256 hex of password; empty string means guest (no password). */
-  passHash: string;
-  profile: UserProfile;
-}
-
-const ACCOUNTS_KEY = 'mage-craft.accounts.v1';
 const SESSION_KEY = 'mage-craft.session.v1';
-
-function loadAccounts(): StoredAccount[] {
-  try {
-    const raw = localStorage.getItem(ACCOUNTS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? (parsed as StoredAccount[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveAccounts(accounts: StoredAccount[]): void {
-  localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-}
-
-async function hashPass(password: string): Promise<string> {
-  if (!password) return '';
-  const data = new TextEncoder().encode(password);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
 
 function makeId(): string {
   return `mage-${Math.random().toString(36).slice(2, 10)}`;
@@ -88,40 +64,54 @@ export async function loginGuest(name: string): Promise<UserProfile> {
   return profile;
 }
 
-export async function registerAccount(name: string, password: string): Promise<UserProfile> {
-  const trimmed = name.trim().slice(0, 20);
-  if (trimmed.length < 2) throw new Error('Choose a name with at least 2 characters.');
-  if (password.length < 4) throw new Error('Password needs at least 4 characters.');
-
-  const accounts = loadAccounts();
-  if (accounts.some((a) => a.name.toLowerCase() === trimmed.toLowerCase())) {
-    throw new Error('That name is already taken on this device.');
-  }
-
-  const profile: UserProfile = {
-    id: makeId(),
-    name: trimmed,
-    createdAt: Date.now(),
-    wins: 0,
-    losses: 0,
-    favoriteElement: 'fire',
-    title: 'Apprentice Mage',
-  };
-  accounts.push({ name: trimmed, passHash: await hashPass(password), profile });
-  saveAccounts(accounts);
-  setSession(profile);
-  return profile;
+/** Re-throws API errors with copy that fits the login form. */
+function describeAuthError(err: unknown): Error {
+  if (err instanceof ApiError) return new Error(err.message);
+  return err instanceof Error ? err : new Error('Could not reach the account server.');
 }
 
-export async function loginAccount(name: string, password: string): Promise<UserProfile> {
-  const trimmed = name.trim();
-  const accounts = loadAccounts();
-  const found = accounts.find((a) => a.name.toLowerCase() === trimmed.toLowerCase());
-  if (!found) throw new Error('No account with that name on this device.');
-  const hash = await hashPass(password);
-  if (found.passHash !== hash) throw new Error('Wrong password.');
-  setSession(found.profile);
-  return found.profile;
+/** Creates a real account on the accounts API (server-backed dashboard/ranking/match log). */
+export async function registerAccount(username: string, email: string, password: string): Promise<UserProfile> {
+  try {
+    const res = await ApiClient.register(username.trim(), email.trim(), password);
+    const profile: UserProfile = {
+      id: res.user.id,
+      name: res.user.username,
+      createdAt: Date.now(),
+      wins: 0,
+      losses: 0,
+      favoriteElement: 'fire',
+      title: 'Apprentice Mage',
+      token: res.token,
+      email: email.trim(),
+    };
+    setSession(profile);
+    return profile;
+  } catch (err) {
+    throw describeAuthError(err);
+  }
+}
+
+/** Signs in to a real account on the accounts API. */
+export async function loginAccount(email: string, password: string): Promise<UserProfile> {
+  try {
+    const res = await ApiClient.login(email.trim(), password);
+    const profile: UserProfile = {
+      id: res.user.id,
+      name: res.user.username,
+      createdAt: Date.now(),
+      wins: 0,
+      losses: 0,
+      favoriteElement: 'fire',
+      title: 'Apprentice Mage',
+      token: res.token,
+      email: email.trim(),
+    };
+    setSession(profile);
+    return profile;
+  } catch (err) {
+    throw describeAuthError(err);
+  }
 }
 
 export function updateProfile(patch: Partial<UserProfile>): UserProfile {
@@ -129,12 +119,5 @@ export function updateProfile(patch: Partial<UserProfile>): UserProfile {
   if (!current) throw new Error('Not signed in.');
   const next = { ...current, ...patch, id: current.id, name: patch.name?.trim() || current.name };
   setSession(next);
-
-  const accounts = loadAccounts();
-  const idx = accounts.findIndex((a) => a.profile.id === current.id);
-  if (idx >= 0) {
-    accounts[idx] = { ...accounts[idx], name: next.name, profile: next };
-    saveAccounts(accounts);
-  }
   return next;
 }

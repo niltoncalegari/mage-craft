@@ -1,7 +1,9 @@
 import { render, type JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { SELECTABLE_ELEMENTS, type ElementId } from '../game/elements';
+import { getElement, isElementId, SELECTABLE_ELEMENTS, type ElementId } from '../game/elements';
+import { ApiClient, type ElementStat, type MatchLogEntry, type RankingEntry, type UserSummary } from '../net/ApiClient';
 import { PortalScene } from '../render/PortalScene';
+import { ElementUsageChart } from './ElementUsageChart';
 import styles from './App.module.css';
 import {
   clearSession,
@@ -31,7 +33,8 @@ export type AppScreen =
   | 'dashboard'
   | 'rooms'
   | 'createRoom'
-  | 'lobby';
+  | 'lobby'
+  | 'ranking';
 
 export interface AppActions {
   /** Enter the existing offline duel flow (loads the arena game). */
@@ -129,9 +132,11 @@ function AppShell(props: AppProps): JSX.Element {
               setScreen('rooms');
             }}
             onCreateRoom={() => setScreen('createRoom')}
+            onOpenRanking={() => setScreen('ranking')}
             onSignOut={signOut}
           />
         ) : null}
+        {screen === 'ranking' && user ? <RankingScreen onBack={() => setScreen('dashboard')} /> : null}
         {screen === 'rooms' && user ? (
           <RoomBrowserScreen
             rooms={rooms}
@@ -193,6 +198,7 @@ function LoginScreen(props: {
 }): JSX.Element {
   const [mode, setMode] = useState<'guest' | 'login' | 'register'>('guest');
   const [name, setName] = useState('Acolyte');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -202,8 +208,8 @@ function LoginScreen(props: {
     setError('');
     try {
       if (mode === 'guest') props.onSignedIn(await loginGuest(name));
-      else if (mode === 'login') props.onSignedIn(await loginAccount(name, password));
-      else props.onSignedIn(await registerAccount(name, password));
+      else if (mode === 'login') props.onSignedIn(await loginAccount(email, password));
+      else props.onSignedIn(await registerAccount(name, email, password));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not sign in.');
     } finally {
@@ -215,7 +221,11 @@ function LoginScreen(props: {
     <div class={`${styles.panel} ${styles.panelNarrow}`}>
       <p class={styles.tag}>Sign in</p>
       <h2 class={styles.panelTitle}>Choose your mage</h2>
-      <p class={styles.panelHint}>Local account on this device — server accounts come later.</p>
+      <p class={styles.panelHint}>
+        {mode === 'guest'
+          ? 'Play instantly on this device — no server, nothing saved online.'
+          : 'Real account — dashboard, match history and ranking sync from the server.'}
+      </p>
 
       <div class={styles.tabs}>
         {(
@@ -236,10 +246,23 @@ function LoginScreen(props: {
       </div>
 
       <div class={styles.form}>
-        <label class={styles.field}>
-          <span>Mage name</span>
-          <input class={styles.input} value={name} maxLength={20} onInput={(e) => setName(e.currentTarget.value)} />
-        </label>
+        {mode !== 'login' ? (
+          <label class={styles.field}>
+            <span>Mage name</span>
+            <input class={styles.input} value={name} maxLength={20} onInput={(e) => setName(e.currentTarget.value)} />
+          </label>
+        ) : null}
+        {mode !== 'guest' ? (
+          <label class={styles.field}>
+            <span>Email</span>
+            <input
+              class={styles.input}
+              type="email"
+              value={email}
+              onInput={(e) => setEmail(e.currentTarget.value)}
+            />
+          </label>
+        ) : null}
         {mode !== 'guest' ? (
           <label class={styles.field}>
             <span>Password</span>
@@ -271,10 +294,36 @@ function DashboardScreen(props: {
   onPractice(): void;
   onBrowseRooms(): void;
   onCreateRoom(): void;
+  onOpenRanking(): void;
   onSignOut(): void;
 }): JSX.Element {
   const wins = props.stats?.wins ?? props.user.wins;
   const losses = props.stats?.losses ?? props.user.losses;
+
+  const [serverStats, setServerStats] = useState<UserSummary | null>(null);
+  const [matches, setMatches] = useState<MatchLogEntry[]>([]);
+  const [elementStats, setElementStats] = useState<ElementStat[]>([]);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    const token = props.user.token;
+    if (!token) return;
+    let cancelled = false;
+    Promise.all([ApiClient.me(token), ApiClient.myMatches(token, 1, 5), ApiClient.myElementStats(token)])
+      .then(([me, history, elements]) => {
+        if (cancelled) return;
+        setServerStats(me.stats);
+        setMatches(history.matches);
+        setElementStats(elements.elements);
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load your stats.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.user.token]);
+
   return (
     <div class={`${styles.panel} ${styles.panelWide}`}>
       <div class={styles.panelHeader}>
@@ -293,14 +342,35 @@ function DashboardScreen(props: {
           <p class={styles.profileTitle}>{props.user.title}</p>
           <div class={styles.statRow}>
             <div class={styles.stat}>
-              <b>{wins}</b>
+              <b>{serverStats?.wins ?? wins}</b>
               <span>Wins</span>
             </div>
             <div class={styles.stat}>
-              <b>{losses}</b>
+              <b>{serverStats?.losses ?? losses}</b>
               <span>Losses</span>
             </div>
+            {serverStats ? (
+              <>
+                <div class={styles.stat}>
+                  <b>{serverStats.kdr.toFixed(2)}</b>
+                  <span>KDR</span>
+                </div>
+                <div class={styles.stat}>
+                  <b>
+                    {serverStats.favoriteElement && isElementId(serverStats.favoriteElement)
+                      ? getElement(serverStats.favoriteElement).name
+                      : '—'}
+                  </b>
+                  <span>Top element</span>
+                </div>
+              </>
+            ) : null}
           </div>
+          {!props.user.token ? (
+            <p class={styles.panelHint} style={{ marginTop: 14 }}>
+              Playing as guest — create an account to keep KDR, match history and a ranking spot across devices.
+            </p>
+          ) : null}
           <p class={styles.panelHint} style={{ marginTop: 14 }}>
             Favorite element
           </p>
@@ -320,20 +390,134 @@ function DashboardScreen(props: {
           </div>
         </div>
 
-        <div class={styles.actionGrid}>
-          <button type="button" class={styles.actionCard} onClick={props.onBrowseRooms}>
-            <h3>Browse halls</h3>
-            <p>List open rooms, join by code, or enter a practice hall.</p>
-          </button>
-          <button type="button" class={styles.actionCard} onClick={props.onCreateRoom}>
-            <h3>Create room</h3>
-            <p>Host a 1x1–6x6 duel and configure teams before the match.</p>
-          </button>
-          <button type="button" class={styles.actionCard} onClick={props.onPractice}>
-            <h3>Solo practice</h3>
-            <p>Jump into the offline arena against AI — same combat loop.</p>
-          </button>
+        <div>
+          <div class={styles.actionGrid}>
+            <button type="button" class={styles.actionCard} onClick={props.onBrowseRooms}>
+              <h3>Browse halls</h3>
+              <p>List open rooms, join by code, or enter a practice hall.</p>
+            </button>
+            <button type="button" class={styles.actionCard} onClick={props.onCreateRoom}>
+              <h3>Create room</h3>
+              <p>Host a 1x1–6x6 duel and configure teams before the match.</p>
+            </button>
+            <button type="button" class={styles.actionCard} onClick={props.onPractice}>
+              <h3>Solo practice</h3>
+              <p>Jump into the offline arena against AI — same combat loop.</p>
+            </button>
+            <button type="button" class={styles.actionCard} onClick={props.onOpenRanking}>
+              <h3>Ranking</h3>
+              <p>See how your wins and KDR stack up against everyone else.</p>
+            </button>
+          </div>
+
+          {props.user.token ? (
+            <div class={styles.panel} style={{ marginTop: 16 }}>
+              <p class={styles.panelHint} style={{ marginBottom: 10 }}>
+                Skills used (all matches)
+              </p>
+              {loadError ? <p class={styles.error}>{loadError}</p> : null}
+              <ElementUsageChart stats={elementStats} />
+              <p class={styles.panelHint} style={{ margin: '16px 0 8px' }}>
+                Recent matches
+              </p>
+              <div class={styles.roomList}>
+                {matches.length === 0 ? (
+                  <p class={styles.panelHint}>No matches reported yet — play a solo practice run.</p>
+                ) : null}
+                {matches.map((m) => (
+                  <div class={styles.matchRow} key={m._id}>
+                    <div>
+                      <p class={styles.roomName}>
+                        {m.won ? 'Victory' : 'Defeat'} · {m.mode}
+                      </p>
+                      <p class={styles.roomMeta}>
+                        {m.kills} kills · {m.deaths} deaths · {m.map}
+                      </p>
+                    </div>
+                    <span class={m.won ? `${styles.badge} ${styles.badgeTeal}` : styles.badge}>{m.score} pts</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function RankingScreen(props: { onBack(): void }): JSX.Element {
+  const [sort, setSort] = useState<'wins' | 'kdr'>('wins');
+  const [entries, setEntries] = useState<RankingEntry[]>([]);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    ApiClient.ranking(sort)
+      .then((res) => {
+        if (!cancelled) setEntries(res.entries);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the ranking.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sort]);
+
+  return (
+    <div class={`${styles.panel} ${styles.panelWide}`}>
+      <div class={styles.panelHeader}>
+        <div>
+          <p class={styles.tag}>Global</p>
+          <h2 class={styles.panelTitle}>Ranking</h2>
+        </div>
+        <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onBack}>
+          Dashboard
+        </button>
+      </div>
+
+      <div class={styles.tabs}>
+        {(
+          [
+            ['wins', 'By wins'],
+            ['kdr', 'By KDR'],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            type="button"
+            class={sort === id ? `${styles.tab} ${styles.tabActive}` : styles.tab}
+            onClick={() => setSort(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {error ? <p class={styles.error}>{error}</p> : null}
+      {!error && loading ? <p class={styles.panelHint}>Loading…</p> : null}
+      {!error && !loading && entries.length === 0 ? (
+        <p class={styles.panelHint}>No ranked players yet — be the first to report a match.</p>
+      ) : null}
+
+      <div class={styles.roomList}>
+        {entries.map((entry, index) => (
+          <div class={`${styles.matchRow} ${styles.matchRowRanked}`} key={entry.userId}>
+            <span class={styles.rankPosition}>#{index + 1}</span>
+            <div>
+              <p class={styles.roomName}>{entry.username}</p>
+              <p class={styles.roomMeta}>
+                {entry.wins}W {entry.losses}L · {entry.kills} kills · {entry.deaths} deaths
+              </p>
+            </div>
+            <span class={styles.badge}>{entry.kdr.toFixed(2)} KDR</span>
+          </div>
+        ))}
       </div>
     </div>
   );

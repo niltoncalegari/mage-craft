@@ -6,6 +6,9 @@ coverage
 .DS_Store
 *.log
 .vite
+test-results
+playwright-report
+blob-report
 
 # Go server build output
 server/mageserver
