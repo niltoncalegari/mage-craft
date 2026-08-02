@@ -214,6 +214,65 @@ func TestRoom_StartMatch_UsesSlotIDAsMageIDForBots(t *testing.T) {
 	}
 }
 
+func TestRoom_JoinAsSpectator_OnlyDuringInProgress(t *testing.T) {
+	r := newTestRoom(t, 1)
+	must(t, r.Join("p1", "Alice"))
+	must(t, r.SelectTeam("p1", game.TeamA))
+	must(t, r.SelectElement("p1", game.ElementFire))
+	if _, err := r.AddBot(game.TeamB, "normal"); err != nil {
+		t.Fatalf("AddBot: %v", err)
+	}
+	if err := r.JoinAsSpectator("spec", "Viewer"); err == nil {
+		t.Fatalf("expected spectate to fail in lobby")
+	}
+	if _, err := r.StartMatch(); err != nil {
+		t.Fatalf("StartMatch: %v", err)
+	}
+	must(t, r.JoinAsSpectator("spec", "Viewer"))
+	if r.RoleOf("spec") != "spectator" {
+		t.Fatalf("expected spectator role")
+	}
+}
+
+func TestRoom_ClaimSlotAndApplyClaims(t *testing.T) {
+	r := newTestRoom(t, 1)
+	must(t, r.Join("p1", "Alice"))
+	must(t, r.SelectTeam("p1", game.TeamA))
+	must(t, r.SelectElement("p1", game.ElementFire))
+	bot, err := r.AddBot(game.TeamB, "normal")
+	if err != nil {
+		t.Fatalf("AddBot: %v", err)
+	}
+	if _, err := r.StartMatch(); err != nil {
+		t.Fatalf("StartMatch: %v", err)
+	}
+	must(t, r.JoinAsSpectator("spec", "Viewer"))
+	must(t, r.ClaimSlot("spec", bot.ID))
+	r.ApplyClaims()
+	r.ResetToLobby()
+	if r.State() != StateLobby {
+		t.Fatalf("expected lobby, got %s", r.State())
+	}
+	if r.RoleOf("spec") != "player" {
+		t.Fatalf("expected spec promoted to player")
+	}
+	slot := findSlotByPlayer(r, game.TeamB, "spec")
+	if slot == nil || slot.IsBot {
+		t.Fatalf("expected human seat for spec, got %+v", slot)
+	}
+}
+
+func TestRoom_FillEmptyWithBots(t *testing.T) {
+	r := newTestRoom(t, 2)
+	must(t, r.Join("p1", "Alice"))
+	must(t, r.SelectTeam("p1", game.TeamA))
+	must(t, r.SelectElement("p1", game.ElementFire))
+	must(t, r.FillEmptyWithBots("normal"))
+	if len(r.Slots()) != 4 {
+		t.Fatalf("expected full room, got %d slots", len(r.Slots()))
+	}
+}
+
 func findSlotByPlayer(r *Room, team game.Team, playerID string) *Slot {
 	return r.findSlot(team, playerID)
 }

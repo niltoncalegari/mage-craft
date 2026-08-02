@@ -122,7 +122,104 @@ func TestSession_Tick_EndsMatchAndReportsWinnerExactlyOnce(t *testing.T) {
 	if winner != int(game.TeamA) {
 		t.Fatalf("expected team A to be reported as the winner, got %d", winner)
 	}
-	if s.Room.State() != room.StateEnded {
-		t.Fatalf("expected the room to be marked ended, got %s", s.Room.State())
+	if s.Room.State() != room.StateLobby {
+		t.Fatalf("expected rematch lobby after round end, got %s", s.Room.State())
+	}
+	if !s.Ended() {
+		t.Fatalf("expected the match loop to be marked ended after rematch reset")
+	}
+}
+
+func TestSession_SpectatorClaimAppliesOnRematch(t *testing.T) {
+	m := room.NewManager()
+	r, err := m.CreateRoom(1)
+	if err != nil {
+		t.Fatalf("CreateRoom: %v", err)
+	}
+	s := New(r, Callbacks{})
+
+	must(t, s.Join("p1", "Alice"))
+	must(t, s.SelectTeam("p1", game.TeamA))
+	must(t, s.SelectElement("p1", game.ElementFire))
+	botSlot, err := s.AddBot(game.TeamB, "normal")
+	if err != nil {
+		t.Fatalf("AddBot: %v", err)
+	}
+	if err := s.StartMatch(); err != nil {
+		t.Fatalf("StartMatch: %v", err)
+	}
+
+	must(t, s.Join("p3", "Carol")) // spectator
+	if role := s.RoleOf("p3"); role != "spectator" {
+		t.Fatalf("expected p3 to be spectator, got %q", role)
+	}
+	must(t, s.ClaimSlot("p3", botSlot.ID))
+
+	for _, mg := range s.world.Mages {
+		if mg.Team == game.TeamB {
+			mg.Alive = false
+			mg.Lives = 0
+		}
+	}
+	s.Tick()
+
+	if s.Room.State() != room.StateLobby {
+		t.Fatalf("expected lobby after rematch, got %s", s.Room.State())
+	}
+	if role := s.RoleOf("p3"); role != "player" {
+		t.Fatalf("expected p3 promoted to player, got %q", role)
+	}
+	found := false
+	for _, slot := range s.Slots() {
+		if slot.PlayerID == "p3" {
+			found = true
+			if slot.IsBot {
+				t.Fatalf("claimed slot should no longer be a bot")
+			}
+			if slot.Element == "" {
+				t.Fatalf("claimed slot should keep the bot's element")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected p3 to own a seat after claim+rematch")
+	}
+
+	must(t, s.SetReady("p1", true))
+	must(t, s.SetReady("p3", true))
+	if err := s.StartMatch(); err != nil {
+		t.Fatalf("rematch StartMatch: %v", err)
+	}
+	if s.world.Mage("p3") == nil {
+		t.Fatalf("expected p3's mage in the rematch world")
+	}
+}
+
+func TestSession_FillEmptyWithBots(t *testing.T) {
+	m := room.NewManager()
+	r, err := m.CreateRoom(2)
+	if err != nil {
+		t.Fatalf("CreateRoom: %v", err)
+	}
+	r.FillBots = true
+	s := New(r, Callbacks{})
+
+	must(t, s.Join("p1", "Alice"))
+	must(t, s.SelectTeam("p1", game.TeamA))
+	must(t, s.SelectElement("p1", game.ElementFire))
+	must(t, s.FillEmptyWithBots("easy"))
+
+	slots := s.Slots()
+	if len(slots) != 4 {
+		t.Fatalf("expected 4 filled slots, got %d", len(slots))
+	}
+	bots := 0
+	for _, slot := range slots {
+		if slot.IsBot {
+			bots++
+		}
+	}
+	if bots != 3 {
+		t.Fatalf("expected 3 bots after fill, got %d", bots)
 	}
 }

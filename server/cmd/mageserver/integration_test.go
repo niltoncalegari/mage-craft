@@ -166,3 +166,85 @@ func TestEndToEnd_LobbyThroughRunningMatch(t *testing.T) {
 		t.Fatalf("expected a snapshot with both mages, got %+v", snapshot)
 	}
 }
+
+func TestEndToEnd_FillBotsSpectatorClaim(t *testing.T) {
+	wsURL, closeServer := newTestServer(t)
+	defer closeServer()
+
+	host := dialTestClient(t, wsURL, "host")
+	defer host.Close()
+	spec := dialTestClient(t, wsURL, "spec")
+	defer spec.Close()
+
+	sendJSON(t, host, protocol.CreateRoomMsg{
+		Type: protocol.TypeCreateRoom, TeamSize: 1, FillBots: true, BotDifficulty: "easy",
+	})
+	created := readUntilType(t, host, protocol.TypeRoomState, 2*time.Second)
+	var roomState protocol.RoomStateMsg
+	if err := json.Unmarshal(created, &roomState); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	roomID := roomState.RoomID
+
+	sendJSON(t, host, protocol.JoinRoomMsg{Type: protocol.TypeJoinRoom, RoomID: roomID, Name: "Host"})
+	readUntilType(t, host, protocol.TypeRoomState, 2*time.Second)
+	sendJSON(t, host, protocol.SelectTeamMsg{Type: protocol.TypeSelectTeam, Team: 0})
+	readUntilType(t, host, protocol.TypeRoomState, 2*time.Second)
+	sendJSON(t, host, protocol.SelectElementMsg{Type: protocol.TypeSelectElement, Element: "fire"})
+	filled := readUntilType(t, host, protocol.TypeRoomState, 2*time.Second)
+	if err := json.Unmarshal(filled, &roomState); err != nil {
+		t.Fatalf("unmarshal filled: %v", err)
+	}
+	if len(roomState.Slots) != 2 {
+		t.Fatalf("expected fillBots to seat host+bot, got %d slots", len(roomState.Slots))
+	}
+
+	sendJSON(t, host, protocol.ListRoomsMsg{Type: protocol.TypeListRooms})
+	listData := readUntilType(t, host, protocol.TypeRoomList, 2*time.Second)
+	var list protocol.RoomListMsg
+	if err := json.Unmarshal(listData, &list); err != nil {
+		t.Fatalf("unmarshal room_list: %v", err)
+	}
+	if len(list.Rooms) == 0 {
+		t.Fatalf("expected at least one room in list")
+	}
+
+	sendJSON(t, host, protocol.StartMatchMsg{Type: protocol.TypeStartMatch})
+	readUntilType(t, host, protocol.TypeMatchStart, 2*time.Second)
+
+	sendJSON(t, spec, protocol.JoinRoomMsg{Type: protocol.TypeJoinRoom, RoomID: roomID, Name: "Spec"})
+	specStateData := readUntilType(t, spec, protocol.TypeRoomState, 2*time.Second)
+	var specState protocol.RoomStateMsg
+	if err := json.Unmarshal(specStateData, &specState); err != nil {
+		t.Fatalf("unmarshal spec state: %v", err)
+	}
+	if specState.YouRole != "spectator" {
+		t.Fatalf("expected youRole=spectator, got %q", specState.YouRole)
+	}
+	var botSlot string
+	for _, s := range specState.Slots {
+		if s.IsBot {
+			botSlot = s.SlotID
+			break
+		}
+	}
+	if botSlot == "" {
+		t.Fatalf("expected a bot slot to claim")
+	}
+	sendJSON(t, spec, protocol.ClaimSlotMsg{Type: protocol.TypeClaimSlot, SlotID: botSlot})
+	claimed := readUntilType(t, spec, protocol.TypeRoomState, 2*time.Second)
+	if err := json.Unmarshal(claimed, &specState); err != nil {
+		t.Fatalf("unmarshal claim: %v", err)
+	}
+	foundClaim := false
+	for _, s := range specState.Slots {
+		if s.SlotID == botSlot && s.PendingClaimPlayerID == "spec" {
+			foundClaim = true
+		}
+	}
+	if !foundClaim {
+		t.Fatalf("expected pending claim on bot slot, got %+v", specState.Slots)
+	}
+
+	readUntilType(t, spec, protocol.TypeSnapshot, 3*time.Second)
+}

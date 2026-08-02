@@ -87,24 +87,27 @@ dispatch).
 
 | `type` | Campos | Descrição |
 | --- | --- | --- |
-| `create_room` | `teamSize` | Cria sala com times de 1 a 6 (capacidade = 2× teamSize) |
-| `join_room` | `roomId`, `name` | Entra numa sala existente (ainda sem time) |
+| `create_room` | `teamSize`, `fillBots?`, `botDifficulty?` | Cria sala (1–6); com `fillBots` o server preenche vagas restantes após o host escolher elemento |
+| `join_room` | `roomId`, `name` | Lobby: entra sem time. `in_progress`: entra como **espectador** |
+| `list_rooms` | — | Pede o catálogo de salas `lobby` + `in_progress` |
 | `select_team` | `team` (0\|1) | Escolhe/troca de time, alocando uma vaga |
-| `select_element` | `element` | Escolhe 1 dos 7 elementos do catálogo (GDD §8.1); rejeitado se já usado no time |
-| `add_bot` | `team`, `difficulty` | Preenche uma vaga vazia com bot (`easy`\|`normal`\|`hard`); elemento livre é escolhido automaticamente |
+| `select_element` | `element` | Escolhe 1 dos 7 elementos (GDD §8.1); unicidade por time |
+| `add_bot` | `team`, `difficulty` | Preenche uma vaga vazia com bot (`easy`\|`normal`\|`hard`) |
 | `remove_bot` | `slotId` | Remove um bot, liberando vaga e elemento |
+| `claim_slot` | `slotId` | Espectador reserva um bot para o **próximo rematch** (bot segue jogando) |
 | `set_ready` | `ready` | Alterna o estado "pronto" no lobby |
-| `start_match` | — | Pede início da partida (valida vagas + elementos); dispara o loop 60Hz |
-| `input` | `move`, `aim`, `charging`, `release` | Input do mago durante a partida |
+| `start_match` | — | Inicia (ou reinicia) a partida; dispara o loop 60Hz |
+| `input` | `move`, `aim`, `charging`, `release` | Input do mago durante a partida (no-op para espectador) |
 
 **Servidor → Cliente**
 
 | `type` | Campos | Descrição |
 | --- | --- | --- |
-| `room_state` | `roomId`, `teamSize`, `state`, `slots[]` | Broadcast a cada mudança de lobby |
+| `room_state` | `roomId`, `teamSize`, `state`, `slots[]`, `spectators[]?`, `youRole?`, `fillBots?` | Mudança de lobby / rematch |
+| `room_list` | `rooms[]` | Resposta a `list_rooms` |
 | `match_start` | — | Loop de simulação 60Hz iniciado |
-| `snapshot` | `tick`, `mages[]`, `projectiles[]`, `puddles[]` | Snapshot do mundo (~20Hz, a cada 3 ticks) |
-| `round_end` | `winnerTeam` | Time perdedor teve todos os magos eliminados (sem vidas) |
+| `snapshot` | `tick`, `mages[]`, `projectiles[]`, `puddles[]` | Snapshot do mundo (~20Hz); inclui espectadores |
+| `round_end` | `winnerTeam` | Fim da rodada → sala volta a `lobby` (rematch); claims aplicados |
 | `error` | `message` | Ação rejeitada / mensagem inválida |
 
 ## Simplificações conhecidas do v1 (registradas no GDD como próximos passos)
@@ -112,13 +115,10 @@ dispatch).
 - **Sem obstáculos/cover/linha de visão** na simulação — arena v1 é um
   retângulo aberto (`internal/game/config.go`).
 - **Desconexão em partida** apenas congela o input daquele mago (ele para de
-  se mover/atacar, mas continua no mundo); forfeit ou bot-takeover ainda não
-  implementado.
+  se mover/atacar, mas continua no mundo); forfeit / bot-takeover mid-round
+  ainda não implementado (join mid-match é via espectador + claim no rematch).
 - **Sem host explícito** — qualquer jogador na sala pode chamar `add_bot`/
   `remove_bot`/`start_match`, não só quem criou a sala.
 - **Sem limpeza de salas encerradas** — `room.Manager` mantém salas em
   memória indefinidamente; ok para dev/testes, precisa de um TTL/GC antes de
   produção.
-- **Integração com o cliente** (Three.js/Preact) com este protocolo
-  WebSocket ainda não começou — ver a skill `threejs-gameplay-systems`
-  quando essa fase começar.
