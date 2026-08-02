@@ -1,45 +1,39 @@
 # Handover — 2026-08-02
 
 ## What changed this session
-- Servidor Go completo em `server/`: `protocol`, `ws`, `game`, `bot`, `room`,
-  `match`, composition root em `cmd/mageserver` (dispatch + broadcast +
-  loop 60Hz). `go test ./...` passa, inclusive `cmd/mageserver` integration.
-- GDD 0.2: salas NxN, elemento único por time, pivot Node → Go (§7/§10/§14).
-- Skill de projeto `.cursor/skills/session-handover/`.
-- Claude Code passou a editar o **cliente** (`src/ui/Menus.tsx`,
-  `src/game/elements.ts`, Settings/CSS) enquanto o Cursor isolou trabalho
-  seguro na branch `cursor/safe-parallel` (worktree `../mage-craft-cursor`).
-- Nesta branch Cursor: `AGENTS.md` (ownership), `HANDOVER.md`, e
-  `server/cmd/magesmoke` (CLI de smoke do protocolo, sem tocar no
-  composition root).
+- Board de tarefas do **mínimo jogável** (integração client ↔ Go), com
+  critério de pronto e ownership. Canvas:
+  `~/.cursor/projects/.../canvases/mvp-jogavel-tarefas.canvas.tsx`.
+- Estado herdado: servidor Go completo; cliente com UI shell + lobby **local**
+  (`src/app/roomStore.ts`); SP vs AI jogável; `NetworkClient` ainda não existe.
 
 ## Key decisions (and why)
-- Servidor Go independente (sem compartilhar código TS) — não há
-  reaproveitamento direto entre stacks.
-- Pacote `match` como único ponto que une `room` + `game` + `bot`, para
-  `room` ficar lobby-only.
-- Trabalho paralelo: Cursor só cria paths novos fora das zonas quentes do
-  Claude (cliente + `cmd/mageserver` + `internal/{game,bot,room,match}`).
+- **MVP = 1v1 online com bot**, não 6x6 nem ranking — o Go já cobre NxN/bots;
+  o gap é só o cliente falando o protocolo.
+- Contas/`api/`, obstáculos Go, predição e forfeit ficam **P2** — não bloqueiam
+  “partida jogável”.
+- Critério de pronto: create room → add bot → select element → start →
+  snapshots → `round_end` → menu.
 
 ## Plan / todo status
-- Plan: `servidor_go_de_salas_por_time_*.plan.md` (home do Cursor)
-- Done: GDD update, skill session-handover, `game`, `bot`, `protocol`,
-  `ws`, `room`, `match`, wiring em `cmd/mageserver`, integration tests.
-- In progress (Claude): integração do cliente Three.js/Preact com o
-  protocolo WS.
-- Pending: desconexão mid-match (forfeit / bot takeover), obstáculos/LoS,
-  persistência/contas.
+- Plan: canvas `mvp-jogavel-tarefas` (substitui o “pending genérico” abaixo)
+- Done: Go `game`/`bot`/`room`/`match`/`protocol`/`ws`/`mageserver`;
+  `magesmoke`; SP offline; UI shell stub.
+- In progress (Claude): UI client — ainda sem fio WS.
+- Pending P0: NetworkClient → lobby real → online Game mode → interp →
+  input → POV → round_end UI → smoke humano+bot.
+- Pending P1: elementos no combate SP; HUD online; UX disconnect; menu
+  SP vs Online limpo.
+- Pending P2: predição; forfeit/bot-takeover; LoS Go; api PvP; NxN polish.
 
 ## Known issues / risks
-- Dois agentes no mesmo working tree já quase corromperam `internal/room`
-  (teste e implementação com APIs diferentes). Usar worktree/branch.
-- `server/README.md` no main pode ainda descrever o wiring como "não
-  plugado" — estava desatualizado no momento deste handover.
+- `roomStore` é local/demo — criar/entrar por código ainda não bate no Go.
+- Picker de elemento no client não muda o projétil SP (`SNOWBALL`).
+- Dois agentes: Claude na zona `src/**`; Cursor fora dela (`AGENTS.md`).
+- `gh` auth inválida neste ambiente — issues no GitHub não foram criadas.
 
 ## Next steps
-1. Claude: terminar o cliente falando o protocolo (`create_room` →
-   `snapshot` / `round_end`).
-2. Cursor: manter-se fora de `src/**` e `cmd/mageserver/**`; mergear
-   `cursor/safe-parallel` (magesmoke + AGENTS/HANDOVER) quando conveniente.
-3. Atualizar `server/README.md` uma vez só, após o merge, para refletir
-   `match` + `magesmoke`.
+1. Claude: `src/net/NetworkClient` + tipos do protocolo → ligar lobby do App.
+2. Claude: modo online (sem sim local) + interp + input + POV + round_end.
+3. Validar: `go run ./cmd/mageserver` + browser, 1v1 vs bot até `round_end`.
+4. Cursor: manter-se fora de `src/**`; merge `cursor/safe-parallel` quando ok.
