@@ -13,3 +13,6 @@ blob-report
 # Go server build output
 server/mageserver
 server/*.exe
+
+# Claude Code local worktrees
+.claude/

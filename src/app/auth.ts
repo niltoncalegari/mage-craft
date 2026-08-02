@@ -16,7 +16,7 @@ export interface UserProfile {
   /** Local duel wins recorded through the shell (synced from Settings when available). */
   wins: number;
   losses: number;
-  /** Favorite element id for display. */
+  /** Most-played element id (stat display on dashboard; not a loadout picker). */
   favoriteElement: string;
   /** Optional bio shown on the dashboard. */
   title: string;

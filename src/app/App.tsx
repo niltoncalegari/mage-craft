@@ -1,6 +1,12 @@
 import { render, type JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { getElement, isElementId, SELECTABLE_ELEMENTS, type ElementId } from '../game/elements';
+import {
+  getElement,
+  isElementId,
+  SELECTABLE_ELEMENTS,
+  toCssColor,
+  type ElementId,
+} from '../game/elements';
 import { ApiClient, type ElementStat, type MatchLogEntry, type RankingEntry, type UserSummary } from '../net/ApiClient';
 import { PortalScene } from '../render/PortalScene';
 import { ElementUsageChart } from './ElementUsageChart';
@@ -11,7 +17,6 @@ import {
   loginAccount,
   loginGuest,
   registerAccount,
-  updateProfile,
   type UserProfile,
 } from './auth';
 import {
@@ -120,12 +125,6 @@ function AppShell(props: AppProps): JSX.Element {
           <DashboardScreen
             user={user}
             stats={props.stats}
-            selectedElement={props.selectedElement}
-            onSelectElement={(el) => {
-              props.onSelectElement(el);
-              updateProfile({ favoriteElement: el });
-              setUser(getSession());
-            }}
             onPractice={() => props.actions.startPractice()}
             onBrowseRooms={() => {
               setRooms(listRooms());
@@ -289,8 +288,6 @@ function LoginScreen(props: {
 function DashboardScreen(props: {
   user: UserProfile;
   stats?: { wins: number; losses: number };
-  selectedElement: ElementId;
-  onSelectElement(element: ElementId): void;
   onPractice(): void;
   onBrowseRooms(): void;
   onCreateRoom(): void;
@@ -324,6 +321,17 @@ function DashboardScreen(props: {
     };
   }, [props.user.token]);
 
+  // Prefer the server-computed favorite (real usage across all matches) once
+  // it loads; guests and accounts still loading fall back to the locally
+  // stored field.
+  const favoriteId =
+    serverStats?.favoriteElement && isElementId(serverStats.favoriteElement)
+      ? serverStats.favoriteElement
+      : isElementId(props.user.favoriteElement)
+        ? props.user.favoriteElement
+        : 'fire';
+  const favorite = getElement(favoriteId);
+  const favoriteColor = toCssColor(favorite.color);
   return (
     <div class={`${styles.panel} ${styles.panelWide}`}>
       <div class={styles.panelHeader}>
@@ -350,20 +358,10 @@ function DashboardScreen(props: {
               <span>Losses</span>
             </div>
             {serverStats ? (
-              <>
-                <div class={styles.stat}>
-                  <b>{serverStats.kdr.toFixed(2)}</b>
-                  <span>KDR</span>
-                </div>
-                <div class={styles.stat}>
-                  <b>
-                    {serverStats.favoriteElement && isElementId(serverStats.favoriteElement)
-                      ? getElement(serverStats.favoriteElement).name
-                      : '—'}
-                  </b>
-                  <span>Top element</span>
-                </div>
-              </>
+              <div class={styles.stat}>
+                <b>{serverStats.kdr.toFixed(2)}</b>
+                <span>KDR</span>
+              </div>
             ) : null}
           </div>
           {!props.user.token ? (
@@ -374,19 +372,13 @@ function DashboardScreen(props: {
           <p class={styles.panelHint} style={{ marginTop: 14 }}>
             Favorite element
           </p>
-          <div class={styles.elementChips}>
-            {SELECTABLE_ELEMENTS.map((el) => (
-              <button
-                type="button"
-                key={el.id}
-                class={
-                  props.selectedElement === el.id ? `${styles.chip} ${styles.chipActive}` : styles.chip
-                }
-                onClick={() => props.onSelectElement(el.id)}
-              >
-                {el.name}
-              </button>
-            ))}
+          <div
+            class={styles.favoriteElement}
+            style={{ '--element-color': favoriteColor } as JSX.CSSProperties}
+            title={favorite.role}
+          >
+            <span class={styles.favoriteSwatch} aria-hidden="true" />
+            <span class={styles.favoriteName}>{favorite.name}</span>
           </div>
         </div>
 

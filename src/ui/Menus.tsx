@@ -113,7 +113,7 @@ const HOWTO: ReadonlyArray<{ heading: string; lines: ReadonlyArray<string> }> = 
     heading: 'Elements',
     lines: [
       'Before the match, pick one element — your conjuration for the whole fight (Alpha).',
-      'Fire: baseline pressure. Ice: slows on hit. Lightning: faster poke. Poison: leaves a ground puddle. Stone: heavy hit that can interrupt a charge.',
+      'Fire: baseline pressure. Ice: slows on hit. Lightning: faster poke. Poison: leaves a ground puddle. Stone: heavy hit that can interrupt a charge. Arcane: small impact blast. Wind: strong shove.',
       'Same input for every element; the difference is what happens on hit and on the ground.',
     ],
   },
