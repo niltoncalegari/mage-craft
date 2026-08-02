@@ -5,3 +5,7 @@ coverage
 .DS_Store
 *.log
 .vite
+
+# Go server build output
+server/mageserver
+server/*.exe
