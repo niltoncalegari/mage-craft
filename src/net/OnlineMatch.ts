@@ -65,7 +65,9 @@ export class OnlineMatch {
     this.statusEl.style.cssText =
       'margin:0;padding:8px 14px;background:rgba(15,23,42,.72);border:1px solid rgba(148,163,184,.35);border-radius:6px;font-size:14px;';
     this.overlay.append(this.statusEl);
-    this.container.style.position = 'relative';
+    if (getComputedStyle(this.container).position === 'static') {
+      this.container.style.position = 'relative';
+    }
     this.container.append(this.overlay);
     this.updateStatus();
 
