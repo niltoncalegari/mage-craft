@@ -1,12 +1,16 @@
 package game
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+	"sort"
+)
 
-// World is the authoritative simulation state for one match (GDD §14). It has
-// no dependency on obstacles/cover yet (v1 arena is an open rectangle); that
-// is left for a follow-up pass once the room/lobby and basic combat loop are
-// proven out.
+// World is the authoritative simulation state for one match (GDD §14). It
+// plays on the same JSON-defined arena the client renders (see arena.go),
+// including obstacle collision, projectile blocking and line-of-sight.
 type World struct {
+	Arena       Arena
 	Mages       map[string]*Mage
 	Projectiles map[string]*Projectile
 	Puddles     map[string]*Puddle
@@ -19,7 +23,14 @@ type World struct {
 }
 
 func NewWorld() *World {
+	return NewWorldWithArena(DefaultArena())
+}
+
+// NewWorldWithArena builds a world on a specific arena (used by tests that
+// need a bare rectangle instead of the default decorated map).
+func NewWorldWithArena(arena Arena) *World {
 	return &World{
+		Arena:       arena,
 		Mages:       make(map[string]*Mage),
 		Projectiles: make(map[string]*Projectile),
 		Puddles:     make(map[string]*Puddle),
@@ -38,7 +49,7 @@ func (w *World) AddMage(id string, team Team, element ElementID, isBot bool) *Ma
 		Team:      team,
 		IsBot:     isBot,
 		Element:   element,
-		Position:  spawnPoint(team, idx),
+		Position:  w.Arena.SpawnFor(team, idx),
 		Facing:    Vec2{X: facingSignForTeam(team)},
 		Health:    MaxHealth,
 		MaxHealth: MaxHealth,
@@ -69,6 +80,7 @@ func (w *World) Step(dt float64) {
 	for _, m := range w.Mages {
 		w.updateMage(m, dt)
 	}
+	w.separateMages()
 	w.updateProjectiles(dt)
 	w.updatePuddles(dt)
 	w.checkRoundEnd()
@@ -105,15 +117,31 @@ func (w *World) updateMage(m *Mage, dt float64) {
 	}
 
 	if m.StunTimer > 0 {
+		// Knockback is a decaying slide over the stun window (mirrors the
+		// client's DamageSystem.ts), not an instant position jump.
+		m.Position = w.resolveMove(m.Position, m.KnockbackVelocity.Scale(dt))
+		m.KnockbackVelocity = m.KnockbackVelocity.Scale(math.Exp(-KnockbackDamping * dt))
+		if m.KnockbackVelocity.LengthSq() <= KnockbackStopSpeed*KnockbackStopSpeed {
+			m.KnockbackVelocity = Vec2{}
+		}
+
 		m.StunTimer = decay(m.StunTimer, dt)
 		m.State = MageStunned
+		if m.StunTimer == 0 {
+			m.KnockbackVelocity = Vec2{}
+			m.State = MageIdle
+		}
 		return
 	}
 
 	if m.RecoveryTimer > 0 {
 		m.RecoveryTimer = decay(m.RecoveryTimer, dt)
 		m.State = MageRecovering
-		return
+		if m.RecoveryTimer == 0 {
+			m.State = MageIdle
+		}
+		// No early return: recovery gates re-charging (via ThrowCooldown, which
+		// is longer) but must not freeze the mage in place.
 	}
 
 	def, _ := ElementDefFor(m.Element)
@@ -129,8 +157,10 @@ func (w *World) updateMage(m *Mage, dt float64) {
 		if m.Charge > 1 {
 			m.Charge = 1
 		}
-		if aim := input.Aim.Sub(m.Position); aim.LengthSq() > 0.0001 {
-			m.Facing = aim.Normalized()
+		// Turn toward the aim point rather than snapping, and ignore a cursor
+		// sitting on top of the mage (mirrors the client's AIM deadzone/turn).
+		if aim := input.Aim.Sub(m.Position); aim.Length() > AimDeadzone {
+			m.Facing = m.Facing.RotateTowards(aim.Normalized(), AimTurnSpeed*dt)
 		}
 	default:
 		if m.Charging {
@@ -141,27 +171,100 @@ func (w *World) updateMage(m *Mage, dt float64) {
 		}
 	}
 
-	if !m.Charging && m.State != MageRecovering {
-		w.moveMage(m, input, dt)
-	}
+	// Charging and recovering do NOT root a mage — only stun/freeze/death do,
+	// and those already returned above. This mirrors the client's
+	// canAcceptOrders (Hit/Frozen/Defeated only), where you keep walking while
+	// holding a charge.
+	w.moveMage(m, input, dt)
 }
 
 func (w *World) moveMage(m *Mage, input MageInput, dt float64) {
-	move := input.Move
-	if move.LengthSq() > 1 {
-		move = move.Normalized()
-	}
-	if move.LengthSq() == 0 {
-		m.State = MageIdle
-		return
-	}
+	move := input.Move.ClampLength(1)
 
 	speed := MoveSpeed
 	if m.SlowFactor > 0 {
 		speed *= 1 - m.SlowFactor
 	}
-	m.Position = clampToArena(m.Position.Add(move.Scale(speed * dt)))
-	m.State = MageMoving
+
+	// Accelerate toward the desired velocity instead of snapping to it, so
+	// starts and stops have the same weight as practice mode.
+	m.Velocity = m.Velocity.MoveTowards(move.Scale(speed), Acceleration*dt).ClampLength(speed)
+
+	if m.Velocity.LengthSq() <= 1e-6 {
+		m.Velocity = Vec2{}
+		if !m.Charging && m.State != MageRecovering {
+			m.State = MageIdle
+		}
+		return
+	}
+
+	m.Position = w.resolveMove(m.Position, m.Velocity.Scale(dt))
+
+	// While charging, Facing is the aim direction (and the throw direction),
+	// so movement must not steer it.
+	if !m.Charging {
+		m.Facing = m.Facing.RotateTowards(m.Velocity.Normalized(), TurnSpeed*dt)
+		if m.State != MageRecovering {
+			m.State = MageMoving
+		}
+	}
+}
+
+// separateMages pushes overlapping mages apart so they don't stack on one
+// tile, mirroring MovementSystem.resolvePlayerSpacing.
+func (w *World) separateMages() {
+	mages := make([]*Mage, 0, len(w.Mages))
+	for _, m := range w.Mages {
+		if m.Alive {
+			mages = append(mages, m)
+		}
+	}
+	// Map iteration order is random; sort so the resolution is deterministic
+	// across ticks and across servers replaying the same inputs.
+	sort.Slice(mages, func(i, j int) bool { return mages[i].ID < mages[j].ID })
+
+	minDist := math.Max(2*MageRadius, Spacing)
+	for i := 0; i < len(mages); i++ {
+		for j := i + 1; j < len(mages); j++ {
+			a, b := mages[i], mages[j]
+			delta := a.Position.Sub(b.Position)
+			distSq := delta.LengthSq()
+			if distSq >= minDist*minDist {
+				continue
+			}
+			if distSq <= 1e-12 {
+				a.Position.X -= minDist / 2
+				b.Position.X += minDist / 2
+				continue
+			}
+			dist := math.Sqrt(distSq)
+			push := (minDist - dist) / 2
+			n := delta.Scale(1 / dist)
+			a.Position = w.Arena.Clamp(a.Position.Add(n.Scale(push)), MageRadius)
+			b.Position = w.Arena.Clamp(b.Position.Sub(n.Scale(push)), MageRadius)
+		}
+	}
+}
+
+// resolveMove applies a movement step against arena bounds and obstacles,
+// sliding along a blocker instead of sticking to it: if the combined step is
+// blocked, each axis is retried on its own so walking into a wall diagonally
+// still slides along it.
+func (w *World) resolveMove(from, step Vec2) Vec2 {
+	if next := w.Arena.Clamp(from.Add(step), MageRadius); !w.Arena.BlocksMovementAt(next, MageRadius) {
+		return next
+	}
+	if step.X != 0 {
+		if next := w.Arena.Clamp(Vec2{X: from.X + step.X, Y: from.Y}, MageRadius); !w.Arena.BlocksMovementAt(next, MageRadius) {
+			return next
+		}
+	}
+	if step.Y != 0 {
+		if next := w.Arena.Clamp(Vec2{X: from.X, Y: from.Y + step.Y}, MageRadius); !w.Arena.BlocksMovementAt(next, MageRadius) {
+			return next
+		}
+	}
+	return from
 }
 
 func (w *World) releaseThrow(m *Mage, def ElementDef) {
@@ -210,7 +313,8 @@ func (w *World) updateProjectiles(dt float64) {
 			continue
 		}
 
-		if p.Age > MaxProjectileLifetime || p.Height <= 0 || outOfArena(p.Position) {
+		if p.Age > MaxProjectileLifetime || p.Height <= 0 || w.Arena.OutOfBounds(p.Position) ||
+			w.Arena.BlocksProjectileAt(p.Position, p.Radius, p.Height) {
 			w.onProjectileExpire(p)
 			delete(w.Projectiles, id)
 		}
@@ -329,7 +433,9 @@ func (w *World) dealDamage(m *Mage, amount float64, knockDir Vec2, knockMag floa
 	m.Health -= amount
 	if knockMag > 0 {
 		if n := knockDir.Normalized(); n.LengthSq() > 0 {
-			m.Position = clampToArena(m.Position.Add(n.Scale(knockMag)))
+			// Additive initial velocity, decayed over the stun window in
+			// updateMage — not an instant teleport (see KnockbackDamping).
+			m.KnockbackVelocity = m.KnockbackVelocity.Add(n.Scale(knockMag))
 		}
 	}
 	m.StunTimer = HitStun
@@ -344,6 +450,8 @@ func (w *World) kill(m *Mage) {
 	m.Alive = false
 	m.Charging = false
 	m.Charge = 0
+	m.KnockbackVelocity = Vec2{}
+	m.Velocity = Vec2{}
 	m.State = MageDead
 	m.Lives--
 
@@ -355,7 +463,8 @@ func (w *World) kill(m *Mage) {
 }
 
 func (w *World) respawn(m *Mage) {
-	m.Position = spawnPoint(m.Team, 0)
+	m.Position = w.Arena.SpawnFor(m.Team, 0)
+	m.Velocity = Vec2{}
 	m.Health = m.MaxHealth
 	m.Alive = true
 	m.State = MageIdle
@@ -423,33 +532,3 @@ func facingSignForTeam(t Team) float64 {
 	return 1
 }
 
-func spawnPoint(team Team, idx int) Vec2 {
-	x := -ArenaWidth/4 + 0.0
-	if team == TeamB {
-		x = ArenaWidth / 4
-	}
-	y := (float64(idx) - 2.5) * 1.5
-	return Vec2{X: x, Y: y}
-}
-
-func clampToArena(pos Vec2) Vec2 {
-	halfW := ArenaWidth/2 - MageRadius
-	halfH := ArenaHeight/2 - MageRadius
-	if pos.X > halfW {
-		pos.X = halfW
-	} else if pos.X < -halfW {
-		pos.X = -halfW
-	}
-	if pos.Y > halfH {
-		pos.Y = halfH
-	} else if pos.Y < -halfH {
-		pos.Y = -halfH
-	}
-	return pos
-}
-
-func outOfArena(pos Vec2) bool {
-	halfW := ArenaWidth / 2
-	halfH := ArenaHeight / 2
-	return pos.X < -halfW || pos.X > halfW || pos.Y < -halfH || pos.Y > halfH
-}

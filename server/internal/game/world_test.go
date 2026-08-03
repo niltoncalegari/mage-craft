@@ -5,6 +5,76 @@ import (
 	"testing"
 )
 
+// newCombatWorld builds a world on a bare rectangle. These are unit tests of
+// combat mechanics, so they place mages at explicit coordinates and must not
+// be perturbed by the default map's obstacles or spawn points — arena_test.go
+// covers the map itself.
+func newCombatWorld() *World {
+	return NewWorldWithArena(Arena{Width: 24, Height: 16})
+}
+
+// Practice mode gates movement only on Hit/Frozen/Defeated (canAcceptOrders),
+// so holding a charge must not root the mage. This regression bit players
+// online: charging locked you in place.
+func TestWorld_MageCanMoveWhileCharging(t *testing.T) {
+	w := newCombatWorld()
+	m := w.AddMage("p1", TeamA, ElementFire, false)
+	m.Position = Vec2{}
+	start := m.Position
+
+	w.SetInput("p1", MageInput{Move: Vec2{X: 0, Y: 1}, Aim: Vec2{X: 10}, Charging: true})
+	stepN(w, 30, SimDt)
+
+	if !m.Charging {
+		t.Fatalf("expected the mage to still be charging")
+	}
+	if m.Position.Sub(start).Length() < 1 {
+		t.Errorf("expected the charging mage to keep moving, travelled %.3f", m.Position.Sub(start).Length())
+	}
+}
+
+func TestWorld_MageCanMoveWhileRecovering(t *testing.T) {
+	w := newCombatWorld()
+	m := w.AddMage("p1", TeamA, ElementFire, false)
+	m.Position = Vec2{}
+
+	// Charge, release, then keep walking through the recovery window.
+	w.SetInput("p1", MageInput{Aim: Vec2{X: 10}, Charging: true})
+	stepN(w, int(ChargeTime/SimDt)+2, SimDt)
+	w.SetInput("p1", MageInput{Aim: Vec2{X: 10}, Release: true})
+	w.Step(SimDt)
+
+	if m.RecoveryTimer <= 0 {
+		t.Fatalf("expected the mage to be recovering after a throw")
+	}
+	start := m.Position
+	w.SetInput("p1", MageInput{Move: Vec2{X: 0, Y: 1}})
+	stepN(w, 10, SimDt)
+
+	if m.Position.Sub(start).Length() < 0.1 {
+		t.Errorf("expected a recovering mage to still move, travelled %.3f", m.Position.Sub(start).Length())
+	}
+}
+
+// Aiming turns toward the cursor over time rather than snapping (AIM.turnSpeed).
+func TestWorld_FacingTurnsGraduallyTowardAim(t *testing.T) {
+	w := newCombatWorld()
+	m := w.AddMage("p1", TeamA, ElementFire, false)
+	m.Position = Vec2{}
+	m.Facing = Vec2{X: 1}
+
+	w.SetInput("p1", MageInput{Aim: Vec2{X: -10}, Charging: true})
+	w.Step(SimDt)
+
+	// One tick at 15 rad/s is a quarter radian — nowhere near the half turn.
+	if m.Facing.X < 0 {
+		t.Errorf("expected facing to turn gradually, but it snapped to %+v", m.Facing)
+	}
+	if m.Facing.Y == 0 {
+		t.Errorf("expected facing to have started rotating, got %+v", m.Facing)
+	}
+}
+
 func stepN(w *World, n int, dt float64) {
 	for i := 0; i < n; i++ {
 		w.Step(dt)
@@ -12,7 +82,7 @@ func stepN(w *World, n int, dt float64) {
 }
 
 func TestWorld_MageMovesTowardInput(t *testing.T) {
-	w := NewWorld()
+	w := newCombatWorld()
 	m := w.AddMage("p1", TeamA, ElementFire, false)
 	start := m.Position
 
@@ -30,7 +100,7 @@ func TestWorld_MageMovesTowardInput(t *testing.T) {
 }
 
 func TestWorld_ChargeAndReleaseSpawnsProjectile(t *testing.T) {
-	w := NewWorld()
+	w := newCombatWorld()
 	m := w.AddMage("p1", TeamA, ElementFire, false)
 	aim := m.Position.Add(Vec2{X: 10})
 
@@ -69,7 +139,7 @@ func fullyChargeAndRelease(w *World, id string, target Vec2) {
 }
 
 func TestWorld_ProjectileHitsEnemyAppliesDamageAndKnockback(t *testing.T) {
-	w := NewWorld()
+	w := newCombatWorld()
 	attacker := w.AddMage("atk", TeamA, ElementFire, false)
 	target := w.AddMage("def", TeamB, ElementFire, false)
 	attacker.Position = Vec2{X: -2, Y: 0}
@@ -92,6 +162,9 @@ func TestWorld_ProjectileHitsEnemyAppliesDamageAndKnockback(t *testing.T) {
 	if target.Health >= target.MaxHealth {
 		t.Errorf("expected damage to be applied, health=%.1f", target.Health)
 	}
+	// Knockback is now a decaying slide applied over the stun window (not an
+	// instant jump on the impact tick itself) — step a bit further to see it.
+	stepN(w, 5, SimDt)
 	if target.Position.DistanceTo(targetStart) <= 0 {
 		t.Errorf("expected knockback to move the target, stayed at %+v", target.Position)
 	}
@@ -101,7 +174,7 @@ func TestWorld_ProjectileHitsEnemyAppliesDamageAndKnockback(t *testing.T) {
 }
 
 func TestWorld_IceAppliesSlow(t *testing.T) {
-	w := NewWorld()
+	w := newCombatWorld()
 	attacker := w.AddMage("atk", TeamA, ElementIce, false)
 	target := w.AddMage("def", TeamB, ElementFire, false)
 	attacker.Position = Vec2{X: -2, Y: 0}
@@ -121,7 +194,7 @@ func TestWorld_IceAppliesSlow(t *testing.T) {
 }
 
 func TestWorld_PoisonSpawnsPuddleAndTicksDamage(t *testing.T) {
-	w := NewWorld()
+	w := newCombatWorld()
 	attacker := w.AddMage("atk", TeamA, ElementPoison, false)
 	target := w.AddMage("def", TeamB, ElementFire, false)
 	attacker.Position = Vec2{X: -2, Y: 0}
@@ -147,7 +220,7 @@ func TestWorld_PoisonSpawnsPuddleAndTicksDamage(t *testing.T) {
 }
 
 func TestWorld_StoneInterruptsCharge(t *testing.T) {
-	w := NewWorld()
+	w := newCombatWorld()
 	attacker := w.AddMage("atk", TeamA, ElementStone, false)
 	target := w.AddMage("def", TeamB, ElementFire, false)
 	attacker.Position = Vec2{X: -2, Y: 0}
@@ -174,7 +247,7 @@ func TestWorld_StoneInterruptsCharge(t *testing.T) {
 }
 
 func TestWorld_DeathRespawnAndLives(t *testing.T) {
-	w := NewWorld()
+	w := newCombatWorld()
 	m := w.AddMage("p1", TeamA, ElementFire, false)
 	m.Health = 1
 	startLives := m.Lives
@@ -205,7 +278,7 @@ func TestWorld_DeathRespawnAndLives(t *testing.T) {
 }
 
 func TestWorld_RoundEndsWhenTeamEliminated(t *testing.T) {
-	w := NewWorld()
+	w := newCombatWorld()
 	w.AddMage("a1", TeamA, ElementFire, false)
 	loser := w.AddMage("b1", TeamB, ElementFire, false)
 

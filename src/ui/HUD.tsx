@@ -2,6 +2,7 @@ import { render, type JSX } from 'preact';
 import type { GameRenderer } from '../core/Game';
 import { PLAYER, TEAM_COLORS } from '../game/config';
 import { formatClock } from '../game/score';
+import type { EntityId } from '../ecs/Entity';
 import { PlayerState, Team, type Player } from '../game/types';
 import type { World } from '../game/World';
 import styles from './HUD.module.css';
@@ -76,6 +77,8 @@ export class HUD implements GameRenderer {
     private readonly getStats: () => Stats,
     private readonly isVisible: () => boolean,
     private readonly showFps: () => boolean,
+    /** Online-only: resolves which player entity is "mine" (offline assumes the single Team.Player unit). */
+    private readonly getLocalId?: () => EntityId | null,
   ) {
     this.host = document.createElement('div');
     this.host.style.pointerEvents = 'none';
@@ -104,11 +107,13 @@ export class HUD implements GameRenderer {
 
   private updateStats(): void {
     const { refs, world } = this;
-    refs.lives.textContent = `♥ ${world.playerLives}`;
     refs.enemies.textContent = `Enemies ${world.countLiving(Team.Enemy)}`;
     refs.time.textContent = `⏱ ${formatClock(world.time)}`;
 
-    const fighter = world.players.find((p) => p.team === Team.Player) ?? null;
+    const fighter = this.getLocalId
+      ? (world.players.find((p) => p.id === this.getLocalId!()) ?? null)
+      : (world.players.find((p) => p.team === Team.Player) ?? null);
+    refs.lives.textContent = `♥ ${fighter?.lives ?? world.playerLives}`;
     if (!fighter || !fighter.alive) {
       refs.fill.style.width = '0%';
       refs.health.textContent = 'Respawning…';

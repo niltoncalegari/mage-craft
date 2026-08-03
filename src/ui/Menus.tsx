@@ -58,6 +58,10 @@ export interface MenuActions {
   /** Optional local leaderboard entries (already sorted, highest first). */
   leaderboard?: ReadonlyArray<ScoreEntry>;
   onClearLeaderboard?(): void;
+  /** Overrides the pause screen's "Restart" button label (e.g. "Leave Match" online). */
+  restartLabel?: string;
+  /** Overrides the result screen's "Play Again" button label (e.g. "Back to Lobby" online). */
+  playAgainLabel?: string;
 }
 
 /** Outcome of a finished match, shown on the result screen. */
@@ -69,6 +73,8 @@ export interface RunResult {
   timeSeconds: number;
   livesSpent: number;
   difficulty: string;
+  /** Set false to hide the score/time/lives lines (no scoring concept, e.g. online matches). Defaults true. */
+  showScore?: boolean;
 }
 
 type TabId = 'options' | 'howto' | 'leaderboard';
@@ -404,7 +410,7 @@ function MainScreen(props: {
   );
 }
 
-function PauseScreen({ handlers }: { handlers: MenusHandlers }): JSX.Element {
+function PauseScreen({ handlers, restartLabel }: { handlers: MenusHandlers; restartLabel: string }): JSX.Element {
   return (
     <div class={styles.screen}>
       <div class={styles.backdrop} />
@@ -413,15 +419,24 @@ function PauseScreen({ handlers }: { handlers: MenusHandlers }): JSX.Element {
         <p class={styles.text}>Catch your breath — the arena waits.</p>
         <div class={styles.actions}>
           <Button label="Resume" onClick={handlers.onResume} />
-          <Button label="Restart" onClick={handlers.onRestart} />
+          <Button label={restartLabel} onClick={handlers.onRestart} />
         </div>
       </div>
     </div>
   );
 }
 
-function ResultScreen({ result, handlers }: { result: RunResult; handlers: MenusHandlers }): JSX.Element {
+function ResultScreen({
+  result,
+  handlers,
+  playAgainLabel,
+}: {
+  result: RunResult;
+  handlers: MenusHandlers;
+  playAgainLabel: string;
+}): JSX.Element {
   const won = result.won;
+  const showScore = result.showScore ?? true;
   const screenClass = `${styles.screen} ${won ? styles.victory : styles.defeat}`;
   return (
     <div class={screenClass}>
@@ -435,17 +450,17 @@ function ResultScreen({ result, handlers }: { result: RunResult; handlers: Menus
             ? 'You cleared the arena. The rival squad falls.'
             : 'The rival mages claimed this round. Adjust your element and try again.'}
         </p>
-        {won ? (
+        {won && showScore ? (
           <p class={styles.resultScore}>
             {`Score ${result.score}${result.rank > 0 ? `  •  #${result.rank} on the board` : ''}`}
           </p>
         ) : null}
-        {won ? (
+        {won && showScore ? (
           <p class={styles.resultDetail}>
             {`Time ${formatClock(result.timeSeconds)}  •  Lives spent ${result.livesSpent}  •  ${capitalize(result.difficulty)}`}
           </p>
         ) : null}
-        <Button label="Play Again" onClick={handlers.onPlayAgain} />
+        <Button label={playAgainLabel} onClick={handlers.onPlayAgain} />
       </div>
     </div>
   );
@@ -463,7 +478,9 @@ function MenusView(props: {
   handlers: MenusHandlers;
 }): JSX.Element | null {
   if (props.screen === 'result' && props.result) {
-    return <ResultScreen result={props.result} handlers={props.handlers} />;
+    return (
+      <ResultScreen result={props.result} handlers={props.handlers} playAgainLabel={props.actions.playAgainLabel ?? 'Play Again'} />
+    );
   }
   if (props.screen === 'main') {
     return (
@@ -479,7 +496,7 @@ function MenusView(props: {
     );
   }
   if (props.screen === 'pause') {
-    return <PauseScreen handlers={props.handlers} />;
+    return <PauseScreen handlers={props.handlers} restartLabel={props.actions.restartLabel ?? 'Restart'} />;
   }
   return null;
 }
@@ -509,11 +526,14 @@ export class Menus {
     container: HTMLElement,
     events: EventBus,
     private readonly actions: MenuActions,
+    /** When false, skips the main "Start Duel" screen — the match is already in progress (e.g. online). */
+    startVisible = true,
   ) {
     this.muted = actions.muted ?? false;
     this.showFps = actions.showFps ?? false;
     this.playerName = actions.playerName ?? '';
     this.selectedElement = actions.selectedElement;
+    this.mainVisible = startVisible;
 
     this.host = document.createElement('div');
     this.host.className = styles.root;

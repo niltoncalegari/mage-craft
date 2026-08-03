@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { getElement, isElementId, SELECTABLE_ELEMENTS, toCssColor, type ElementId } from '../game/elements';
 import { ApiClient, type ElementStat, type MatchLogEntry, type RankingEntry, type UserSummary } from '../net/ApiClient';
 import { LobbyBridge } from '../net/lobbyBridge';
-import { OnlineMatch } from '../net/OnlineMatch';
+import { loadOnlineMapData, OnlineMatch } from '../net/OnlineMatch';
 import { PortalScene } from '../render/PortalScene';
 import { ElementUsageChart } from './ElementUsageChart';
 import styles from './App.module.css';
@@ -70,7 +70,7 @@ function AppShell(props: AppProps): JSX.Element {
   const matchHostRef = useRef<HTMLDivElement>(null);
   const onlineMatchRef = useRef<OnlineMatch | null>(null);
   const bridgeRef = useRef<LobbyBridge | null>(null);
-  const metaRef = useRef({ isHost: false, roomName: '', screen: 'title' as AppScreen, spectating: false });
+  const metaRef = useRef({ isHost: false, roomName: '', screen: 'title' as AppScreen, spectating: false, awaitingResultDismiss: false });
 
   const [screen, setScreen] = useState<AppScreen>(() => (getSession() ? 'dashboard' : 'title'));
   const [user, setUser] = useState<UserProfile | null>(() => getSession());
@@ -83,7 +83,13 @@ function AppShell(props: AppProps): JSX.Element {
   const [spectating, setSpectating] = useState(false);
   const [claimNotice, setClaimNotice] = useState<string | null>(null);
 
-  metaRef.current = { isHost, roomName: metaRef.current.roomName, screen, spectating };
+  metaRef.current = {
+    isHost,
+    roomName: metaRef.current.roomName,
+    screen,
+    spectating,
+    awaitingResultDismiss: metaRef.current.awaitingResultDismiss,
+  };
 
   const chooseElement = (element: ElementId): void => {
     setSelectedElement(element);
@@ -103,7 +109,10 @@ function AppShell(props: AppProps): JSX.Element {
         setRoom(detail);
         setSpectating(detail.youRole === 'spectator');
         rememberRoom(detail);
-        if (msg.state === 'lobby' && metaRef.current.screen === 'onlineMatch') {
+        // A round-end room_state (rematch lobby) arrives right behind round_end —
+        // don't yank the match view away while the victory/defeat screen is up;
+        // onLeaveMatch below navigates once the player dismisses it.
+        if (msg.state === 'lobby' && metaRef.current.screen === 'onlineMatch' && !metaRef.current.awaitingResultDismiss) {
           onlineMatchRef.current?.dispose();
           onlineMatchRef.current = null;
           setScreen('lobby');
@@ -113,13 +122,15 @@ function AppShell(props: AppProps): JSX.Element {
         setRooms(summariesFromServer(msg.rooms));
         setOnline(true);
       },
-      onMatchStart: () => setScreen('onlineMatch'),
+      onMatchStart: () => {
+        metaRef.current.awaitingResultDismiss = false;
+        setScreen('onlineMatch');
+      },
       onSnapshot: (msg) => onlineMatchRef.current?.applySnapshot(msg),
-      onRoundEnd: () => {
+      onRoundEnd: (msg) => {
         setClaimNotice('Round over — rematch lobby. Claimed bots become your seat.');
-        onlineMatchRef.current?.dispose();
-        onlineMatchRef.current = null;
-        setScreen('lobby');
+        metaRef.current.awaitingResultDismiss = true;
+        onlineMatchRef.current?.showRoundResult(msg.winnerTeam);
       },
       onError: (msg) => setNetError(msg.message),
       onClose: () => setOnline(false),
@@ -135,12 +146,43 @@ function AppShell(props: AppProps): JSX.Element {
 
   useEffect(() => {
     if (screen !== 'onlineMatch' || !matchHostRef.current || !bridgeRef.current) return;
+    const host = matchHostRef.current;
+    const net = bridgeRef.current.net;
+    const localPlayerId = bridgeRef.current.id;
+    let cancelled = false;
+
     onlineMatchRef.current?.dispose();
-    onlineMatchRef.current = new OnlineMatch(matchHostRef.current, bridgeRef.current.net, {
-      spectating: metaRef.current.spectating,
-      localPlayerId: bridgeRef.current.id,
-    });
+    onlineMatchRef.current = null;
+
+    // The map fetch is cached after the first match, so in practice this
+    // resolves within the same frame; snapshots that arrive first are simply
+    // dropped, and the next one (~50ms later) repopulates the whole world.
+    void loadOnlineMapData()
+      .then((mapData) => {
+        if (cancelled) return;
+        onlineMatchRef.current = new OnlineMatch(host, net, {
+          spectating: metaRef.current.spectating,
+          localPlayerId,
+          mapData,
+          onLeaveMatch: (reason) => {
+            metaRef.current.awaitingResultDismiss = false;
+            onlineMatchRef.current?.dispose();
+            onlineMatchRef.current = null;
+            if (reason === 'roundEnd') {
+              setScreen('lobby');
+            } else {
+              setScreen('rooms');
+              void refreshRooms();
+            }
+          },
+        });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setNetError(err instanceof Error ? err.message : 'Could not load the arena map');
+      });
+
     return () => {
+      cancelled = true;
       onlineMatchRef.current?.dispose();
       onlineMatchRef.current = null;
     };

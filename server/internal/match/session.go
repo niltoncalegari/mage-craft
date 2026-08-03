@@ -77,6 +77,7 @@ type Session struct {
 
 	world *game.World
 	bots  map[string]bot.Difficulty
+	brain *bot.Brain
 	rng   *rand.Rand
 	tick  uint64
 	ended bool
@@ -226,6 +227,9 @@ func (s *Session) StartMatch() error {
 
 	s.world = world
 	s.bots = difficulties
+	// Fresh brain per match: the AI keeps per-bot decision/dodge timers that
+	// must not carry over from the previous round.
+	s.brain = bot.NewBrain(s.rng)
 	s.tick = 0
 	s.ended = false
 	return nil
@@ -254,7 +258,7 @@ func (s *Session) Tick() {
 		return
 	}
 
-	bot.Step(s.world, s.bots, s.rng)
+	s.brain.Step(s.world, s.bots, game.SimDt)
 	s.world.Step(game.SimDt)
 	s.tick++
 

@@ -55,6 +55,8 @@ export interface Player extends Transform2D, Health {
   immunityTimer: number;
   /** Seconds of remaining speed boost from a pickup buff. */
   speedTimer: number;
+  /** Lives remaining; only set by the online snapshot sync (unused offline). */
+  lives?: number;
 }
 
 /**
@@ -93,6 +95,18 @@ export interface Pickup {
   position: Vector2;
   radius: number;
   active: boolean;
+}
+
+/**
+ * A ground hazard left by the poison element (online-only; no offline
+ * precedent — the offline sim has no element-tied mechanics).
+ */
+export interface Puddle {
+  readonly id: EntityId;
+  position: Vector2;
+  radius: number;
+  /** Seconds of effect remaining. */
+  remaining: number;
 }
 
 /**

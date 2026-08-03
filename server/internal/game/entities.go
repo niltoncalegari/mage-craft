@@ -47,6 +47,9 @@ type Mage struct {
 
 	Position Vec2
 	Facing   Vec2
+	// Velocity is the current movement velocity, accelerated toward the input
+	// direction rather than snapped, and read by the bot AI for aim leading.
+	Velocity Vec2
 
 	Health    float64
 	MaxHealth float64
@@ -60,7 +63,8 @@ type Mage struct {
 	ThrowCooldown float64
 	RecoveryTimer float64
 
-	StunTimer float64
+	StunTimer         float64
+	KnockbackVelocity Vec2
 
 	SlowFactor float64
 	SlowTimer  float64

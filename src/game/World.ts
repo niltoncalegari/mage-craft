@@ -4,7 +4,7 @@ import { Random } from '../utils/Random';
 import type { ObjectPool } from '../utils/ObjectPool';
 import { createSnowballPool } from './Snowball';
 import { createPlayer } from './Player';
-import { type Arena, type Pickup, type Player, type Snowball, Team } from './types';
+import { type Arena, type Pickup, type Player, type Puddle, type Snowball, Team } from './types';
 
 /**
  * Mutable simulation state (design §7). Pure data + light lifecycle helpers;
@@ -15,6 +15,8 @@ export class World {
   readonly players: Player[] = [];
   readonly snowballs: Snowball[] = [];
   readonly pickups: Pickup[] = [];
+  /** Poison-element ground hazards; only populated online (empty offline). */
+  readonly puddles: Puddle[] = [];
   readonly snowballPool: ObjectPool<Snowball> = createSnowballPool();
   readonly rng: Random;
 

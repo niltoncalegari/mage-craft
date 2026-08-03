@@ -10,13 +10,21 @@ const (
 	// SimDt is the fixed timestep in seconds.
 	SimDt = 1.0 / SimHz
 
-	// Arena is a simple open rectangle in v1 (no obstacles/cover yet).
-	ArenaWidth  = 24.0
-	ArenaHeight = 16.0
+	// The arena is loaded from map JSON (see arena.go / DefaultMapName), not
+	// hardcoded — its size and obstacles come from the same file the client
+	// renders.
 
 	MageRadius = 0.5
 	MaxHealth  = 100.0
 	MoveSpeed  = 6.0 // world units/sec
+	// Acceleration/TurnSpeed/AimTurnSpeed/Spacing mirror the client's
+	// PLAYER.acceleration / PLAYER.turnSpeed / AIM.turnSpeed / PLAYER.spacing
+	// so online movement has the same weight and turn feel as practice mode.
+	Acceleration = 40.0 // world units/sec^2
+	TurnSpeed    = 12.0 // radians/sec, body turning to face movement
+	AimTurnSpeed = 15.0 // radians/sec, turning toward the aim point while charging
+	AimDeadzone  = 1.2  // aim points closer than this leave facing untouched
+	Spacing      = 1.4  // desired separation between mages
 
 	ChargeTime    = 1.5 // seconds to reach full charge
 	Windup        = 0.18
@@ -28,6 +36,11 @@ const (
 	MaxProjectileLifetime = 5.0
 
 	HitStun = 0.35
+	// KnockbackDamping/KnockbackStopSpeed mirror the client's DamageSystem.ts:
+	// a hit sets an initial knockback velocity that decays exponentially over
+	// the hit-stun window, rather than teleporting the mage instantly.
+	KnockbackDamping   = 12.0
+	KnockbackStopSpeed = 0.02
 
 	RespawnDelay    = 1.0
 	RespawnImmunity = 5.0

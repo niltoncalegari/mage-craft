@@ -76,11 +76,12 @@ func TestSession_SubmitInput_FailsBeforeMatchStarts(t *testing.T) {
 func TestSession_SubmitInput_FeedsTheWorld(t *testing.T) {
 	s := newStartedSession(t, Callbacks{})
 
+	before := s.world.Mage("p1").Position.X
 	must(t, s.SubmitInput("p1", game.MageInput{Move: game.Vec2{X: 1}}))
 	s.Tick()
 
-	if got := s.world.Mage("p1").Position.X; got <= -6 {
-		t.Errorf("expected p1 to have moved after ticking with a move input, position.X=%.3f", got)
+	if got := s.world.Mage("p1").Position.X; got <= before {
+		t.Errorf("expected p1 to have moved in +X after ticking with a move input, %.3f -> %.3f", before, got)
 	}
 }
 
