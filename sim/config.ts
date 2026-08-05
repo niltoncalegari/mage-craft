@@ -48,18 +48,19 @@ export const HIT_STUN = 0.35;
 export const KNOCKBACK_DAMPING = 12;
 export const KNOCKBACK_STOP_SPEED = 0.02;
 
-export const RESPAWN_DELAY = 1;
+/**
+ * Squad mages always come back (GDD §4) — death costs presence on the field,
+ * not the mage itself. This number is one of the two unmeasured dials GDD §10
+ * flags as deciding whether an AFK player actually loses: too short and death
+ * is meaningless, too long and one push snowballs unrecoverably.
+ */
+export const RESPAWN_DELAY = 6;
 export const RESPAWN_IMMUNITY = 5;
-/**
- * Summoned mages do not respawn (GDD §4) — they die and the mana that bought
- * them is what comes back. Kept at 1 so a unit has exactly one life.
- */
-export const DEFAULT_LIVES = 1;
-/**
- * How long a dead summon stays in the world before it is dropped, so the client
- * has a beat to play the death rather than having the unit vanish mid-frame.
- */
-export const CORPSE_LINGER = 0.8;
+
+/* ---- Squad (GDD §4, §7) ---------------------------------------------------- */
+
+/** Mages per team, fixed at match start and permanent for the whole match. */
+export const SQUAD_SIZE = 4;
 
 /* ---- Mana economy (GDD §6) ----------------------------------------------- */
 
@@ -98,15 +99,34 @@ export const TOWER_DAMAGE = 10;
 /** Structures are hit by projectiles flying below this height. */
 export const STRUCTURE_TOP_HEIGHT = 2.6;
 
-/* ---- Deployment (GDD §5) --------------------------------------------------- */
-
-/**
- * How far past the arena midline a team may deploy once it has broken a flank.
- * Zero until the corresponding enemy tower falls.
+/* ---- Spells (GDD §9) -------------------------------------------------------- */
+/*
+ * Direction of design, not measured balance (GDD §9 flags the deck as half
+ * real: only these 4 of the planned 8 spells are designed yet).
  */
-export const DEPLOY_ADVANCE_DEPTH = 8;
-/** A summon may not be planted this close to a live enemy structure. */
-export const DEPLOY_STRUCTURE_CLEARANCE = 3;
+
+export const BLESSING_COST = 2;
+export const BLESSING_RADIUS = 4;
+export const BLESSING_DURATION = 5;
+export const BLESSING_SPEED_BONUS = 0.4;
+export const BLESSING_CAST_BONUS = 0.25;
+
+export const SLOW_CURSE_COST = 3;
+export const SLOW_CURSE_RADIUS = 4;
+export const SLOW_CURSE_DURATION = 4;
+export const SLOW_CURSE_FACTOR = 0.5;
+
+export const SHIELD_COST = 3;
+export const SHIELD_RADIUS = 4;
+export const SHIELD_DURATION = 6;
+export const SHIELD_AMOUNT = 60;
+
+export const PLAGUE_COST = 4;
+export const PLAGUE_RADIUS = 3.5;
+export const PLAGUE_DURATION = 5;
+export const PLAGUE_TICK_INTERVAL = 1;
+/** Per tick, at PLAGUE_TICK_INTERVAL — reads as "10 damage/s" in the GDD. */
+export const PLAGUE_TICK_DAMAGE = 10;
 
 /** Height of each obstacle type's top, mirroring the client's OBSTACLE_HEIGHT. */
 export const OBSTACLE_TOP_HEIGHT = {

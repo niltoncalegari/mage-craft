@@ -1,19 +1,17 @@
 /**
- * The card catalog (GDD §9) — what a player can spend mana on.
+ * The squad roster (GDD §9) — the mages a player picks before the match to
+ * form their permanent 4-mage squad (GDD §7).
  *
- * A card is the *summon*; the mage it produces is defined by its **role**
- * (GDD §8), and the role is the identity. The element attached to a unit is
- * only the attack it throws, and its numbers live in `elements.ts` — that
- * catalog is deliberately untouched by this file.
- *
- * v1 ships units only. The four spells of GDD §9 arrive with the generic
- * status-effect system (GDD §13, step 7).
+ * These used to be the v1.0 unit *cards* (mana-cost, played mid-match to
+ * summon a unit). Since the v1.1 pivot nothing is summoned: a squad is fixed
+ * at match start and its mages respawn on death (GDD §4), so a roster entry
+ * has no cost — the cost of picking one was the squad slot itself.
  */
 
 import { ROLE_BEHAVIOR, type Role } from './roles';
 import type { ElementId } from './elements';
 
-export type CardId =
+export type RosterId =
   | 'stone_golem'
   | 'ice_sentinel'
   | 'pyromancer'
@@ -24,19 +22,16 @@ export type CardId =
   | 'cleric'
   | 'arcane_bard';
 
-export interface UnitCard {
-  readonly kind: 'unit';
-  readonly id: CardId;
+export interface RosterEntry {
+  readonly id: RosterId;
   readonly name: string;
   readonly role: Role;
-  /** Mana cost (GDD §6: 2..7). */
-  readonly cost: number;
   readonly health: number;
   readonly moveSpeed: number;
   /**
-   * The attack this unit throws. Supports carry an element that is never fired
-   * (their `ROLE_BEHAVIOR.attacks` is false) — they win fights by multiplying
-   * whoever stands next to them, per GDD §8.
+   * The attack this mage throws. Supports carry an element that is never
+   * fired (their `ROLE_BEHAVIOR.attacks` is false) — they win fights by
+   * multiplying whoever stands next to them, per GDD §8.
    */
   readonly element: ElementId;
   /** Support only: heals the most-hurt ally in range, HP per second. */
@@ -47,85 +42,67 @@ export interface UnitCard {
   readonly auraRadius?: number;
 }
 
-export type Card = UnitCard;
-
-const CATALOG: Readonly<Record<CardId, UnitCard>> = {
+const CATALOG: Readonly<Record<RosterId, RosterEntry>> = {
   stone_golem: {
-    kind: 'unit',
     id: 'stone_golem',
     name: 'Golem de Pedra',
     role: 'tank',
-    cost: 5,
     health: 280,
     moveSpeed: 3.5,
     element: 'stone',
   },
   ice_sentinel: {
-    kind: 'unit',
     id: 'ice_sentinel',
     name: 'Sentinela de Gelo',
     role: 'tank',
-    cost: 4,
     health: 200,
     moveSpeed: 4.0,
     element: 'ice',
   },
   pyromancer: {
-    kind: 'unit',
     id: 'pyromancer',
     name: 'Piromante',
     role: 'damage',
-    cost: 4,
     health: 80,
     moveSpeed: 5.0,
     element: 'fire',
   },
   stormcaller: {
-    kind: 'unit',
     id: 'stormcaller',
     name: 'Condutor de Raio',
     role: 'damage',
-    cost: 4,
     health: 60,
     moveSpeed: 5.0,
     element: 'lightning',
   },
   arcane_archer: {
-    kind: 'unit',
     id: 'arcane_archer',
     name: 'Arqueiro Arcano',
     role: 'damage',
-    cost: 3,
     health: 70,
     moveSpeed: 5.5,
     element: 'arcane',
   },
   alchemist: {
-    kind: 'unit',
     id: 'alchemist',
     name: 'Alquimista',
     role: 'damage',
-    cost: 4,
     health: 70,
     moveSpeed: 5.0,
     element: 'poison',
   },
   wind_dervish: {
-    kind: 'unit',
     id: 'wind_dervish',
     name: 'Dervixe do Vento',
     role: 'damage',
-    cost: 3,
     health: 65,
     moveSpeed: 7.0,
     element: 'wind',
   },
   cleric: {
-    kind: 'unit',
     id: 'cleric',
     name: 'Clérigo',
     role: 'support',
-    cost: 4,
     health: 95,
     moveSpeed: 5.0,
     element: 'arcane',
@@ -133,11 +110,9 @@ const CATALOG: Readonly<Record<CardId, UnitCard>> = {
     healRange: 5,
   },
   arcane_bard: {
-    kind: 'unit',
     id: 'arcane_bard',
     name: 'Bardo Arcano',
     role: 'support',
-    cost: 3,
     health: 70,
     moveSpeed: 5.0,
     element: 'arcane',
@@ -147,7 +122,7 @@ const CATALOG: Readonly<Record<CardId, UnitCard>> = {
 };
 
 /** Full catalog in GDD §9 display order. */
-export const ALL_CARDS: readonly CardId[] = [
+export const ALL_ROSTER: readonly RosterId[] = [
   'stone_golem',
   'ice_sentinel',
   'pyromancer',
@@ -159,15 +134,25 @@ export const ALL_CARDS: readonly CardId[] = [
   'arcane_bard',
 ];
 
-export function cardFor(id: CardId): UnitCard | undefined {
+export function rosterFor(id: RosterId): RosterEntry | undefined {
   return CATALOG[id];
 }
 
-export function isCardId(value: string): value is CardId {
+export function isRosterId(value: string): value is RosterId {
   return Object.prototype.hasOwnProperty.call(CATALOG, value);
 }
 
-/** Convenience for the bot and for tests: does this card's role ever attack? */
-export function cardAttacks(card: UnitCard): boolean {
-  return ROLE_BEHAVIOR[card.role].attacks;
+/** Convenience for the bot AI: does this roster entry's role ever attack? */
+export function rosterAttacks(entry: RosterEntry): boolean {
+  return ROLE_BEHAVIOR[entry.role].attacks;
+}
+
+/**
+ * A playable default squad (GDD §7) for a player who never opened a squad
+ * builder — one tank, two damage, one support, matching the construction
+ * rule ("at least one of each role"). There is no squad-builder UI yet
+ * (GDD §16), so every match uses this until there is one.
+ */
+export function defaultSquad(): RosterId[] {
+  return ['stone_golem', 'pyromancer', 'stormcaller', 'cleric'];
 }

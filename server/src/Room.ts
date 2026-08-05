@@ -332,10 +332,11 @@ export class Room {
     }
 
     /*
-     * The world starts empty since the pivot: a player has no avatar in the
-     * arena, and every unit enters through `World.deploy` when a card is played
-     * (GDD §1, §5). Slot and element selection survive above purely as lobby
-     * state for custom rooms — the simulation no longer reads either.
+     * Room only builds the empty World — the squads themselves are Session's
+     * job (`World.initSquad`, GDD §4, §7), since Session is what knows the
+     * bot roster and the AI commanders that squad needs wiring to. Slot and
+     * element selection survive above purely as lobby state for custom rooms
+     * — the simulation no longer reads either.
      */
     const world = new World();
 

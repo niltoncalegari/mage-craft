@@ -57,6 +57,8 @@ export interface Player extends Transform2D, Health {
   speedTimer: number;
   /** Lives remaining; only set by the online snapshot sync (unused offline). */
   lives?: number;
+  /** Escudo Arcano still has damage to absorb (GDD §9); only set online. */
+  shielded?: boolean;
 }
 
 /**

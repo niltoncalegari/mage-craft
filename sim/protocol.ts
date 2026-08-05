@@ -36,9 +36,11 @@ export type JoinQueueMsg = { type: 'join_queue'; name: string; deck?: string[] }
 export type LeaveQueueMsg = { type: 'leave_queue' };
 
 /**
- * The only in-match message a player sends since the pivot: spend mana to put a
- * card down at a point. It replaces the old ~60 Hz `InputMsg` — no more move,
- * aim, charge or release, because nobody steers a mage any more (GDD §13).
+ * The only in-match message a player sends since the pivot: spend mana to cast
+ * a spell — a buff on your own squad or a curse on the enemy's — at a chosen
+ * point (GDD §9, §13). It replaces the old ~60 Hz `InputMsg` — no more move,
+ * aim, charge or release, because nobody steers a mage any more, and (since
+ * the v1.1 squad pivot) `cardId` names a spell rather than a unit to summon.
  */
 export type CastMsg = { type: 'cast'; cardId: string; position: Vec2DTO };
 
@@ -105,14 +107,15 @@ export type MageSnapshotDTO = {
   health: number;
   /** Per-unit since the pivot — a Golem and an Archer do not share a max. */
   maxHealth: number;
-  lives: number;
   charging: boolean;
   charge: number;
   element: string;
   /** Identity: 'tank' | 'damage' | 'support' (GDD §8). */
   role: string;
-  /** The card that summoned this unit, omitted for legacy/bare mages. */
-  cardId?: string;
+  /** Which roster entry this mage is, omitted for legacy/bare mages. */
+  rosterId?: string;
+  /** True while Escudo Arcano still has damage to absorb (GDD §9), for a minimal client indicator. */
+  shielded: boolean;
 };
 
 export type StructureSnapshotDTO = {

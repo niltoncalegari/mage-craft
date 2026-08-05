@@ -9,7 +9,7 @@
  * anything else.
  */
 
-import type { CardId } from '../../sim/cards';
+import type { CardId } from '../../sim/spells';
 
 /** How long a player waits for a human before the server gives them a bot. */
 export const BOT_FALLBACK_SECONDS = 12;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Arena } from './Arena';
-import { CHARGE_TIME, CORPSE_LINGER, RESPAWN_DELAY, SIM_DT } from './config';
+import { CHARGE_TIME, RESPAWN_DELAY, SIM_DT } from './config';
 import { elementDefFor } from './elements';
 import { emptyInput, TEAM_A, TEAM_B, type MageInput } from './entities';
 import { Vec2 } from './Vec2';
@@ -195,18 +195,15 @@ describe('World — combat', () => {
   });
 });
 
-describe('World — lives and round end', () => {
-  it('respawns a mage that still has a life left', () => {
+describe('World — respawn and round end', () => {
+  it('respawns a defeated mage after the respawn delay (GDD §4: squads are permanent)', () => {
     const w = combatWorld();
     const m = w.addMage('p1', TEAM_A, 'fire', false);
     m.health = 1;
-    // Summons get one life (GDD §4); this covers the respawn path itself.
-    m.lives = 2;
 
     w.dealDamage(m, 999, new Vec2(1, 0), 0);
 
     expect(m.alive).toBe(false);
-    expect(m.lives).toBe(1);
     expect(m.respawnTimer).toBeGreaterThan(0);
 
     stepN(w, Math.floor(RESPAWN_DELAY / SIM_DT) + 5);
@@ -216,29 +213,30 @@ describe('World — lives and round end', () => {
     expect(m.immunityTimer).toBeGreaterThan(0);
   });
 
-  it('drops a spent summon from the world after the corpse linger', () => {
+  it('never drops a mage from the world — a squad has no permanent death', () => {
     const w = combatWorld();
     const m = w.addMage('p1', TEAM_A, 'fire', false);
 
     w.dealDamage(m, 999, new Vec2(1, 0), 0);
     expect(w.mage('p1')).toBeDefined();
 
-    stepN(w, Math.floor(CORPSE_LINGER / SIM_DT) + 5);
+    // Long past the respawn delay: the mage should be back, not gone.
+    stepN(w, Math.floor(RESPAWN_DELAY / SIM_DT) + 30);
 
-    expect(w.mage('p1')).toBeUndefined();
+    expect(w.mage('p1')).toBeDefined();
+    expect(w.mage('p1')?.alive).toBe(true);
   });
 
-  it('does NOT end the round when a team runs out of mages — structures decide', () => {
+  it('does NOT end the round when a team has no mages standing — structures decide', () => {
     const w = combatWorld();
     w.addMage('a1', TEAM_A, 'fire', false);
     const loser = w.addMage('b1', TEAM_B, 'fire', false);
     loser.alive = false;
-    loser.lives = 0;
 
     w.step(SIM_DT);
 
-    // Having no units on the board is a normal state now: you simply have not
-    // spent mana yet (GDD §4).
+    // Having no units up on the board is a normal state now: they are simply
+    // between deaths, waiting to respawn (GDD §4).
     expect(w.roundOver).toBe(false);
   });
 

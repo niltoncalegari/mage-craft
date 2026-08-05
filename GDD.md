@@ -1,9 +1,9 @@
 # GDD — Mage Craft
 
 **Título:** Mage Craft
-**Versão:** 1.0 — reescrito no pivot de produto
+**Versão:** 1.1 — auto brawl: esquadrão permanente, cartas só de buff
 **Status:** rascunho vivo — base de produto, não especificação de engine
-**Modelo de referência:** Clash Royale (real-time, invocação por custo de mana, unidades autônomas)
+**Modelo de referência:** Clash Royale para a economia (mana única, baralho, mão, ciclo); auto brawler para o campo (esquadrão permanente e autônomo)
 **Idioma do doc:** PT-BR
 
 > **Este documento substitui o GDD 0.1 por inteiro.** O jogo deixou de ser um brawl
@@ -11,20 +11,36 @@
 > WASD + mira) deve ler `design.md` e `multiplayer-plan.md`, que passam a ser
 > **documentos históricos** — descrevem o produto anterior e não devem ser editados.
 
+> ⚠️ **Mudança da v1.0 para a v1.1 (auto brawl).** Na v1.0 a carta **invocava** um
+> mago; o verbo primário era Invocar. Na v1.1 **a carta não invoca nada**: cada
+> jogador tem um esquadrão fixo de magos que já está em campo, e a mana é gasta
+> em **buffs e maldições** sobre quem já está lutando.
+>
+> Reescritas por causa disso: §1, §2, §3, §4, §5, §6, §7, §8, §9, §10, §11, §13,
+> §14, §15 e §16. A §17 (arte e áudio) é nova.
+>
+> **Duas coisas que a v1.1 quebrou e ainda não consertou**, ditas aqui para
+> ninguém descobrir tarde: o teste de agência da §10 foi **invalidado** — um
+> jogador AFK agora tem 4 magos lutando por ele — e metade do baralho **não
+> existe**, porque só 4 das 8 cartas de efeito estão desenhadas (§9).
+
 ---
 
 ## 1. Visão
 
 Dois conjuradores se enfrentam em tempo real numa arena. Nenhum dos dois controla
-um mago diretamente: eles **invocam** magos que lutam sozinhos, e gastam mana
-lançando **feitiços** — buffs nos seus, maldições nos do rival.
+um mago diretamente, e nenhum dos dois invoca: cada um tem um **esquadrão de magos
+que já está em campo**, lutando sozinho do primeiro segundo. O que o jogador faz é
+gastar mana **potenciando os seus e sabotando os do rival** — buffs, maldições,
+escudos, pragas.
 
-A partida é decidida por *o que você invoca, onde e quando* — nunca por mira ou
-reflexo. O mago invocado é autônomo a partir do instante em que toca o chão.
+A partida é decidida por *em quem você aposta, onde e quando* — nunca por mira ou
+reflexo. Os magos são autônomos o tempo inteiro; o jogador nunca dá uma ordem a
+ninguém.
 
 **Promessa ao jogador:**
-*"Eu li o que ele invocou, respondi com o contra certo no lugar certo, e a mana
-que eu guardei virou a vantagem que fechou a partida."*
+*"Meus magos estavam perdendo a troca, eu joguei o buff certo no momento certo, e
+a briga virou."*
 
 **Sensação-alvo:** tenso, legível, de leitura e resposta. Partidas de 3 minutos.
 
@@ -34,25 +50,29 @@ que eu guardei virou a vantagem que fechou a partida."*
 
 | Campo | Definição |
 | --- | --- |
-| Fantasia | Conjurador que comanda um esquadrão de magos elementais |
+| Fantasia | Conjurador que sustenta um esquadrão de magos elementais na briga |
 | Feeling | Leitura, resposta, economia — tenso sem exigir reflexo |
-| Verbo primário | **Invocar** (escolher carta + escolher onde plantar) |
-| Verbos secundários | Lançar feitiço (buff/maldição), guardar mana, ciclar a mão |
-| Loop curto (3–10s) | Ler o que ele invocou → escolher o contra → plantar no lugar certo |
-| Loop de partida (3 min) | Trocar pushes, abrir vantagem de mana, converter em dano de estrutura |
-| Falha / retry | Push mal respondido custa Torre; sem vida do jogador, sem respawn pessoal |
-| Skill expression | Contra-invocação, posicionamento, gestão de mana, ciclo de baralho |
-| Legibilidade | Papel pela silhueta, elemento pela cor, mana e mão sempre visíveis |
-| Non-goals (v1) | Controle direto de unidade, ordens táticas, mira manual, lanes de MOBA com creeps, 5v5, gacha |
+| Verbo primário | **Potenciar** (escolher carta de efeito + escolher onde aplicar) |
+| Verbos secundários | Maldizer o esquadrão inimigo, guardar mana, ciclar a mão |
+| Loop curto (3–10s) | Ler qual briga está apertada → escolher o efeito certo → aplicar na área certa |
+| Loop de partida (3 min) | Ganhar as trocas locais, abrir vantagem de mana, converter em dano de estrutura |
+| Falha / retry | Briga perdida custa Torre; o mago morto volta, a mana gasta não |
+| Skill expression | Timing do buff, leitura de aglomerado, gestão de mana, ciclo de baralho, montagem do esquadrão |
+| Legibilidade | Papel pela silhueta, elemento pela cor, efeitos ativos visíveis no mago, mana e mão sempre visíveis |
+| Non-goals (v1) | **Invocar unidade com carta**, controle direto, ordens táticas, mira manual, lanes de MOBA com creeps, 5v5, gacha |
 
 **Core loop contract:**
 
 ```text
-O jogador gasta mana invocando magos e lançando feitiços;
-os magos lutam sozinhos e avançam para as estruturas inimigas;
-ler o push do rival e responder com o contra certo gera vantagem de mana;
-vantagem de mana vira push maior, que derruba Torre e depois o Núcleo.
+O esquadrão de cada lado luta sozinho e avança para as estruturas inimigas;
+o jogador gasta mana em buffs nos seus e maldições nos do rival;
+ler qual troca está para ser perdida e virá-la com o efeito certo gera vantagem;
+vantagem vira briga ganha, que derruba Torre e depois o Núcleo.
 ```
+
+> **O que esta mudança custou.** Na v1.0 a decisão mais densa do jogo era *onde
+> plantar*. Sem invocação, posicionamento virou *onde centrar um raio*, que é uma
+> decisão mais rasa. É o principal risco de design aberto da v1.1 — ver §16.2.
 
 ---
 
@@ -63,24 +83,28 @@ vantagem de mana vira push maior, que derruba Torre e depois o Núcleo.
 - **Real-time, simétrico, 1v1.** Os dois jogam ao mesmo tempo, na mesma sim autoritativa.
 - **Mana única que regenera.** Um recurso só, teto baixo, regeneração constante. É o relógio da partida.
 - **Baralho + mão + ciclo.** Você não tem acesso a tudo o tempo todo; a ordem das cartas é parte da decisão.
-- **Unidades autônomas.** Invocou, acabou o seu controle sobre aquela unidade.
-- **Posicionamento como agência.** Onde você planta é a decisão mais densa do jogo.
+- **Unidades autônomas.** O jogador nunca comanda um mago.
 - **Objetivo estrutural.** Ganha quem derruba mais estrutura, não quem mata mais.
 
 ### Não copiamos
 
-- **Lanes com ponte e rio.** Nossa arena é aberta e tem **cover real** — obstáculos com altura, bloqueio de projétil e line-of-sight, que já existem em [sim/Arena.ts](sim/Arena.ts). Isso é vantagem nossa: projétil com tempo de voo e cobertura dão profundidade posicional que a grade do CR não tem.
+- **Invocação por carta.** É a divergência central da v1.1, e a maior. No CR a carta *cria* a unidade; aqui a unidade já existe e a carta a *modifica*. Ver §7 e §9.
+- **Exército descartável.** Unidade de CR é consumível: nasce, empurra, morre, some. Nosso esquadrão é **permanente e ressuscita** — o jogador se apega aos mesmos quatro magos durante a partida inteira, o que muda o vínculo com eles.
+- **Lanes com ponte e rio.** Nossa arena é aberta e tem **cover real** — obstáculos com altura, bloqueio de projétil e line-of-sight, que já existem em [sim/Arena.ts](sim/Arena.ts). Projétil com tempo de voo e cobertura dão profundidade posicional que a grade do CR não tem.
 - **Progressão de nível de carta paga.** Cartas não sobem de poder. Ver §12.
 - **Gacha / baús.** Ver §12.
 - **Alvo travado até a morte.** Nossos magos têm IA real (esquiva, cover, focus-fire de esquadrão) — ver §11.
 
 ### A diferença que define nosso jogo
 
-No Clash Royale a unidade é um autômato burro que anda reto. Aqui ela é um mago com
-o `Brain` de 671 linhas que já existe no repo: ele busca cobertura, esquiva de
-projétil, lidera a mira e coordena foco com os aliados. **A mesma invocação, no
-mesmo lugar, joga diferente dependendo do terreno.** É esse o nosso diferencial, e
-ele já está construído.
+No Clash Royale a unidade é um autômato burro que anda reto, e você tem dezenas
+delas ao longo da partida. Aqui você tem **quatro magos, os mesmos do começo ao
+fim**, cada um rodando o `Brain` que já existe no repo: busca cobertura, esquiva de
+projétil, lidera a mira e coordena foco com os aliados.
+
+Isso troca a fantasia. Em vez de despachar tropa, o jogador **torce por e sustenta
+um time que ele escolheu** — mais perto de treinador do que de general. É a razão
+de o esquadrão ser montado antes da partida (§9) e de a morte ser temporária (§4).
 
 ---
 
@@ -101,12 +125,23 @@ sem ready-up, sem código. Depois de 12 s sem par humano, ele recebe um
 comandante de IA em vez de encarar um spinner. Salas manuais continuam
 existindo para partidas privadas.
 
-**Sem vidas de jogador. Sem respawn pessoal.** O jogador não tem corpo na arena —
-ele é o conjurador fora dela. Magos invocados morrem e não voltam; o que volta é a
-mana para invocar outros.
+**O jogador não tem corpo na arena** — ele é o conjurador fora dela, e nunca pode
+ser atingido.
 
-> Isto substitui o modelo de `lives` + `respawn` do GDD 0.1. Ver §13 para o que
-> isso significa em `sim/config.ts` e `World.checkRoundEnd`.
+**O esquadrão, porém, é permanente.** Os 4 magos escolhidos (§9) nascem no início
+da partida e, quando morrem, **voltam depois de um atraso** no spawn do seu lado.
+Morte custa presença: o tempo em que aquele mago não está no campo é a punição, não
+a perda definitiva. Nunca existe o estado "não tenho mais nada em campo".
+
+> Isto muda duas vezes de posição na história do doc. O GDD 0.1 tinha `lives` +
+> respawn de jogador; a v1.0 removeu respawn por inteiro ("magos invocados morrem e
+> não voltam"); a v1.1 **traz respawn de volta**, agora para o esquadrão. O
+> maquinário disso já existe parado em `sim/config.ts` (`RESPAWN_DELAY`) e em
+> `World.respawn()` — ver §13.
+
+> ⚠️ O atraso de respawn e o tamanho do esquadrão (4) são **números não medidos**.
+> Eles são exatamente os dois parâmetros que decidem se o jogador AFK perde ou não
+> — ver §10.
 
 ---
 
@@ -125,13 +160,20 @@ Cada lado tem:
 > originais (1400/700) faziam dois jogadores competentes empatarem em 100% das
 > partidas simuladas: nenhuma torre caía nunca contra defesa. Ver §14.
 
-- Torres atacam sozinhas: projétil arcano, alcance 9.0 (o `ENGAGE_RANGE` que o `Brain` já usa), dano moderado. Elas são a defesa base — invocar nada nunca é a jogada certa, mas invocar mal também não.
+- Torres atacam sozinhas: projétil arcano, alcance 9.0 (o `ENGAGE_RANGE` que o `Brain` já usa), dano moderado. Elas são a defesa base: um esquadrão que avança sem apoio de carta apanha da Torre, o que dá à defesa uma vantagem de terreno sem exigir nada do jogador.
 - **Enquanto as duas Torres estiverem de pé, o Núcleo é imune.** Isso impede rush direto ao Núcleo no minuto 1 e dá forma à partida: quebrar flanco antes de fechar.
 - Obstáculos (árvore, rocha, forte, cerca) continuam bloqueando movimento e projétil por altura, exatamente como hoje.
 
-**Zona de invocação:** você só planta na **sua metade** da arena, mais um avanço
-progressivo — cada Torre inimiga derrubada libera invocação naquele flanco do lado
-dela. É o análogo direto da ponte do CR e é o que transforma vantagem em pressão.
+**Não existe zona de invocação.** Como nada é invocado, o conceito saiu: um feitiço
+pode ser lançado **em qualquer ponto da arena**, inclusive dentro da base inimiga.
+Isso é deliberado por dois motivos. Primeiro, maldição só serve se alcançar onde o
+inimigo está. Segundo, ele mata uma classe de frustração inteira: na v1.0 o clique
+fora da zona era recusado pelo servidor e o jogador não recebia explicação nenhuma
+— nada acontecia na tela.
+
+> A zona de invocação da v1.0 (metade própria + avanço por flanco quebrado) foi
+> construída, medida e **descartada** junto com a invocação. O código ainda tem
+> `canDeployAt`/`canSummonAt`; ver §13 para o que fazer com eles.
 
 > A arena de lanes/estruturas é um **mapa JSON novo** (`public/maps/`), não código:
 > `Arena.fromData` já lê `width`/`height`/`objects[]`/`spawns[]`. Estruturas são o
@@ -147,13 +189,17 @@ dela. É o análogo direto da ponte do CR e é o que transforma vantagem em pres
 | Início da partida | 5 |
 | Regeneração normal | 1 mana / 2.8 s |
 | Regeneração em morte súbita | 1 mana / 1.4 s (dobrada) |
-| Custo das cartas | 2 a 7 |
+| Custo das cartas | 2 a 5 (feitiços; ver §9) |
 
-Por que teto baixo e regeneração lenta: é o que força a decisão. Com teto 10 e o
-Golem custando 5, invocar o Golem é literalmente meio arsenal — e o rival vê o
-Golem chegar e tem uma janela para punir do outro lado. **Toda vantagem no jogo é,
-no fundo, vantagem de mana**: gastar 3 para anular um push de 5 é a jogada boa, e
-é isso que o jogador aprende a fazer.
+Por que teto baixo e regeneração lenta: é o que força a decisão. Com teto 10, um
+escudo de 3 é quase um terço do arsenal — e enquanto você o gasta para salvar uma
+troca, o rival tem mana livre para virar outra do outro lado do campo. **Toda
+vantagem no jogo é, no fundo, vantagem de mana**: gastar 2 para anular um efeito de
+4 é a jogada boa, e é isso que o jogador aprende a fazer.
+
+> O teto de custo caiu de 7 para 5 na v1.1. As cartas caras da v1.0 eram as
+> unidades pesadas (Golem, 5); sem invocação, sobrou só efeito, e efeito custando 7
+> num teto de 10 travaria a mão inteira.
 
 Mana é o único freio. Não há cooldown por carta — a carta volta pelo **ciclo do
 baralho** (§7), o que é mais legível e cria a decisão de "ciclar barato agora para
@@ -161,16 +207,27 @@ ter o contra na mão daqui a 20 s".
 
 ---
 
-## 7. Baralho, mão e ciclo
+## 7. As duas montagens: esquadrão e baralho
 
-- **Baralho:** 8 cartas, montadas fora da partida.
+Na v1.1 o jogador monta **duas coisas separadas** antes da partida, e é importante
+que sejam separadas — uma é quem luta, a outra é como você interfere.
+
+### Esquadrão (quem entra em campo)
+
+- **4 magos**, escolhidos do catálogo de 9 (§9).
+- Regra de construção: **mínimo 1 de cada papel** (tank, dano, suporte). Um esquadrão de 4 danos morre junto; um de 4 tanks não mata nada.
+- Entram em campo no início e ressuscitam ao morrer (§4). Não custam mana — o custo deles foi a escolha.
+
+### Baralho de feitiços (como você interfere)
+
+- **Baralho:** 8 cartas de efeito, montadas fora da partida.
 - **Mão:** 4 cartas visíveis + **1 próxima** em preview.
 - **Ciclo:** jogou uma carta, ela vai para o fim da fila e a próxima entra na mão.
 - **Sem aleatoriedade oculta:** a próxima carta é sempre visível. O jogador planeja dois turnos à frente.
 
-Regra de construção de baralho (v1): **mínimo 1 carta de cada papel** (tank, dano,
-suporte) e **no máximo 3 feitiços**. Isso impede o baralho degenerado de só
-feitiço, que transformaria o jogo em outra coisa.
+A regra de construção da v1.0 ("mínimo 1 de cada papel, máximo 3 feitiços") **não
+existe mais**: papel agora é assunto do esquadrão, e a mão é 100% feitiço por
+definição. A regra que a substitui ainda não está desenhada — ver §16.4.
 
 ---
 
@@ -190,31 +247,46 @@ Referência: um mago do jogo antigo tinha 100 HP e velocidade 6 (`MAX_HEALTH`,
 partida numérico — o Dano é o mago antigo, um pouco mais frágil.
 
 **A trinca é o balanceamento inteiro:** tank apanha bem mas não mata, dano mata mas
-não apanha, suporte não faz nem um nem outro sozinho. Um push só funciona
+não apanha, suporte não faz nem um nem outro sozinho. Um avanço só funciona
 combinando papéis, e é isso que dá ao rival algo específico para ler e responder.
+
+Na v1.1 o papel é escolhido **uma vez, na montagem do esquadrão** (§7), e não mais
+carta a carta durante a partida. Isso torna a coluna "Silhueta" um requisito duro,
+não sugestão: são só quatro magos em campo e eles ficam lá a partida inteira — se o
+jogador não distingue o tank do suporte de relance, ele não sabe onde jogar o buff.
+Ver §17.
 
 ---
 
-## 9. Catálogo de cartas (v1)
+## 9. Catálogo (v1.1)
 
-Treze cartas para o pool inicial: 9 unidades + 4 feitiços. Números são **direção
-de design**, não balance final — ver §14.
+Duas listas, com papéis diferentes: **os 9 magos** são o que você pode levar em
+campo, **as cartas** são o que você joga durante a partida. Números são **direção
+de design**, não balance final — e agora menos que antes, porque o pivot invalidou
+a medição que os afinou (§14).
 
-### Unidades
+### Magos — o catálogo do esquadrão (não são cartas)
 
-| Carta | Papel | Custo | HP | Vel. | Elemento (ataque) | Nota de design |
-| --- | --- | --- | --- | --- | --- | --- |
-| Golem de Pedra | Tank | 5 | 280 | 3.5 | `stone` | Dano 32 e interrompe conjuração. Lento o bastante para ser respondido |
-| Sentinela de Gelo | Tank | 4 | 200 | 4.0 | `ice` | Lentidão em quem encosta. Tank de controle, não de dano |
-| Piromante | Dano | 4 | 80 | 5.0 | `fire` | Dano 20 confiável. A carta de referência do papel |
-| Condutor de Raio | Dano | 4 | 60 | 5.0 | `lightning` | Projétil 30 de velocidade, arco baixo — acerta alvo em movimento |
-| Arqueiro Arcano | Dano | 3 | 70 | 5.5 | `arcane` | Splash 2.0. Contra de grupo, barato de ciclar |
-| Alquimista | Dano | 4 | 70 | 5.0 | `poison` | Poça de 4 s nega terreno. Zoning, não burst |
-| Dervixe do Vento | Dano | 3 | 65 | 7.0 | `wind` | Dano baixo, knockback alto. Empurra tank para fora da cobertura |
-| Clérigo | Suporte | 4 | 95 | 5.0 | — | Cura o aliado ferido mais próximo, 8 HP/s, alcance 5 |
-| Bardo Arcano | Suporte | 3 | 70 | 5.0 | — | Aura: +25% velocidade de conjuração aos aliados em raio 4 |
+Estes eram as cartas de unidade da v1.0. Continuam existindo com os mesmos números,
+mas **saíram da mão**: agora são as opções da montagem do esquadrão (§7). A coluna
+de custo de mana morreu — escolher o esquadrão não gasta mana.
 
-### Feitiços (sem unidade — efeito direto na área escolhida)
+| Mago | Papel | HP | Vel. | Elemento (ataque) | Nota de design |
+| --- | --- | --- | --- | --- | --- |
+| Golem de Pedra | Tank | 280 | 3.5 | `stone` | Dano 32 e interrompe conjuração. Lento o bastante para ser respondido |
+| Sentinela de Gelo | Tank | 200 | 4.0 | `ice` | Lentidão em quem encosta. Tank de controle, não de dano |
+| Piromante | Dano | 80 | 5.0 | `fire` | Dano 20 confiável. O mago de referência do papel |
+| Condutor de Raio | Dano | 60 | 5.0 | `lightning` | Projétil 30 de velocidade, arco baixo — acerta alvo em movimento |
+| Arqueiro Arcano | Dano | 70 | 5.5 | `arcane` | Splash 2.0. Contra de grupo |
+| Alquimista | Dano | 70 | 5.0 | `poison` | Poça de 4 s nega terreno. Zoning, não burst |
+| Dervixe do Vento | Dano | 65 | 7.0 | `wind` | Dano baixo, knockback alto. Empurra tank para fora da cobertura |
+| Clérigo | Suporte | 95 | 5.0 | — | Cura o aliado ferido mais próximo, 8 HP/s, alcance 5 |
+| Bardo Arcano | Suporte | 70 | 5.0 | — | Aura: +25% velocidade de conjuração aos aliados em raio 4 |
+
+### Cartas — buffs e maldições (a mão)
+
+Todas de **área escolhida pelo jogador**, em qualquer ponto da arena (§5). Nenhuma
+carta do jogo é um botão que se aperta sem pensar onde.
 
 | Carta | Tipo | Custo | Efeito |
 | --- | --- | --- | --- |
@@ -223,9 +295,17 @@ de design**, não balance final — ver §14.
 | Escudo Arcano | Buff | 3 | Aliados em raio 4: absorve 60 de dano, 6 s |
 | Praga | Maldição | 4 | Zona de 3.5 por 5 s: 10 de dano/s, atravessa o escudo |
 
-Os quatro feitiços são a expressão direta de "buffs e maldições" — e note que
-todos são de **área escolhida pelo jogador**, ou seja: mesmo o feitiço exige a
-decisão de posicionamento. Nenhuma carta do jogo é um botão que se aperta sem pensar onde.
+> ⚠️ **O baralho é de 8 e só existem 4 cartas desenhadas.** Este é o buraco mais
+> concreto que a v1.1 abre: metade do baralho não existe. Não vou inventar números
+> aqui para tapar o furo. Os eixos que as 4 faltantes deveriam cobrir, para o
+> baralho ter respostas de verdade:
+>
+> - **Cura instantânea**, distinta do Clérigo, que cura devagar e pode morrer.
+> - **Amplificação de dano**, o par ofensivo do Escudo.
+> - **Dispel / purgação**, para que buff inimigo tenha resposta e não só seja absorvido.
+> - **Negação de terreno defensiva**, para segurar avanço sem precisar ganhar a troca.
+>
+> Ver §16.4.
 
 ---
 
@@ -234,31 +314,41 @@ decisão de posicionamento. Nenhuma carta do jogo é um botão que se aperta sem
 > **Uma partida com o jogador AFK e a mesma partida jogada bem precisam terminar
 > diferente, de forma visível.**
 
-Este era o risco número um do pivot. No modelo escolhido ele está resolvido por
-construção, e dá para afirmar isso com precisão:
+Este é o risco número um do pivot, e a v1.1 **reabriu ele**.
 
-- **AFK = derrota garantida em ~90 s.** O jogador AFK não invoca nada. As duas
-  Torres dele caem para qualquer push mínimo, e o Núcleo cai em seguida. Não existe
-  estado passivo defensável.
-- **A decisão acontece a cada ~3 s.** É o intervalo de uma mana. Numa partida de
-  3 min o jogador toma ordem de 60 decisões de invocação e posicionamento.
-- **A mesma carta joga diferente.** Plantar o Golem atrás da cobertura ou no aberto
-  muda o resultado do push, porque a sim tem line-of-sight e altura de obstáculo.
+### O que a v1.0 tinha provado
 
-**Como isso vira teste de verdade, não parágrafo de GDD:** a sim é determinística
-(`sim/rng.ts`, mulberry32 semeado) e roda headless — o servidor já provou isso
-rodando 4v4 de bots a 19.9 Hz sem browser. Então o teste é executável:
+Na v1.0 a alegação era resolvida por construção: o jogador AFK não invocava nada,
+então não tinha absolutamente nada em campo, e qualquer push mínimo derrubava as
+duas Torres e o Núcleo. E isso foi **medido**, não afirmado, em `sim/agency.test.ts`:
 
-Esse teste **existe e roda** em `sim/agency.test.ts`. Resultado medido:
-
-| Cenário | Resultado |
+| Cenário (v1.0, invocação) | Resultado |
 | --- | --- |
 | Comandante ativo vs **AFK**, 5 seeds | **AFK perde 5/5**, sempre por Núcleo destruído |
 | Estruturas perdidas | AFK perde 3; o lado ativo perde **0** |
-| Tempo até decidir | **93–136 s** — dentro do que esta seção prometia |
+| Tempo até decidir | **93–136 s** |
 
-O risco número um está fechado com evidência. O que **não** está fechado é a
-separação por habilidade — ver §14.
+### Por que a v1.1 invalidou isso
+
+O esquadrão permanente destrói a premissa do teste. **O jogador AFK agora tem 4
+magos lutando e ressuscitando por ele**, com o mesmo `Brain` do adversário. Os dois
+lados têm exatamente a mesma força em campo; a única diferença entre jogar bem e não
+jogar é o efeito dos buffs. O medido acima descreve um jogo que não existe mais.
+
+Consequências, ditas com clareza para ninguém se enganar mais tarde:
+
+- **`sim/agency.test.ts` vai ficar vermelho** quando o esquadrão entrar, e isso é correto. Consertar **não** é afrouxar o teste.
+- **A alegação passa a depender inteiramente de balance**, não de estrutura. Se os buffs forem fracos, dois esquadrões idênticos se anulam e a partida é decidida por RNG — o sintoma exato de "minhas decisões não importam".
+- **Os dois parâmetros que decidem isso** são a força/duração dos efeitos e o atraso de respawn do esquadrão. Nenhum dos dois está medido.
+
+O que continua valendo da v1.0: a sim é determinística (`sim/rng.ts`, mulberry32
+semeado) e roda headless, então a pergunta **é** respondível por medição, e o
+harness para isso já existe. É trabalho de medir, não de construir.
+
+> **Status honesto: o risco número um está aberto de novo.** A v1.0 tinha fechado
+> com evidência; a v1.1 escolheu um modelo que o reabre em troca de outra fantasia
+> (§3). Fechar de novo é pré-requisito para a v1.1 ser considerada jogável, não
+> polimento posterior. Ver §14 e §16.1.
 
 ---
 
@@ -275,13 +365,27 @@ cobertura de teste:
 - Separação de aliados
 - Três dificuldades
 
-O que precisa mudar nele para o modelo novo é pequeno e localizado:
+As três extensões que a v1.0 previu **já estão construídas**, e nenhuma tocou o
+modelo de utilidade nem as três dificuldades:
 
-1. **Prioridade de alvo estrutural.** Hoje `nearestEnemy` só olha magos. Precisa considerar Torre/Núcleo, com peso por papel — o Tank prefere estrutura, o Dano prefere unidade que o ameaça.
-2. **Vetor de avanço.** Hoje o bot vagueia quando não há inimigo; precisa avançar em direção à estrutura inimiga.
-3. **Comportamento por papel.** `ADVANCE_STOP_DISTANCE` já existe (6.5) — o Tank usa um valor baixo, o Dano um alto, e o Suporte segue o aliado mais avançado em vez de procurar inimigo.
+1. **Alvo estrutural** — ação `siege` nova, Torre e Núcleo como alvo válido.
+2. **Vetor de avanço** — o bot avança para a estrutura inimiga em vez de vaguear.
+3. **Comportamento por papel** — `ROLE_BEHAVIOR` com distância de parada, preferência por estrutura, escolta e limiar de recuo por papel.
 
-Nenhum desses toca o modelo de utilidade nem as três dificuldades. É extensão, não reescrita.
+Há **dois agentes de IA distintos**, e a distinção importa: o `Brain` dirige cada
+mago, e o `Commander` (`sim/bot/Commander.ts`) joga as cartas. Um bot de partida
+usa os dois. Na v1.1 é o `Commander` que muda — ele para de escolher ponto de
+invocação e passa a escolher aglomerado para buffar ou maldizer (§13).
+
+O que a v1.1 acrescenta ao `Brain` é pouco: ele precisa **respeitar stats
+derivados de efeito** em vez de ler o stat base do mago, senão um mago com
+Bênção de Ímpeto continua planejando como se estivesse lento.
+
+> Uma dívida conhecida do `Brain`, agravada pelo esquadrão permanente: **não há
+> pathfinding**, só steering com desvio de um passo, e o probe não conhece
+> estruturas. Magos encravam contra Torre. Com esquadrão descartável isso era
+> feio; com os mesmos quatro magos a partida inteira, um deles preso é 25% da
+> sua força fora do jogo.
 
 ---
 
@@ -314,37 +418,51 @@ o pipeline de render do cliente (`SnapshotSync`, `ArenaRenderer`, `PlayerRendere
 ataque das unidades da §9. Os números de dano, knockback, arco e poça já estão
 afinados e cobertos por teste.
 
-### Muda — é pouco e é cirúrgico
+### Já construído (v1.0, e continua servindo)
 
-| Hoje | Vira |
+Isto **não** é trabalho a fazer — está no repo, com teste:
+
+1. **Entidade `Structure`** (Núcleo, Torre) na sim, com imunidade do Núcleo, torre que atira, e vitória por estrutura + morte súbita.
+2. **Sistema de mana** autoritativo por time, com regeneração e dobra na morte súbita.
+3. **Baralho / mão / ciclo** (`sim/Deck.ts`) e a mão no fio (`hand`/`next` no snapshot, por destinatário).
+4. **Catálogo como dado** (`sim/cards.ts`, `sim/roles.ts`).
+5. **`CastMsg`** no lugar do `InputMsg`; câmera fixa; sem avatar do jogador.
+6. **Ajustes do `Brain`**: ação `siege`, alvo estrutural, comportamento por papel.
+7. **Fila de matchmaking** com fallback para bot (`server/src/Matchmaker.ts`).
+8. **UI de partida**: mão de 4 cartas clicável, barra de mana, preview da próxima, relógio com morte súbita, HP das estruturas, Núcleo e Torres em 3D.
+9. **Mapa de estruturas** (`public/maps/siege1.json`).
+
+### O que a v1.1 muda
+
+| Hoje (v1.0) | Vira (v1.1) |
 | --- | --- |
-| `InputMsg` (`move`/`aim`/`charging`/`release`) em [sim/protocol.ts:29](sim/protocol.ts#L29) | `CastMsg` — `{ cardId, position }`. É a única remoção real do pivot: 7 linhas |
-| Captura WASD + mouse em `src/net/OnlineMatch.ts` | Mão de 4 cartas + barra de mana + clique no chão para plantar |
-| Câmera seguindo o mago local | Câmera fixa mostrando a arena inteira |
-| `World.addMage(id, team, element, isBot)` posiciona por slot de spawn | Ganha variante que aceita posição (a invocação) |
-| `lives` + `respawn` + `checkRoundEnd` por vidas | Estruturas + timer de 3 min |
-| `teamSize` no `create_room` | Fica; 1v1 é `teamSize: 1` |
+| `Card = UnitCard`, com `kind: 'unit'` | União `UnitCard \| SpellCard`. O discriminador já existe, preparado para isso |
+| `World.deploy(team, cardId, pos)` gasta mana e invoca | `World.castSpell(team, cardId, pos)` gasta mana e aplica efeito em área |
+| `canDeployAt` / `canSummonAt` (zona de invocação) | **Saem.** Feitiço vale em qualquer ponto (§5) |
+| `validateDeck` exige mín. 1 por papel | Papel migra para a validação do **esquadrão**; baralho ganha regra nova (§16.4) |
+| Mago nasce por `deploy` e morre para sempre (`DEFAULT_LIVES = 1`) | Esquadrão de 4 nasce no início e **ressuscita** — reativa `RESPAWN_DELAY` e `World.respawn()` |
+| `Commander` escolhe carta e ponto de invocação | Escolhe feitiço e mira **aglomerado**: centroide dos meus sob ameaça, ou dos inimigos |
+| Timers soltos (`slowFactor`/`slowTimer`, `chargeRateBonus`, `immunityTimer`) | Absorvidos pelo sistema de efeitos genérico, senão viram dois sistemas fazendo o mesmo |
 
-### Novo — o custo real do pivot
+### Novo — o custo real da v1.1
 
-1. **Entidade `Structure`** (Núcleo, Torre) em `sim/entities.ts` + tratamento em `World.step` e no snapshot. Alvo estático que atira.
-2. **Sistema de mana** — servidor autoritativo, por jogador. Simples, mas é o coração do balance.
-3. **Baralho / mão / ciclo** — estado por jogador na `Session`, e a UI correspondente.
-4. **Sistema de status effects genérico.** `sim/entities.ts` hoje tem `stunTimer`, `slowFactor`/`slowTimer`, `immunityTimer` — precedente, não sistema. Buffs, maldições, DoT, escudo e dispel pedem um modelo com stacking e duração.
-5. **Catálogo de cartas** — a §9 virando dado, no mesmo formato de `elements.ts`.
-6. **Mapa de estruturas** — JSON novo em `public/maps/`.
-7. **Balance IA-vs-IA** — o item mais subestimado. Ver §14.
+1. **Sistema de status effects genérico** (`sim/effects.ts`). Era o passo 7 da v1.0 e **virou o passo 1**: sem ele não existe uma única carta jogável. Precisa de `kind`/magnitude/duração, stacking previsível e stats derivados (velocidade, conjuração, absorção).
+2. **Esquadrão** (`sim/Squad.ts`): montagem de 4, spawn no início, respawn com atraso.
+3. **As 4 cartas que faltam** para fechar o baralho de 8 (§9).
+4. **Feedback de efeito na tela**: sem isso o jogador não vê o que a carta dele fez, e o jogo inteiro depende de ele ver.
+5. **Remedição do teste de agência** (§10) — não é opcional.
 
 ### Ordem sugerida de implementação
 
-1. `Structure` na sim + condição de vitória por estrutura (destrava tudo o mais)
-2. Sistema de mana no servidor + `CastMsg` no protocolo
-3. Invocação: `addMageAt(position)` + validação de zona de invocação
-4. Catálogo de cartas como dado, começando só com unidades
-5. Ajustes do `Brain` da §11 (alvo estrutural, avanço, papel)
-6. UI: mão, mana, preview da próxima carta
-7. Status effects genéricos + os 4 feitiços
-8. Harness de simulação em massa (§14) — e só então falar em balance
+1. Sistema de efeitos genérico, com o slow do gelo migrado para dentro dele
+2. Esquadrão: montagem, spawn, respawn (esquadrão default hardcoded)
+3. `SpellCard` + `World.castSpell`, começando com as 4 cartas que já existem
+4. `Commander` jogando feitiço por aglomerado
+5. UI: carta mostrando efeito, anel de raio no chão, aura visível no mago buffado
+6. **Remedir agência (§10) e afinar a força dos efeitos até separar do AFK**
+7. As 4 cartas faltantes + regra de construção de baralho
+8. Tela de montagem de esquadrão
+9. Harness em massa (§14) — e só então falar em balance
 
 ---
 
@@ -371,7 +489,14 @@ E foi exatamente o que a primeira medição encontrou. O harness existe
 3. **Estado atual: hard 2, easy 1, 3 empates.** Melhor que invertido, longe de
    resolvido. Empate ainda é o resultado mais comum entre dois comandantes.
 
-Próximos passos do balance (§13, passo 8):
+> ⚠️ **A v1.1 invalida os três achados acima.** Todos foram medidos num jogo em que
+> a mana comprava unidade. Com esquadrão fixo, a mana não compra presença em campo,
+> e o eixo de dificuldade ("escolher a carta certa") passa a significar outra coisa.
+> Pior: o pivot **piora o prognóstico de empate**, porque agora os dois lados têm
+> exatamente a mesma força em campo por construção, e só os efeitos diferenciam.
+> Empate era o problema aberto número um antes; continua sendo, com menos folga.
+
+Próximos passos do balance (§13, passo 9), a rodar **depois** de remedir a agência:
 
 - Rodar milhares de partidas carta-contra-carta, não seis, e reportar taxa de vitória e mana trocada.
 - **Critério de saúde: nenhuma carta acima de ~55% de vitória contra o pool**, e nenhum par carta-contra-carta em 100/0.
@@ -382,9 +507,10 @@ Próximos passos do balance (§13, passo 8):
 
 ## 15. Non-goals (v1)
 
-- Controle direto ou ordens táticas a uma unidade invocada
+- **Invocar unidade com carta** (era o verbo primário da v1.0; saiu na v1.1)
+- Controle direto ou ordens táticas a um mago do esquadrão
 - Mira manual, WASD, câmera que segue unidade
-- Modo assíncrono / luta contra snapshot de roster (ver §16.1)
+- Modo assíncrono / luta contra snapshot de roster (ver §16.5)
 - 2v2, torneios, clãs
 - Progressão de poder, gacha, baús
 - Lanes com creeps automáticos de MOBA
@@ -393,17 +519,44 @@ Próximos passos do balance (§13, passo 8):
 
 ## 16. Perguntas em aberto
 
-1. **Assíncrono depois?** Real-time foi escolhido e é o que está sendo construído. Assíncrono continua possível *sem retrabalho*: a sim é determinística e headless, então "lutar contra o baralho gravado de outro jogador" é rodar o mesmo `World` sem socket. Decisão adiada de propósito, não esquecida.
-2. **Duas Torres ou uma?** A §5 propõe duas + imunidade do Núcleo. Duas dão forma de flanco à partida; uma é mais simples de balancear. Confirmar antes de desenhar o mapa.
-3. **Treze cartas bastam para o v1?** Baralho de 8 num pool de 13 deixa pouca variedade de composição — e a regra de construção da §7 (mín. 1 de cada papel, máx. 3 feitiços) aperta ainda mais. Pode ser o certo para testar, e o errado para reter jogador.
-4. **O Suporte é legível?** É o papel com maior risco de o jogador não perceber o efeito. Pode exigir feedback visual mais forte que os outros dois.
-5. **Practice mode.** Continua congelado em `src/systems/**` com o modelo antigo, e não migra neste pivot. Ele agora descreve um jogo que não existe mais — decidir se vira tutorial do modelo novo ou se sai.
+As três primeiras são consequência direta da v1.1 e estão em ordem de gravidade.
+
+1. **O AFK ainda perde?** É a pergunta que decide se a v1.1 é um jogo. Com esquadrão permanente e ressuscitando, o jogador parado tem a mesma força em campo que o jogador ativo. Ou os buffs decidem partida, ou o pivot não fecha. **Respondível por medição** (§10), e é a primeira coisa a medir depois que a primeira carta funcionar.
+2. **Posicionamento ainda é decisão densa?** Na v1.0 a agência posicional era *onde plantar*, com terreno, cobertura e flanco pesando. Sem invocação, sobrou *onde centrar um raio de 4*, sobre magos que se movem sozinhos. Se isso se provar raso, o candidato natural é dar ao jogador alguma influência sobre **para onde o esquadrão empurra** — o que encosta perigosamente no non-goal de ordens táticas (§15) e por isso não foi decidido aqui.
+3. **Quatro magos é o número certo?** Escolhido por parecer legível (4 cabem na tela e na cabeça), não por medição. Interage com o raio dos feitiços: esquadrão pequeno e espalhado torna buff de área difícil de acertar; esquadrão grande e junto torna todo buff um acerto garantido, e a decisão desaparece.
+4. **Qual a regra de construção do baralho?** A da v1.0 morreu com a invocação (§7). Sem regra, o baralho degenerado provável é só maldição, ou só o efeito mais barato para ciclar rápido. Depende das 4 cartas que faltam (§9).
+5. **Assíncrono depois?** Real-time foi escolhido e é o que está sendo construído. Assíncrono continua possível *sem retrabalho*: a sim é determinística e headless, então "lutar contra o esquadrão e o baralho gravados de outro jogador" é rodar o mesmo `World` sem socket. Decisão adiada de propósito, não esquecida.
+6. **Duas Torres ou uma?** A §5 propõe duas + imunidade do Núcleo, e o mapa `siege1.json` foi construído assim. Duas dão forma de flanco à partida; uma é mais simples de balancear.
+7. **O Suporte é legível?** É o papel com maior risco de o jogador não perceber o efeito. Piora na v1.1: agora o Clérigo cura *e* o jogador joga cura, e os dois precisam ser distinguíveis na tela.
+8. **Practice mode.** Continua congelado em `src/systems/**` com o modelo antigo. Descreve um jogo que não existe mais há duas versões — decidir se vira tutorial do modelo novo ou se sai.
 
 ---
 
-## 17. Estado do repo relevante a este GDD
+## 17. Direção de arte e áudio
 
-- `sim/**` e `server/src/**` estão na working tree, **não commitados**, e são a fundação deste design. Não deletar.
-- A suíte é uma só: `npm run typecheck && npm run lint && npm test && npm run build` (208 testes verdes na última verificação).
-- Containers Docker estão desatualizados; rebuildar antes de testar via `:8080`.
-- `AGENTS.md` marca `sim/**` como zona de coordenação obrigatória — este GDD toca essa zona inteira.
+Nada aqui é decoração: a legibilidade é requisito de design (§2), porque o jogador
+não controla ninguém — se ele não consegue ler o campo, ele não tem jogo.
+
+### Arte
+
+- **Low poly procedural, sem textura de arquivo.** Tudo é primitiva de Three.js com paleta cartoon, gerado em código. Continua valendo e não é para mudar.
+- **Chão: gramado com trilhas de terra.** Era neve. A terra marca as rotas por onde as unidades andam, o que dá referência espacial num campo aberto. Pintado proceduralmente num canvas — grama mosqueada em três tons, trilhas com bordas que desbotam. **Grama volumétrica animada por shader foi tentada e descartada**: 13 mil lâminas com vento no vertex shader leem como sujeira tremendo numa câmera afastada, não como grama.
+- **Identidade do mago, em três camadas** (implementa a linha "Legibilidade" da §2): **time pela cor do corpo** (nunca perder "quem é meu"), **papel pela silhueta** conforme a §8 (tank grande e pesado, dano magro e alto, suporte pequeno e curvado), **elemento pelo acento** (chapéu, cajado, gema). O fio já carrega `role`, `element` e `cardId` por mago — é trabalho de render, não de protocolo.
+- **Efeito ativo tem que ser visível no mago.** Na v1.1 o jogo inteiro é aplicar efeito; buff invisível é carta que o jogador não sabe se funcionou.
+- **Estruturas:** Núcleo e Torre compartilham a linguagem de cristal sobre pedra, com escudo visível enquanto o Núcleo é imune.
+
+### Áudio
+
+- **Sem cama de ruído contínuo.** Havia um "ambiente" que era white noise literal em loop infinito — estática de TV. Foi removido: **silêncio é melhor que chiado**, e o orçamento de som vai para eventos, que é o que o jogador precisa ouvir.
+- **Áudio é procedural** (Web Audio, sem arquivos), e serve ao feedback: conjuração, impacto, estrutura levando dano.
+- **Mute e volume têm que ser alcançáveis de dentro da partida.** Na v1.0 o controle de som existia só no menu do practice, então numa partida online não havia como desligar nada. Um controle de áudio inacessível no único modo jogável é bug de produto, não de conforto.
+
+---
+
+## 18. Estado do repo relevante a este GDD
+
+- `sim/**` e `server/src/**` são a fundação deste design. **Não deletar.**
+- A suíte é uma só: `npm run typecheck && npm run lint && npm test && npm run build` — **273 testes verdes** na última verificação.
+- Containers Docker **estão atualizados** para o servidor Node (`server/Dockerfile` builda da raiz, porque o servidor importa `sim/` e `public/maps/`; `nginx.conf` faz proxy de `/ws` com upgrade). A nota anterior de "desatualizados" ficou obsoleta. Não verificado com build real recente — o daemon estava desligado.
+- Existe smoke de browser de ponta a ponta: `node scripts/siege.mjs` sobe fila, partida, cast, e confere mana e ciclo da mão no fio.
+- `AGENTS.md` marca `sim/**` como zona de coordenação obrigatória — a v1.1 toca essa zona inteira, incluindo `World`, `entities`, `cards`, `Deck` e `bot/`.

@@ -2,16 +2,18 @@
  * The bot *commander* (GDD §10, §11).
  *
  * This is a different agent from `Brain.ts`, and the distinction matters: Brain
- * drives units that already exist, while Commander plays the game the human
- * plays — it decides which card to spend mana on, and where to put it. It is
- * what the matchmaking queue falls back to, and what makes the agency test
- * ("AFK must lose") something you can actually run.
+ * drives the squad's mages, which fight on their own regardless of the player,
+ * while Commander plays the one thing a human actually does since the pivot
+ * (GDD §13): it decides which spell to spend mana on, and where to aim it — a
+ * curse on the enemy cluster pressuring us, or a blessing/shield on our own
+ * push. It is what the matchmaking queue falls back to, and what makes the
+ * agency test ("AFK must lose") something you can actually run.
  */
 
-import { cardFor, type CardId } from '../cards';
+import { TEAM_A, type Mage, type Team } from '../entities';
 import type { Deck } from '../Deck';
-import { TEAM_A, TEAM_B, type Mage, type Team } from '../entities';
 import type { Rng } from '../rng';
+import { spellFor, type CardId, type SpellCard, type SpellId } from '../spells';
 import { Vec2 } from '../Vec2';
 import type { World } from '../World';
 import type { Difficulty } from './Brain';
@@ -22,7 +24,7 @@ export interface CastIntent {
 }
 
 interface CommanderTuning {
-  /** Seconds between deploy decisions. */
+  /** Seconds between cast decisions. */
   interval: number;
   /** Mana it tries to keep banked for a response instead of spending on sight. */
   reserve: number;
@@ -30,16 +32,16 @@ interface CommanderTuning {
   eagerness: number;
   /** Whether it answers a push at all, or only ever plays its own game. */
   respondsToThreats: boolean;
-  /** Whether it plays the right role for the situation, or whatever is cheapest. */
+  /** Whether it picks the spell suited to the situation, or whatever is cheapest. */
   picksByRole: boolean;
 }
 
 /*
  * Both players are mana-limited, not decision-limited: over a full match every
  * difficulty gets to spend roughly the same total. So cadence alone separates
- * almost nothing — measured, hard cast 30 cards to easy's 27 and still drew.
- * The axes that actually express skill are *whether you defend* and *whether
- * you play the right card*, so those are what the difficulties differ on.
+ * almost nothing. The axes that actually express skill are *whether you
+ * defend* and *whether you cast the right spell*, so those are what the
+ * difficulties differ on.
  */
 export const COMMANDER_TUNINGS: Readonly<Record<Difficulty, CommanderTuning>> = {
   easy: { interval: 2.6, reserve: 0, eagerness: 0.7, respondsToThreats: false, picksByRole: false },
@@ -53,12 +55,10 @@ export const COMMANDER_TUNINGS: Readonly<Record<Difficulty, CommanderTuning>> = 
   hard: { interval: 1.1, reserve: 1, eagerness: 1, respondsToThreats: true, picksByRole: true },
 };
 
-/**
- * How far in front of its own Core the bot plants an offensive push. Kept well
- * clear of its own Towers, which sit at inset ~5 and would block the summon.
- */
-const PUSH_LINE_INSET = 8;
-const DEPLOY_ATTEMPTS = 6;
+/** Radius used to judge "is this a cluster" — matches the spells' own radii (GDD §9). */
+const CLUSTER_RADIUS = 4;
+/** Health fraction below which an advancing ally reads as "under pressure". */
+const UNDER_FIRE_HEALTH_FRACTION = 0.6;
 
 export class Commander {
   private timer = 0;
@@ -70,8 +70,8 @@ export class Commander {
 
   /**
    * Returns a cast to perform this tick, or null. The caller is responsible for
-   * actually calling `World.deploy` — Commander never mutates the world, which
-   * keeps it usable from a headless balance harness.
+   * actually calling `World.castSpell` — Commander never mutates the world,
+   * which keeps it usable from a headless balance harness.
    */
   step(w: World, team: Team, deck: Deck, dt: number): CastIntent | null {
     const tune = COMMANDER_TUNINGS[this.difficulty] ?? COMMANDER_TUNINGS.normal;
@@ -84,22 +84,23 @@ export class Commander {
 
     const threat = tune.respondsToThreats ? this.biggestThreat(w, team) : null;
     // Under real pressure the reserve goes out of the window — holding mana
-    // while a Golem walks into your Tower is how a bot loses without playing.
+    // while the enemy squad walks up to our Core is how a bot loses without
+    // playing.
     const reserve = threat ? 0 : tune.reserve;
     const budget = w.manaOf(team) - reserve;
 
-    const cardId = this.pickCard(w, team, deck, budget, threat !== null, tune.picksByRole);
-    if (!cardId) return null;
+    const position = threat ? threat.position : this.ownPushCenter(w, team);
+    if (!position) return null;
 
-    const position = this.pickPosition(w, team, threat);
-    return position ? { cardId, position } : null;
+    const spellId = this.pickSpell(w, team, deck, budget, threat, position, tune.picksByRole);
+    return spellId ? { cardId: spellId, position } : null;
   }
 
-  /** The enemy unit furthest into our own half — what a response should answer. */
+  /** The enemy unit furthest into our own half — what a curse should answer. */
   private biggestThreat(w: World, team: Team): Mage | null {
     const forward = team === TEAM_A ? 1 : -1;
     let best: Mage | null = null;
-    let deepest = 0;
+    let deepest = -Infinity;
     for (const m of w.mages.values()) {
       if (!m.alive || m.team === team) continue;
       // Depth into our territory: positive once it is past the midline.
@@ -112,87 +113,93 @@ export class Commander {
     return best;
   }
 
+  /** The center of our own most-advanced living cluster — where a blessing/shield goes. */
+  private ownPushCenter(w: World, team: Team): Vec2 | null {
+    const forward = team === TEAM_A ? 1 : -1;
+    let best: Mage | null = null;
+    let deepest = -Infinity;
+    for (const m of w.mages.values()) {
+      if (!m.alive || m.team !== team) continue;
+      const reach = m.position.x * forward;
+      if (reach > deepest) {
+        deepest = reach;
+        best = m;
+      }
+    }
+    return best?.position ?? null;
+  }
+
   /**
-   * Picks what to play. Answering a threat prefers a damage dealer (kill it);
-   * opening a push prefers a tank to soak the Tower that will shoot back.
+   * Picks what to cast. Answering a threat prefers a curse — Praga once
+   * enough enemies are clustered to make the AoE worth it, Maldição da
+   * Lentidão otherwise; supporting our own push prefers Escudo Arcano when it
+   * is already taking a beating, Bênção de Ímpeto when it is healthy and
+   * should just go faster.
    */
-  private pickCard(
+  private pickSpell(
     w: World,
     team: Team,
     deck: Deck,
     budget: number,
-    responding: boolean,
+    threat: Mage | null,
+    position: Vec2,
     byRole: boolean,
   ): CardId | null {
     const affordable = deck
       .hand()
-      .map((id) => ({ id, card: cardFor(id) }))
-      .filter((e) => e.card && e.card.cost <= budget);
+      .map((id) => ({ id, spell: spellFor(id) }))
+      .filter((e): e is { id: SpellId; spell: SpellCard } => e.spell !== undefined && e.spell.cost <= budget);
     if (affordable.length === 0) return null;
 
-    // A weak commander just plays something it can afford.
+    // A weak commander just casts whatever it can afford.
     if (!byRole) return affordable[Math.floor(this.rng.float() * affordable.length)].id;
 
-    const hasFriendlyPush = [...w.mages.values()].some((m) => m.alive && m.team === team);
+    const wantedOrder = threat
+      ? this.rankCurses(w, team, position)
+      : this.rankBuffs(w, team, position);
 
-    const wanted = responding ? 'damage' : hasFriendlyPush ? 'support' : 'tank';
-    const preferred = affordable.filter((e) => e.card!.role === wanted);
-    const pool = preferred.length > 0 ? preferred : affordable;
+    for (const id of wantedOrder) {
+      const found = affordable.find((e) => e.id === id);
+      if (found) return found.id;
+    }
 
-    // Within the preferred role, spend the most it can afford — a bot that
-    // always plays its cheapest card never threatens anything.
+    // Nothing in the preferred order is affordable — spend the most it can on
+    // the right kind of spell rather than passing entirely.
+    const wantedKind = threat ? 'curse' : 'buff';
+    const sameKind = affordable.filter((e) => e.spell.kind === wantedKind);
+    const pool = sameKind.length > 0 ? sameKind : affordable;
     let best = pool[0];
     for (const e of pool) {
-      if (e.card!.cost > best.card!.cost) best = e;
+      if (e.spell.cost > best.spell.cost) best = e;
     }
     return best.id;
   }
 
-  /**
-   * Where to plant it. Defensively, just in front of the threat; offensively,
-   * on the push line of the flank whose enemy Tower is still up.
-   */
-  private pickPosition(w: World, team: Team, threat: Mage | null): Vec2 | null {
-    const forward = team === TEAM_A ? 1 : -1;
-
-    let base: Vec2;
-    if (threat) {
-      // Intercept: stand between the threat and our Core, a little in front.
-      base = new Vec2(threat.position.x - forward * 2.5, threat.position.y);
-    } else {
-      const core = w
-        .structuresOf(team)
-        .find((s) => s.kind === 'core' && s.alive)
-        ?.position;
-      const x = (core?.x ?? -forward * 17) + forward * PUSH_LINE_INSET;
-      base = new Vec2(x, this.chooseFlank(w, team));
-    }
-
-    for (let i = 0; i < DEPLOY_ATTEMPTS; i++) {
-      // Jitter widens with each retry so a blocked first choice still lands.
-      const spread = i * 1.2;
-      const candidate = new Vec2(
-        base.x + (this.rng.float() * 2 - 1) * spread,
-        base.y + (this.rng.float() * 2 - 1) * spread,
-      );
-      // Must be canSummonAt, not canDeployAt: the latter knows the zone rules
-      // but nothing about obstacles or structures standing in the way.
-      if (w.canSummonAt(team, candidate)) return candidate;
-    }
-    return w.canSummonAt(team, base) ? base : null;
+  /** Praga once the enemy is clustered enough to make the AoE worth it; otherwise the single-target slow. */
+  private rankCurses(w: World, team: Team, position: Vec2): SpellId[] {
+    const nearby = this.countNear(w, position, CLUSTER_RADIUS, (m) => m.alive && m.team !== team);
+    return nearby >= 2 ? ['plague', 'slow_curse'] : ['slow_curse', 'plague'];
   }
 
-  /** Pushes the flank whose enemy Tower is weakest — finish what is already hurt. */
-  private chooseFlank(w: World, team: Team): number {
-    let best: number | null = null;
-    let bestHealth = Infinity;
-    for (const s of w.structuresOf(team === TEAM_A ? TEAM_B : TEAM_A)) {
-      if (s.kind !== 'tower' || !s.alive) continue;
-      if (s.health < bestHealth) {
-        bestHealth = s.health;
-        best = s.position.y;
+  /** A push already under fire wants the shield; a healthy one wants to go faster. */
+  private rankBuffs(w: World, team: Team, position: Vec2): SpellId[] {
+    let underFire = false;
+    for (const m of w.mages.values()) {
+      if (!m.alive || m.team !== team) continue;
+      if (m.position.distanceTo(position) > CLUSTER_RADIUS) continue;
+      if (m.health < m.maxHealth * UNDER_FIRE_HEALTH_FRACTION) {
+        underFire = true;
+        break;
       }
     }
-    return best ?? (this.rng.float() < 0.5 ? -8 : 8);
+    return underFire ? ['arcane_shield', 'blessing'] : ['blessing', 'arcane_shield'];
+  }
+
+  private countNear(w: World, position: Vec2, radius: number, filter: (m: Mage) => boolean): number {
+    let n = 0;
+    for (const m of w.mages.values()) {
+      if (filter(m) && m.position.distanceTo(position) <= radius) n++;
+    }
+    return n;
   }
 }

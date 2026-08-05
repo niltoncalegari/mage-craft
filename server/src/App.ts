@@ -6,10 +6,9 @@
 
 import type { Team } from '../../sim/entities';
 import { TEAM_A, TEAM_B } from '../../sim/entities';
-import type { CardId } from '../../sim/cards';
-import { isCardId } from '../../sim/cards';
 import { defaultDeck, validateDeck } from '../../sim/Deck';
 import { ALL_ELEMENTS } from '../../sim/elements';
+import { isSpellId, type CardId } from '../../sim/spells';
 import type {
   AddBotMsg,
   CastMsg,
@@ -297,7 +296,7 @@ export class App {
       this.sendError(clientId, `invalid deck: ${check.reason}`);
       return null;
     }
-    return cards.filter(isCardId);
+    return cards.filter(isSpellId);
   }
 
   private sendQueueStatus(clientId: string): void {
@@ -485,12 +484,12 @@ export class App {
         facing: fromVec2(m.facing),
         health: m.health,
         maxHealth: m.maxHealth,
-        lives: m.lives,
         charging: m.charging,
         charge: m.charge,
         element: m.element,
         role: m.role,
-        ...(m.cardId ? { cardId: m.cardId } : {}),
+        shielded: m.shielded,
+        ...(m.rosterId ? { rosterId: m.rosterId } : {}),
       })),
       projectiles: snap.projectiles.map((p) => ({
         id: p.id,

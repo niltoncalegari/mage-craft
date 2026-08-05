@@ -1,19 +1,24 @@
 /**
- * The pivot's simulation rules (GDD §4, §5, §6): structures, mana and the
- * deploy zone. These are the mechanics that replaced lives-and-elimination.
+ * The v1.1 pivot's simulation rules (GDD §4, §5, §6, §7, §9): structures,
+ * mana, the permanent squad and spells. These replaced both the original
+ * lives-and-elimination model and the v1.0 unit-summoning cards.
  */
 
 import { describe, expect, it } from 'vitest';
-import { cardFor } from './cards';
+import { defaultSquad } from './cards';
 import {
   MANA_MAX,
   MANA_REGEN_INTERVAL,
   MANA_START,
   MATCH_DURATION,
+  PLAGUE_TICK_INTERVAL,
+  SHIELD_AMOUNT,
   SIM_DT,
+  SQUAD_SIZE,
   TOWER_RANGE,
 } from './config';
 import { TEAM_A, TEAM_B, type Structure } from './entities';
+import { spellFor } from './spells';
 import { Vec2 } from './Vec2';
 import { World } from './World';
 
@@ -176,79 +181,115 @@ describe('mana', () => {
   });
 });
 
-describe('deploy', () => {
-  it('spends the card cost and puts the unit where it was asked for', () => {
+describe('squad (GDD §4, §7)', () => {
+  it('gives each team its full, permanent squad at match start', () => {
     const w = new World();
-    const at = new Vec2(-10, 2);
+    w.initSquad(TEAM_A, defaultSquad());
+    w.initSquad(TEAM_B, defaultSquad());
 
-    const result = w.deploy(TEAM_A, 'pyromancer', at);
-
-    expect(result.ok).toBe(true);
-    expect(w.manaOf(TEAM_A)).toBe(MANA_START - cardFor('pyromancer')!.cost);
-    if (result.ok) {
-      expect(result.mage.position.x).toBeCloseTo(at.x);
-      expect(result.mage.role).toBe('damage');
-    }
+    expect([...w.mages.values()].filter((m) => m.team === TEAM_A)).toHaveLength(SQUAD_SIZE);
+    expect([...w.mages.values()].filter((m) => m.team === TEAM_B)).toHaveLength(SQUAD_SIZE);
   });
 
-  it('gives the unit the card’s own health and speed, not a global default', () => {
+  it('never permanently removes a mage — it respawns instead (GDD §4)', () => {
     const w = new World();
-    const golem = w.summon(TEAM_A, 'stone_golem', new Vec2(-10, 0));
-    const dervish = w.summon(TEAM_A, 'wind_dervish', new Vec2(-10, 4));
+    w.initSquad(TEAM_A, defaultSquad());
+    const [mage] = [...w.mages.values()];
 
-    expect(golem.maxHealth).toBe(cardFor('stone_golem')!.health);
-    expect(golem.moveSpeed).toBeLessThan(dervish.moveSpeed);
+    mage.health = 1;
+    w.dealDamage(mage, 999, new Vec2(1, 0), 0);
+    expect(mage.alive).toBe(false);
+
+    stepN(w, 60 * 30);
+
+    expect(w.mage(mage.id)).toBeDefined();
+    expect(mage.alive).toBe(true);
+  });
+});
+
+describe('spells (GDD §9)', () => {
+  it('spends the spell cost and buffs allies in radius, not the enemy', () => {
+    const w = new World();
+    const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    const enemy = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0.5));
+
+    const result = w.castSpell(TEAM_A, 'blessing', ally.position);
+
+    expect(result).toEqual({ ok: true });
+    expect(w.manaOf(TEAM_A)).toBe(MANA_START - spellFor('blessing')!.cost);
+    expect(ally.speedBuffFactor).toBeGreaterThan(0);
+    expect(ally.castBuffFactor).toBeGreaterThan(0);
+    expect(enemy.speedBuffFactor).toBe(0);
   });
 
-  it('refuses a card the team cannot afford', () => {
+  it('curses enemies in radius, not the caster’s own team', () => {
     const w = new World();
-    // Golem costs 5, opening mana is 5 — spend some first.
-    w.deploy(TEAM_A, 'arcane_archer', new Vec2(-10, 0));
+    const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    const enemy = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0.5));
 
-    expect(w.deploy(TEAM_A, 'stone_golem', new Vec2(-10, 2))).toEqual({
+    w.castSpell(TEAM_A, 'slow_curse', enemy.position);
+
+    expect(enemy.slowFactor).toBeGreaterThan(0);
+    expect(ally.slowFactor).toBe(0);
+  });
+
+  it('shields absorb damage before health', () => {
+    const w = new World();
+    const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+
+    w.castSpell(TEAM_A, 'arcane_shield', ally.position);
+    expect(ally.shieldAmount).toBe(SHIELD_AMOUNT);
+
+    w.dealDamage(ally, 20, Vec2.zero, 0);
+
+    expect(ally.health).toBe(ally.maxHealth);
+    expect(ally.shieldAmount).toBe(SHIELD_AMOUNT - 20);
+  });
+
+  it('plague ticks damage on anyone standing in the zone, bypassing shield', () => {
+    const w = new World();
+    const target = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    w.castSpell(TEAM_A, 'arcane_shield', target.position);
+    expect(target.shieldAmount).toBeGreaterThan(0);
+
+    w.castSpell(TEAM_B, 'plague', target.position);
+    stepN(w, Math.ceil(PLAGUE_TICK_INTERVAL / SIM_DT) + 2);
+
+    expect(target.health).toBeLessThan(target.maxHealth);
+    // Praga ignores the shield entirely — it is not merely absorbed.
+    expect(target.shieldAmount).toBeGreaterThan(0);
+  });
+
+  it('refuses a spell the team cannot afford', () => {
+    const w = new World();
+    w.castSpell(TEAM_A, 'plague', Vec2.zero); // cost 4 of the opening 5 mana
+
+    expect(w.castSpell(TEAM_A, 'slow_curse', Vec2.zero)).toEqual({
       ok: false,
       reason: 'not_enough_mana',
     });
   });
 
-  it('refuses an unknown card', () => {
+  it('refuses an unknown spell', () => {
     const w = new World();
-    expect(w.deploy(TEAM_A, 'lich_king', new Vec2(-10, 0))).toEqual({
+    expect(w.castSpell(TEAM_A, 'fireball_of_doom', new Vec2(-10, 0))).toEqual({
       ok: false,
       reason: 'unknown_card',
     });
   });
 
-  it('confines a team to its own half before any Tower falls', () => {
+  it('refuses a position outside the arena', () => {
     const w = new World();
-    expect(w.canDeployAt(TEAM_A, new Vec2(-10, 0))).toBe(true);
-    expect(w.canDeployAt(TEAM_A, new Vec2(6, 0))).toBe(false);
-    expect(w.canDeployAt(TEAM_B, new Vec2(10, 0))).toBe(true);
-    expect(w.canDeployAt(TEAM_B, new Vec2(-6, 0))).toBe(false);
+    expect(w.castSpell(TEAM_A, 'blessing', new Vec2(9999, 9999))).toEqual({
+      ok: false,
+      reason: 'out_of_bounds',
+    });
   });
 
-  it('opens the flank past the midline once its Tower is down', () => {
+  it('can target anywhere on the map, including on top of an enemy structure — no deploy zone since the pivot (GDD §5)', () => {
     const w = new World();
-    const topTower = towersOf(w, TEAM_B).find((t) => t.position.y > 0)!;
-    const forward = new Vec2(5, topTower.position.y);
-
-    expect(w.canDeployAt(TEAM_A, forward)).toBe(false);
-
-    topTower.health = 0;
-    topTower.alive = false;
-
-    expect(w.canDeployAt(TEAM_A, forward)).toBe(true);
-    // The other flank stays shut — breaking one side does not open both.
-    expect(w.canDeployAt(TEAM_A, new Vec2(5, -topTower.position.y))).toBe(false);
-  });
-
-  it('refuses to plant on top of a live enemy structure', () => {
-    const w = new World();
-    razeTowers(w, TEAM_B);
-    w.step(SIM_DT);
     const core = coreOf(w, TEAM_B);
-
-    expect(w.canDeployAt(TEAM_A, core.position)).toBe(false);
+    expect(w.castSpell(TEAM_A, 'slow_curse', core.position)).toEqual({ ok: true });
   });
 });
 

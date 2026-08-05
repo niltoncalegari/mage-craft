@@ -196,8 +196,8 @@ export class SnapshotSync {
     if (!player) return;
 
     player.team = this.teamOf(m.team);
-    player.lives = m.lives;
     player.health = m.health;
+    player.shielded = m.shielded;
     player.alive = m.health > 0;
     if (dtSim > 0) {
       player.velocity.set((m.position.x - track.prevX) / dtSim, (m.position.y - track.prevY) / dtSim);

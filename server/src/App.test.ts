@@ -16,6 +16,7 @@ import type {
   ServerMsg,
   SnapshotMsg,
 } from '../../sim/protocol';
+import { SQUAD_SIZE } from '../../sim/config';
 import { HAND_SIZE } from '../../sim/Deck';
 import { BOT_FALLBACK_SECONDS } from './Matchmaker';
 import { App, type Transport } from './App';
@@ -214,44 +215,52 @@ describe('App — match protocol', () => {
     expect(snap?.hand).toEqual(session.deckFor(0)!.hand());
     expect(snap?.hand).toHaveLength(HAND_SIZE);
     expect(snap?.next).toBe(session.deckFor(0)!.next());
-    // The preview is the card *behind* the hand, never one already in it.
-    expect(snap?.hand).not.toContain(snap?.next);
+    // The preview is a distinct slot in the cycle — its *value* may still
+    // match a card already in hand, since only 4 spells exist so far and the
+    // provisional deck duplicates each one (GDD §9, §16.4).
+    expect(snap?.next).toBeTruthy();
   });
 
   it('cycles the hand on the wire once a card is played', () => {
     startedMatch();
     const session = getSession();
-    const played = session.deckFor(0)!.hand()[0];
+    const handBefore = session.deckFor(0)!.hand();
+    const played = handBefore[0];
 
     send('host', { type: 'cast', cardId: played, position: { x: -12, y: 0 } });
     for (let i = 0; i < 3; i++) session.tick();
 
     const snap = hub.last<SnapshotMsg>('host', 'snapshot');
     expect(snap?.hand).toHaveLength(HAND_SIZE);
-    expect(snap?.hand).not.toContain(played);
+    // The played slot cycled to the back — the hand as a whole changed, even
+    // though a duplicate of the same spell id may still be in it (GDD §9).
+    expect(snap?.hand).not.toEqual(handBefore);
   });
 
-  it('deploys a unit for a cast from the sender’s hand', () => {
+  it('casts a spell from the sender’s hand — no unit is ever summoned (GDD §9)', () => {
     startedMatch();
     const session = getSession();
     const card = session.deckFor(0)!.hand()[0];
+    const mageCountBefore = session.liveWorld?.mages.size;
 
     send('host', { type: 'cast', cardId: card, position: { x: -10, y: 0 } });
 
-    expect(session.liveWorld?.mages.size).toBe(1);
+    expect(session.liveWorld?.mages.size).toBe(mageCountBefore);
+    expect(mageCountBefore).toBe(SQUAD_SIZE * 2);
   });
 
   it('tells the caster why a cast was rejected', () => {
     startedMatch();
     const session = getSession();
     const card = session.deckFor(0)!.hand()[0];
+    const mageCountBefore = session.liveWorld?.mages.size;
 
-    // The far side of the map is the opponent's deploy zone.
-    send('host', { type: 'cast', cardId: card, position: { x: 18, y: 0 } });
+    // Off the edge of the arena — there is no deploy zone since the pivot (GDD §5).
+    send('host', { type: 'cast', cardId: card, position: { x: 9999, y: 9999 } });
 
-    expect(session.liveWorld?.mages.size).toBe(0);
+    expect(session.liveWorld?.mages.size).toBe(mageCountBefore);
     expect(hub.last('host', 'error')).toMatchObject({
-      message: expect.stringContaining('outside_deploy_zone'),
+      message: expect.stringContaining('out_of_bounds'),
     });
   });
 
@@ -375,7 +384,8 @@ describe('App — matchmaking queue', () => {
 
     expect(hub.to<ErrorMsg>('c1', 'error')).toEqual([]);
     expect(hub.to<ErrorMsg>('c2', 'error')).toEqual([]);
-    expect(session.liveWorld?.mages.size).toBe(2);
+    // Casts never summon anything (GDD §9) — both squads are already full.
+    expect(session.liveWorld?.mages.size).toBe(SQUAD_SIZE * 2);
   });
 });
 

@@ -1,20 +1,23 @@
 /**
- * Deck, hand and cycle (GDD §7).
+ * Deck, hand and cycle (GDD §7, §9).
  *
  * The rule that makes this interesting is that there is no hidden randomness
  * after the initial shuffle: the deck is a rotating queue, the hand is the
  * front of it, and the next card is always visible. A player who tracks what
  * they have spent knows exactly what is coming.
+ *
+ * Since the v1.1 pivot every card is a spell (blessing/curse/AoE, GDD §9), not
+ * a unit — so the deck-construction rules changed too: with only 4 spells
+ * designed so far, a legal deck is those 4 each duplicated once, and
+ * duplicates are the point rather than something to forbid (GDD §9, §16.4:
+ * revisit this once the spell pool grows past 4).
  */
 
-import { ALL_CARDS, cardFor, isCardId, type CardId } from './cards';
-import { ROLE_BEHAVIOR, type Role } from './roles';
+import { ALL_SPELLS, isSpellId, spellFor, type CardId } from './spells';
 import type { Rng } from './rng';
 
 export const DECK_SIZE = 8;
 export const HAND_SIZE = 4;
-/** GDD §7: a deck must be able to field every role. */
-export const MIN_PER_ROLE = 1;
 
 export type DeckValidation = { ok: true } | { ok: false; reason: string };
 
@@ -23,41 +26,19 @@ export function validateDeck(cards: readonly string[]): DeckValidation {
   if (cards.length !== DECK_SIZE) {
     return { ok: false, reason: `deck must hold ${DECK_SIZE} cards, got ${cards.length}` };
   }
-  if (new Set(cards).size !== cards.length) {
-    return { ok: false, reason: 'deck may not repeat a card' };
-  }
-
-  const perRole = new Map<Role, number>();
   for (const id of cards) {
-    if (!isCardId(id)) return { ok: false, reason: `unknown card ${JSON.stringify(id)}` };
-    const card = cardFor(id);
-    if (!card) return { ok: false, reason: `unknown card ${JSON.stringify(id)}` };
-    perRole.set(card.role, (perRole.get(card.role) ?? 0) + 1);
-  }
-
-  for (const role of Object.keys(ROLE_BEHAVIOR) as Role[]) {
-    if ((perRole.get(role) ?? 0) < MIN_PER_ROLE) {
-      return { ok: false, reason: `deck needs at least ${MIN_PER_ROLE} ${role} card` };
-    }
+    if (!isSpellId(id)) return { ok: false, reason: `unknown card ${JSON.stringify(id)}` };
   }
   return { ok: true };
 }
 
 /**
  * A playable default for matchmaking, so a player who never opened the deck
- * builder still gets a coherent hand. One tank, one support, the rest damage.
+ * builder still gets a coherent hand: the whole spell catalog, each
+ * duplicated once (GDD §9's provisional 8-card deck).
  */
 export function defaultDeck(): CardId[] {
-  return [
-    'stone_golem',
-    'ice_sentinel',
-    'pyromancer',
-    'stormcaller',
-    'arcane_archer',
-    'alchemist',
-    'wind_dervish',
-    'cleric',
-  ];
+  return [...ALL_SPELLS, ...ALL_SPELLS];
 }
 
 export class Deck {
@@ -107,7 +88,7 @@ export class Deck {
     let best: CardId | null = null;
     let bestCost = Infinity;
     for (const id of this.hand()) {
-      const card = cardFor(id);
+      const card = spellFor(id);
       if (card && card.cost < bestCost) {
         bestCost = card.cost;
         best = id;
@@ -118,4 +99,4 @@ export class Deck {
 }
 
 /** Every card, for the deck builder UI. */
-export const CARD_POOL: readonly CardId[] = ALL_CARDS;
+export const CARD_POOL: readonly CardId[] = ALL_SPELLS;

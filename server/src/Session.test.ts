@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SQUAD_SIZE } from '../../sim/config';
 import { TEAM_A, TEAM_B } from '../../sim/entities';
 import { Rng } from '../../sim/rng';
 import { Vec2 } from '../../sim/Vec2';
@@ -34,7 +35,7 @@ function eliminate(s: Session, team: number): void {
 }
 
 describe('Session — start', () => {
-  it('builds an empty world — players have no avatar since the pivot', () => {
+  it('gives each team its full, permanent squad from match start (GDD §4, §7)', () => {
     const s = newSession();
     s.join('p1', 'Alice');
     s.selectTeam('p1', TEAM_A);
@@ -43,8 +44,8 @@ describe('Session — start', () => {
 
     s.startMatch();
 
-    expect(s.liveWorld?.mages.size).toBe(0);
-    // Structures came from the map, so there is something to fight over.
+    expect(s.liveWorld?.mages.size).toBe(SQUAD_SIZE * 2);
+    // Structures came from the map too, so there is something to fight over.
     expect((s.liveWorld?.structures.size ?? 0)).toBeGreaterThan(0);
   });
 
@@ -56,7 +57,7 @@ describe('Session — start', () => {
 
   it('rejects a cast before the match starts', () => {
     const s = newSession();
-    expect(() => s.submitCast('p1', 'pyromancer', new Vec2(-10, 0))).toThrow(/not started/);
+    expect(() => s.submitCast('p1', 'blessing', new Vec2(-10, 0))).toThrow(/not started/);
   });
 
   it('fills empty seats with bots', () => {
@@ -73,37 +74,40 @@ describe('Session — start', () => {
 });
 
 describe('Session — ticking', () => {
-  it('deploys a unit and charges mana for a cast in hand', () => {
+  it('casts a spell from hand and spends mana for it', () => {
     const s = startedSession();
     const card = s.deckFor(TEAM_A)!.hand()[0];
+    const handBefore = s.deckFor(TEAM_A)!.hand();
     const manaBefore = s.manaFor(TEAM_A);
+    const mageCountBefore = s.liveWorld?.mages.size;
 
     const result = s.submitCast('p1', card, new Vec2(-10, 0));
 
     expect(result.ok).toBe(true);
-    expect(s.liveWorld?.mages.size).toBe(1);
+    // Spells never summon anything (GDD §9) — the squad stays the same size.
+    expect(s.liveWorld?.mages.size).toBe(mageCountBefore);
     expect(s.manaFor(TEAM_A)).toBeLessThan(manaBefore);
-    // The played card cycles to the back, so it leaves the hand.
-    expect(s.deckFor(TEAM_A)!.hand()).not.toContain(card);
+    // The cast cycled the played slot to the back of the deck.
+    expect(s.deckFor(TEAM_A)!.hand()).not.toEqual(handBefore);
   });
 
   it('refuses a card that is not in hand', () => {
     const s = startedSession();
-    const notInHand = s.deckFor(TEAM_A)!.next()!;
+    const mageCountBefore = s.liveWorld?.mages.size;
 
-    const result = s.submitCast('p1', notInHand, new Vec2(-10, 0));
+    const result = s.submitCast('p1', 'not_a_real_spell', new Vec2(-10, 0));
 
     expect(result).toEqual({ ok: false, reason: 'not_in_hand' });
-    expect(s.liveWorld?.mages.size).toBe(0);
+    expect(s.liveWorld?.mages.size).toBe(mageCountBefore);
   });
 
-  it('refuses a cast in the enemy half', () => {
+  it('refuses a cast outside the arena — there is no deploy zone since the pivot (GDD §5)', () => {
     const s = startedSession();
     const card = s.deckFor(TEAM_A)!.hand()[0];
 
-    const result = s.submitCast('p1', card, new Vec2(15, 0));
+    const result = s.submitCast('p1', card, new Vec2(9999, 9999));
 
-    expect(result).toEqual({ ok: false, reason: 'outside_deploy_zone' });
+    expect(result).toEqual({ ok: false, reason: 'out_of_bounds' });
   });
 
   it('emits a snapshot on the configured cadence', () => {
@@ -123,6 +127,7 @@ describe('Session — ticking', () => {
         expect(Array.isArray(snap.projectiles)).toBe(true);
         expect(Array.isArray(snap.puddles)).toBe(true);
         expect(snap.structures.length).toBeGreaterThan(0);
+        expect(snap.mages.length).toBe(SQUAD_SIZE * 2);
         expect(snap.mana[TEAM_A]).toBeGreaterThan(0);
       },
     });

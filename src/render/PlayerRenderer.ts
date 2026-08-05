@@ -10,6 +10,8 @@ interface PlayerView {
   readonly root: THREE.Group;
   readonly figure: THREE.Group;
   readonly ring: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+  /** Escudo Arcano indicator (GDD §9) — minimal by design, full VFX is future work. */
+  readonly shieldRing: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
   readonly leftArm: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
   readonly rightArm: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
 }
@@ -103,6 +105,28 @@ export class PlayerRenderer implements GameRenderer {
     ring.visible = false;
     root.add(ring);
 
+    const shieldRing = new THREE.Mesh(
+      this.assets.geometry('player-shield-ring', () => {
+        const geo = new THREE.RingGeometry(0.76, 0.86, 32);
+        geo.rotateX(-Math.PI / 2);
+        return geo;
+      }),
+      this.assets.material(
+        'player-shield-ring-material',
+        () =>
+          new THREE.MeshBasicMaterial({
+            color: 0x7dd3fc,
+            transparent: true,
+            opacity: 0.85,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+      ),
+    );
+    shieldRing.position.y = 0.03;
+    shieldRing.visible = false;
+    root.add(shieldRing);
+
     const body = this.shadowMesh(
       this.assets.geometry('player-body', () => new THREE.CylinderGeometry(0.31, 0.36, 0.62, 12)),
       bodyMat,
@@ -156,7 +180,7 @@ export class PlayerRenderer implements GameRenderer {
     figure.add(leftBoot, rightBoot);
 
     root.add(figure);
-    return { root, figure, ring, leftArm, rightArm };
+    return { root, figure, ring, shieldRing, leftArm, rightArm };
   }
 
   private buildArm(
@@ -195,6 +219,7 @@ export class PlayerRenderer implements GameRenderer {
     view.root.scale.setScalar(scale);
 
     view.ring.visible = player.selected && !defeated;
+    view.shieldRing.visible = Boolean(player.shielded) && !defeated;
 
     if (defeated) {
       view.figure.position.y = 0.16;

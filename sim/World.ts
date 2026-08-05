@@ -6,7 +6,7 @@
  */
 
 import { Arena } from './Arena';
-import { cardFor, type CardId } from './cards';
+import { rosterFor, type RosterId } from './cards';
 import {
   ACCELERATION,
   AIM_DEADZONE,
@@ -14,10 +14,6 @@ import {
   CHARGE_TIME,
   CORE_HEALTH,
   CORE_RADIUS,
-  CORPSE_LINGER,
-  DEFAULT_LIVES,
-  DEPLOY_ADVANCE_DEPTH,
-  DEPLOY_STRUCTURE_CLEARANCE,
   HIT_STUN,
   KNOCKBACK_DAMPING,
   KNOCKBACK_STOP_SPEED,
@@ -50,7 +46,6 @@ import { defaultArena } from './defaultMap';
 import { elementDefFor, type ElementDef, type ElementId } from './elements';
 import {
   emptyInput,
-  isOut,
   opponentOf,
   TEAM_A,
   TEAM_B,
@@ -62,19 +57,13 @@ import {
   type Team,
 } from './entities';
 import { type Role } from './roles';
+import { spellFor, type SpellCard } from './spells';
 import { Vec2 } from './Vec2';
 
-/** Why a `deploy()` call was rejected — surfaced to the client for UI feedback. */
-export type DeployRejection =
-  | 'unknown_card'
-  | 'not_enough_mana'
-  | 'outside_deploy_zone'
-  | 'blocked_position'
-  | 'match_over';
+/** Why a `castSpell()` call was rejected — surfaced to the client for UI feedback. */
+export type CastRejection = 'unknown_card' | 'not_enough_mana' | 'out_of_bounds' | 'match_over';
 
-export type DeployResult =
-  | { ok: true; mage: Mage }
-  | { ok: false; reason: DeployRejection };
+export type CastResult = { ok: true } | { ok: false; reason: CastRejection };
 
 export class World {
   readonly mages = new Map<string, Mage>();
@@ -177,101 +166,47 @@ export class World {
     }
   }
 
-  /* ---- Deployment (GDD §5, §9) -------------------------------------------- */
+  /* ---- Squad (GDD §4, §7) -------------------------------------------------- */
 
   /**
-   * The whole of the player's agency in one method: spend mana to put a card's
-   * unit on the ground at a chosen point. Everything after this is autonomous.
+   * Creates a team's permanent squad at match start, one mage per roster
+   * entry, on the map's spawn points. Never gated by mana — picking a squad
+   * costs a slot, not mana (GDD §7).
    */
-  deploy(team: Team, cardId: string, position: Vec2): DeployResult {
-    if (this.roundOver) return { ok: false, reason: 'match_over' };
-
-    const card = cardFor(cardId as CardId);
-    if (!card) return { ok: false, reason: 'unknown_card' };
-    if (this.manaOf(team) < card.cost) return { ok: false, reason: 'not_enough_mana' };
-    if (!this.canDeployAt(team, position)) return { ok: false, reason: 'outside_deploy_zone' };
-
-    const spot = this.arena.clamp(position, MAGE_RADIUS);
-    if (this.isBlockedForSummon(spot)) return { ok: false, reason: 'blocked_position' };
-
-    this.spendMana(team, card.cost);
-    const mage = this.summon(team, card.id, spot);
-    return { ok: true, mage };
-  }
-
-  /**
-   * A team deploys in its own half, extended past the midline on a flank whose
-   * enemy Tower has fallen — the analogue of Clash Royale's bridge (GDD §5).
-   */
-  canDeployAt(team: Team, pos: Vec2): boolean {
-    if (this.arena.outOfBounds(pos)) return false;
-
-    const flankBroken = this.isFlankBroken(team, pos.y);
-    const maxForward = flankBroken ? DEPLOY_ADVANCE_DEPTH : 0;
-
-    // TEAM_A owns negative x, TEAM_B positive x (see facingSignForTeam).
-    const forward = team === TEAM_A ? pos.x : -pos.x;
-    if (forward > maxForward) return false;
-
-    for (const s of this.structures.values()) {
-      if (s.team === team || !s.alive) continue;
-      if (s.position.distanceTo(pos) < DEPLOY_STRUCTURE_CLEARANCE + s.radius) return false;
-    }
-    return true;
+  initSquad(team: Team, roster: readonly RosterId[]): void {
+    roster.forEach((id, idx) => {
+      const entry = rosterFor(id);
+      if (!entry) throw new Error(`sim: unknown roster entry ${JSON.stringify(id)}`);
+      this.insertMage({
+        id: `mage-${++this.nextId}`,
+        team,
+        element: entry.element,
+        role: entry.role,
+        rosterId: entry.id,
+        moveSpeed: entry.moveSpeed,
+        maxHealth: entry.health,
+        position: this.arena.spawnFor(team, idx),
+        isBot: true,
+      });
+    });
   }
 
   /**
-   * True once the enemy Tower guarding this side of the map is down.
-   *
-   * The side test uses `>= 0` rather than `Math.sign`, because `Math.sign(0)`
-   * is 0 and would match no Tower at all — which read as "this flank is broken"
-   * and let a team deploy on the midline from the opening seconds.
+   * Test/dev helper: places one roster mage at an explicit position, bypassing
+   * the squad's spawn points. Not reachable by a player — squads are built by
+   * `initSquad`, never by spending mana (GDD §7 killed unit-summoning cards).
    */
-  private isFlankBroken(team: Team, y: number): boolean {
-    const side = y >= 0;
-    let guarded = false;
-    for (const s of this.structures.values()) {
-      if (s.team === team || s.kind !== 'tower') continue;
-      if (s.position.y >= 0 !== side) continue;
-      guarded = true;
-      if (s.alive) return false;
-    }
-    // No Tower covers this side: nothing was ever broken open here.
-    return guarded;
-  }
-
-  private isBlockedForSummon(pos: Vec2): boolean {
-    if (this.arena.blocksMovementAt(pos, MAGE_RADIUS)) return true;
-    for (const s of this.structures.values()) {
-      if (s.alive && s.position.distanceTo(pos) < s.radius + MAGE_RADIUS) return true;
-    }
-    return false;
-  }
-
-  /**
-   * The single "could I summon here?" predicate — zone rules *and* physical
-   * room. `canDeployAt` alone answers only the first half, which is a trap: an
-   * AI that picks spots with it will happily choose the inside of its own
-   * Tower and have every cast rejected.
-   */
-  canSummonAt(team: Team, pos: Vec2): boolean {
-    return (
-      this.canDeployAt(team, pos) && !this.isBlockedForSummon(this.arena.clamp(pos, MAGE_RADIUS))
-    );
-  }
-
-  /** Creates a card's unit at `position`. Bypasses mana — `deploy()` is the paying door. */
-  summon(team: Team, cardId: CardId, position: Vec2): Mage {
-    const card = cardFor(cardId);
-    if (!card) throw new Error(`sim: unknown card ${JSON.stringify(cardId)}`);
+  summon(team: Team, rosterId: RosterId, position: Vec2): Mage {
+    const entry = rosterFor(rosterId);
+    if (!entry) throw new Error(`sim: unknown roster entry ${JSON.stringify(rosterId)}`);
     return this.insertMage({
       id: `mage-${++this.nextId}`,
       team,
-      element: card.element,
-      role: card.role,
-      cardId,
-      moveSpeed: card.moveSpeed,
-      maxHealth: card.health,
+      element: entry.element,
+      role: entry.role,
+      rosterId: entry.id,
+      moveSpeed: entry.moveSpeed,
+      maxHealth: entry.health,
       position,
       isBot: true,
     });
@@ -280,7 +215,7 @@ export class World {
   /**
    * Places a bare mage at its team's next spawn slot with the pre-pivot default
    * stats. Retained for combat unit tests and for the frozen practice-mode
-   * shape; the game itself goes through `deploy()`.
+   * shape; the game itself only ever populates its mages through `initSquad`.
    */
   addMage(id: string, team: Team, element: ElementId, isBot: boolean): Mage {
     const idx = this.teamCounts.get(team) ?? 0;
@@ -290,7 +225,7 @@ export class World {
       team,
       element,
       role: 'damage',
-      cardId: null,
+      rosterId: null,
       moveSpeed: MOVE_SPEED,
       maxHealth: MAX_HEALTH,
       position: this.arena.spawnFor(team, idx),
@@ -303,7 +238,7 @@ export class World {
     team: Team;
     element: ElementId;
     role: Role;
-    cardId: CardId | null;
+    rosterId: RosterId | null;
     moveSpeed: number;
     maxHealth: number;
     position: Vec2;
@@ -315,7 +250,7 @@ export class World {
       isBot: spec.isBot,
       element: spec.element,
       role: spec.role,
-      cardId: spec.cardId,
+      rosterId: spec.rosterId,
       moveSpeed: spec.moveSpeed,
       position: spec.position,
       facing: new Vec2(facingSignForTeam(spec.team), 0),
@@ -323,7 +258,6 @@ export class World {
       health: spec.maxHealth,
       maxHealth: spec.maxHealth,
       alive: true,
-      lives: DEFAULT_LIVES,
       state: 'idle',
       charge: 0,
       charging: false,
@@ -336,10 +270,101 @@ export class World {
       immunityTimer: 0,
       respawnTimer: 0,
       chargeRateBonus: 0,
+      speedBuffFactor: 0,
+      speedBuffTimer: 0,
+      castBuffFactor: 0,
+      castBuffTimer: 0,
+      shieldAmount: 0,
+      shieldTimer: 0,
       input: emptyInput(),
     };
     this.mages.set(m.id, m);
     return m;
+  }
+
+  /* ---- Spells (GDD §5, §9) -------------------------------------------------- */
+
+  /**
+   * The whole of the player's agency in one method (GDD §13): spend mana to
+   * buff an area of your own squad or curse an area of the enemy's. There is
+   * no deploy zone any more (GDD §5) — a spell lands wherever it is aimed, as
+   * long as it is inside the arena.
+   */
+  castSpell(team: Team, spellId: string, position: Vec2): CastResult {
+    if (this.roundOver) return { ok: false, reason: 'match_over' };
+
+    const spell = spellFor(spellId);
+    if (!spell) return { ok: false, reason: 'unknown_card' };
+    if (this.manaOf(team) < spell.cost) return { ok: false, reason: 'not_enough_mana' };
+    if (this.arena.outOfBounds(position)) return { ok: false, reason: 'out_of_bounds' };
+
+    this.spendMana(team, spell.cost);
+    this.applySpellEffect(team, spell, position);
+    return { ok: true };
+  }
+
+  private applySpellEffect(team: Team, spell: SpellCard, position: Vec2): void {
+    switch (spell.effect.kind) {
+      case 'buff_haste': {
+        const { speedFactor, castFactor } = spell.effect;
+        for (const m of this.mages.values()) {
+          if (!m.alive || m.team !== team) continue;
+          if (m.position.distanceTo(position) > spell.radius) continue;
+          m.speedBuffFactor = Math.max(m.speedBuffFactor, speedFactor);
+          m.speedBuffTimer = Math.max(m.speedBuffTimer, spell.duration);
+          m.castBuffFactor = Math.max(m.castBuffFactor, castFactor);
+          m.castBuffTimer = Math.max(m.castBuffTimer, spell.duration);
+        }
+        break;
+      }
+      case 'curse_slow': {
+        const { slowFactor } = spell.effect;
+        for (const m of this.mages.values()) {
+          if (!m.alive || m.team === team) continue;
+          if (m.position.distanceTo(position) > spell.radius) continue;
+          m.slowFactor = Math.max(m.slowFactor, slowFactor);
+          m.slowTimer = Math.max(m.slowTimer, spell.duration);
+        }
+        break;
+      }
+      case 'buff_shield': {
+        const { amount } = spell.effect;
+        for (const m of this.mages.values()) {
+          if (!m.alive || m.team !== team) continue;
+          if (m.position.distanceTo(position) > spell.radius) continue;
+          m.shieldAmount = Math.max(m.shieldAmount, amount);
+          m.shieldTimer = Math.max(m.shieldTimer, spell.duration);
+        }
+        break;
+      }
+      case 'curse_zone':
+        this.spawnCurseZone(position, spell.radius, spell.duration, spell.effect.tickInterval, spell.effect.tickDamage);
+        break;
+    }
+  }
+
+  /** Praga (GDD §9): a ground hazard that hurts anyone overlapping it, bypassing shield. */
+  private spawnCurseZone(
+    position: Vec2,
+    radius: number,
+    duration: number,
+    tickInterval: number,
+    tickDamage: number,
+  ): void {
+    const id = `puddle-${++this.nextId}`;
+    this.puddles.set(id, {
+      id,
+      ownerId: 'spell',
+      position,
+      radius,
+      duration,
+      elapsed: 0,
+      tickInterval,
+      tickDamage,
+      tickTimer: 0,
+      alive: true,
+      bypassShield: true,
+    });
   }
 
   mage(id: string): Mage | undefined {
@@ -367,7 +392,6 @@ export class World {
     this.updateStructures(dt);
     this.updateProjectiles(dt);
     this.updatePuddles(dt);
-    this.removeSpentMages();
     this.checkMatchEnd();
 
     // `release` is an edge-triggered "the client let go this tick" signal; drop
@@ -381,14 +405,24 @@ export class World {
       m.slowTimer = decay(m.slowTimer, dt);
       if (m.slowTimer === 0) m.slowFactor = 0;
     }
+    if (m.speedBuffTimer > 0) {
+      m.speedBuffTimer = decay(m.speedBuffTimer, dt);
+      if (m.speedBuffTimer === 0) m.speedBuffFactor = 0;
+    }
+    if (m.castBuffTimer > 0) {
+      m.castBuffTimer = decay(m.castBuffTimer, dt);
+      if (m.castBuffTimer === 0) m.castBuffFactor = 0;
+    }
+    if (m.shieldTimer > 0) {
+      m.shieldTimer = decay(m.shieldTimer, dt);
+      if (m.shieldTimer === 0) m.shieldAmount = 0;
+    }
     if (m.throwCooldown > 0) m.throwCooldown = decay(m.throwCooldown, dt);
 
     if (!m.alive) {
       if (m.respawnTimer > 0) {
         m.respawnTimer = decay(m.respawnTimer, dt);
-        // With lives left this is a respawn countdown; without, it is the
-        // corpse linger before the unit is dropped (see removeSpentMages).
-        if (m.respawnTimer === 0 && m.lives > 0) this.respawn(m);
+        if (m.respawnTimer === 0) this.respawn(m);
       }
       return;
     }
@@ -453,7 +487,9 @@ export class World {
 
     // Per-unit since the pivot: a Golem is slow and a Dervish is fast (GDD §9).
     let speed = m.moveSpeed;
-    if (m.slowFactor > 0) speed *= 1 - m.slowFactor;
+    if (m.slowFactor > 0) speed *= Math.max(0.1, 1 - m.slowFactor);
+    // Bênção de Ímpeto (GDD §9): a temporary haste on top of the base speed.
+    if (m.speedBuffFactor > 0) speed *= 1 + m.speedBuffFactor;
 
     // Accelerate toward the desired velocity instead of snapping to it, so
     // starts and stops carry the same weight as practice mode.
@@ -546,17 +582,20 @@ export class World {
    * stacking two Bards is deliberately not a strategy.
    */
   private updateSupportAuras(): void {
-    for (const m of this.mages.values()) m.chargeRateBonus = 0;
+    // Seeded from the Bênção de Ímpeto buff rather than 0, then merged with
+    // the strongest applicable aura by Math.max — a cast spell and a Bard's
+    // aura do not stack (GDD §9's "não soma" rule, same as two Bards).
+    for (const m of this.mages.values()) m.chargeRateBonus = m.castBuffFactor;
 
     for (const src of this.mages.values()) {
-      if (!src.alive || !src.cardId) continue;
-      const card = cardFor(src.cardId);
-      if (!card?.auraChargeBonus || !card.auraRadius) continue;
+      if (!src.alive || !src.rosterId) continue;
+      const entry = rosterFor(src.rosterId);
+      if (!entry?.auraChargeBonus || !entry.auraRadius) continue;
 
       for (const m of this.mages.values()) {
         if (m === src || !m.alive || m.team !== src.team) continue;
-        if (m.position.distanceTo(src.position) <= card.auraRadius) {
-          m.chargeRateBonus = Math.max(m.chargeRateBonus, card.auraChargeBonus);
+        if (m.position.distanceTo(src.position) <= entry.auraRadius) {
+          m.chargeRateBonus = Math.max(m.chargeRateBonus, entry.auraChargeBonus);
         }
       }
     }
@@ -566,9 +605,9 @@ export class World {
   private applySupportHealing(dt: number): void {
     for (const healerId of sortedMageIds(this)) {
       const src = this.mages.get(healerId);
-      if (!src?.alive || !src.cardId) continue;
-      const card = cardFor(src.cardId);
-      if (!card?.healPerSecond || !card.healRange) continue;
+      if (!src?.alive || !src.rosterId) continue;
+      const entry = rosterFor(src.rosterId);
+      if (!entry?.healPerSecond || !entry.healRange) continue;
 
       let best: Mage | null = null;
       let bestMissing = 0;
@@ -577,12 +616,12 @@ export class World {
         if (!m || m === src || !m.alive || m.team !== src.team) continue;
         const missing = m.maxHealth - m.health;
         if (missing <= bestMissing) continue;
-        if (src.position.distanceTo(m.position) > card.healRange) continue;
+        if (src.position.distanceTo(m.position) > entry.healRange) continue;
         bestMissing = missing;
         best = m;
       }
 
-      if (best) best.health = Math.min(best.maxHealth, best.health + card.healPerSecond * dt);
+      if (best) best.health = Math.min(best.maxHealth, best.health + entry.healPerSecond * dt);
     }
   }
 
@@ -678,16 +717,6 @@ export class World {
     if (s.health <= 0) {
       s.health = 0;
       s.alive = false;
-    }
-  }
-
-  /**
-   * Summons are permanent losses (GDD §4) — once the death has been visible for
-   * a beat, the unit leaves the world so snapshots and AI scans stay bounded.
-   */
-  private removeSpentMages(): void {
-    for (const [id, m] of [...this.mages]) {
-      if (isOut(m) && m.respawnTimer === 0) this.mages.delete(id);
     }
   }
 
@@ -837,7 +866,7 @@ export class World {
         for (const m of this.mages.values()) {
           if (!m.alive || m.immunityTimer > 0) continue;
           if (m.position.distanceTo(pu.position) <= pu.radius + MAGE_RADIUS) {
-            this.dealDamage(m, pu.tickDamage, Vec2.zero, 0);
+            this.dealDamage(m, pu.tickDamage, Vec2.zero, 0, pu.bypassShield === true);
           }
         }
       }
@@ -847,13 +876,21 @@ export class World {
   }
 
   /**
-   * The single seam every damage source (projectiles, puddles) funnels through,
-   * so death/respawn/lives stay consistent everywhere.
+   * The single seam every damage source (projectiles, puddles) funnels
+   * through, so death/respawn stay consistent everywhere. `bypassShield` is
+   * for Praga's tick (GDD §9): it ignores Escudo Arcano by design.
    */
-  dealDamage(m: Mage, amount: number, knockDir: Vec2, knockMag: number): void {
+  dealDamage(m: Mage, amount: number, knockDir: Vec2, knockMag: number, bypassShield = false): void {
     if (!m.alive || m.immunityTimer > 0) return;
 
-    m.health -= amount;
+    let remaining = amount;
+    if (!bypassShield && m.shieldAmount > 0) {
+      const absorbed = Math.min(m.shieldAmount, remaining);
+      m.shieldAmount -= absorbed;
+      remaining -= absorbed;
+    }
+    m.health -= remaining;
+
     if (knockMag > 0) {
       const n = knockDir.normalized();
       if (n.lengthSq() > 0) {
@@ -875,8 +912,9 @@ export class World {
     m.knockbackVelocity = Vec2.zero;
     m.velocity = Vec2.zero;
     m.state = 'dead';
-    m.lives--;
-    m.respawnTimer = m.lives > 0 ? RESPAWN_DELAY : CORPSE_LINGER;
+    // Squad mages always come back (GDD §4) — death costs presence on the
+    // field, not the mage itself.
+    m.respawnTimer = RESPAWN_DELAY;
   }
 
   private respawn(m: Mage): void {
@@ -891,6 +929,12 @@ export class World {
     m.stunTimer = 0;
     m.slowFactor = 0;
     m.slowTimer = 0;
+    m.speedBuffFactor = 0;
+    m.speedBuffTimer = 0;
+    m.castBuffFactor = 0;
+    m.castBuffTimer = 0;
+    m.shieldAmount = 0;
+    m.shieldTimer = 0;
   }
 
   /**

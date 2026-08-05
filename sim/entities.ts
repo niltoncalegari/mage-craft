@@ -1,6 +1,6 @@
 /** Simulation entity types (GDD §5, §8, §9). */
 
-import type { CardId } from './cards';
+import type { RosterId } from './cards';
 import type { ElementId } from './elements';
 import type { Role } from './roles';
 import { Vec2 } from './Vec2';
@@ -36,9 +36,11 @@ export function emptyInput(): MageInput {
 }
 
 /**
- * A summoned unit (GDD §8, §9). Always autonomous: since the pivot no mage is
- * ever steered by a human — the player's agency is *which* card, *where* and
- * *when*, and from the moment this exists it is driven by `bot/Brain.ts`.
+ * A squad mage (GDD §4, §8, §9). Always autonomous: no mage is ever steered
+ * by a human — the player's agency is *which* spell, *where* and *when*, and
+ * from the moment this exists it is driven by `bot/Brain.ts`. It is
+ * permanent: it respawns after `RESPAWN_DELAY` instead of leaving the world
+ * for good (GDD §4).
  */
 export interface Mage {
   readonly id: string;
@@ -48,9 +50,9 @@ export interface Mage {
 
   /** Identity (GDD §8). Drives behaviour via `ROLE_BEHAVIOR`. */
   readonly role: Role;
-  /** The card that paid for this unit, for snapshots and post-match stats. */
-  readonly cardId: CardId | null;
-  /** Per-unit, from the card — no longer the global MOVE_SPEED. */
+  /** Which roster entry this mage is, for snapshots and post-match stats. */
+  readonly rosterId: RosterId | null;
+  /** Per-unit, from the roster entry — no longer the global MOVE_SPEED. */
   readonly moveSpeed: number;
 
   position: Vec2;
@@ -61,7 +63,6 @@ export interface Mage {
   health: number;
   maxHealth: number;
   alive: boolean;
-  lives: number;
 
   state: MageState;
 
@@ -74,6 +75,7 @@ export interface Mage {
   stunTimer: number;
   knockbackVelocity: Vec2;
 
+  /** Set by an ice hit or the Maldição da Lentidão curse, whichever is stronger (GDD §9). */
   slowFactor: number;
   slowTimer: number;
 
@@ -83,12 +85,18 @@ export interface Mage {
   /** Recomputed every tick from nearby friendly support auras (GDD §9). */
   chargeRateBonus: number;
 
-  input: MageInput;
-}
+  /** Bênção de Ímpeto — a temporary move-speed multiplier, on top of the aura's cast bonus (GDD §9). */
+  speedBuffFactor: number;
+  speedBuffTimer: number;
+  /** Bênção de Ímpeto's cast-speed half; merges with `chargeRateBonus` by taking the larger. */
+  castBuffFactor: number;
+  castBuffTimer: number;
 
-/** True once a mage is gone for the rest of the round (dead with no lives left). */
-export function isOut(m: Mage): boolean {
-  return !m.alive && m.lives <= 0;
+  /** Escudo Arcano — absorbs damage before health, except a curse zone's tick (GDD §9). */
+  shieldAmount: number;
+  shieldTimer: number;
+
+  input: MageInput;
 }
 
 /** A flying conjuration spawned by a mage's throw (GDD §8). */
@@ -114,8 +122,9 @@ export interface Projectile {
 }
 
 /**
- * A ground effect zone spawned by poison (GDD §8.5). It hurts everyone who
- * overlaps it, including its caster's team, by design.
+ * A ground effect zone spawned by poison (GDD §8.5) or by the Praga curse
+ * (GDD §9). It hurts everyone who overlaps it, including its caster's team,
+ * by design.
  */
 export interface Puddle {
   readonly id: string;
@@ -131,6 +140,8 @@ export interface Puddle {
   tickTimer: number;
 
   alive: boolean;
+  /** Praga ignores Escudo Arcano by design (GDD §9); poison does not set this. */
+  readonly bypassShield?: boolean;
 }
 
 /* ---- Structures (GDD §5) -------------------------------------------------- */

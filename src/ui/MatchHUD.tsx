@@ -4,17 +4,15 @@ import { TEAM_COLORS } from '../game/config';
 import { Team, type Structure } from '../game/types';
 import type { World } from '../game/World';
 import type { MatchState } from '../net/SnapshotSync';
-import { cardFor, type CardId } from '../../sim/cards';
 import { HAND_SIZE } from '../../sim/Deck';
 import { MANA_MAX, MATCH_DURATION, SUDDEN_DEATH_DURATION } from '../../sim/config';
-import type { Role } from '../../sim/roles';
+import { spellFor, type CardId, type SpellCard } from '../../sim/spells';
 import styles from './MatchHUD.module.css';
 
-/** What the player can be told about a role at a glance (GDD §8). */
-const ROLE_LABEL: Readonly<Record<Role, string>> = {
-  tank: 'Tanque',
-  damage: 'Dano',
-  support: 'Suporte',
+/** What the player can be told about a spell at a glance (GDD §9). */
+const KIND_LABEL: Readonly<Record<SpellCard['kind'], string>> = {
+  buff: 'Bênção',
+  curse: 'Maldição',
 };
 
 export interface MatchHudDeps {
@@ -68,8 +66,8 @@ function keep<T extends object>(target: T, key: keyof T): (el: HTMLElement | nul
 }
 
 /** The catalog entry for a wire card id, if it names one at all. */
-function lookupCard(id: string | null | undefined): ReturnType<typeof cardFor> {
-  return id ? cardFor(id as CardId) : undefined;
+function lookupCard(id: string | null | undefined): SpellCard | undefined {
+  return id ? spellFor(id as CardId) : undefined;
 }
 
 function formatSeconds(total: number): string {
@@ -262,7 +260,7 @@ export class MatchHUD implements GameRenderer {
       const affordable = state.mana >= card.cost;
       refs.cost.textContent = String(card.cost);
       refs.name.textContent = card.name;
-      refs.role.textContent = ROLE_LABEL[card.role];
+      refs.role.textContent = KIND_LABEL[card.kind];
       refs.root.classList.toggle(styles.cardSelected, selected === card.id);
       refs.root.classList.toggle(styles.cardBroke, !affordable);
       refs.root.disabled = !affordable;
@@ -273,7 +271,7 @@ export class MatchHUD implements GameRenderer {
 
     const armed = lookupCard(selected);
     this.refs.hint.textContent = armed
-      ? `Clique no seu lado do campo para invocar ${armed.name}`
+      ? `Clique numa área do campo para conjurar ${armed.name}`
       : 'Escolha uma carta (1–4) e clique no campo';
 
     const fraction = clamp01(state.mana / MANA_MAX);

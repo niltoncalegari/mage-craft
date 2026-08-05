@@ -11,14 +11,15 @@
 
 import { Brain, type Difficulty } from '../../sim/bot/Brain';
 import { Commander } from '../../sim/bot/Commander';
-import type { CardId } from '../../sim/cards';
+import { defaultSquad, type RosterId } from '../../sim/cards';
 import { SIM_DT } from '../../sim/config';
 import { Deck, defaultDeck } from '../../sim/Deck';
 import type { ElementId } from '../../sim/elements';
 import { TEAM_A, TEAM_B, type Team } from '../../sim/entities';
 import { Rng } from '../../sim/rng';
+import type { CardId } from '../../sim/spells';
 import { Vec2 } from '../../sim/Vec2';
-import type { DeployRejection, World } from '../../sim/World';
+import type { CastRejection, World } from '../../sim/World';
 import type { Room, RoomState, RoomSummary, Slot, Spectator } from './Room';
 
 /** 60/3 = 20Hz, within the project plan's ~20-30Hz snapshot target. */
@@ -44,13 +45,14 @@ export interface MageSnapshotState {
   facing: Vec2;
   health: number;
   maxHealth: number;
-  lives: number;
   charging: boolean;
   charge: number;
   element: ElementId;
   role: string;
-  cardId: CardId | null;
+  rosterId: RosterId | null;
   alive: boolean;
+  /** True while Escudo Arcano still has damage to absorb (GDD §9) — for a client shield indicator. */
+  shielded: boolean;
 }
 
 export interface StructureSnapshotState {
@@ -199,9 +201,9 @@ export class Session {
   /* ---- match ------------------------------------------------------------ */
 
   /**
-   * Validates and builds the world (delegating to Room), then arms this
-   * session's bot roster from the room's bot slots, so ticking can drive them
-   * without Room needing to know the AI exists.
+   * Validates and builds the world (delegating to Room), gives each team its
+   * permanent squad (GDD §4, §7), then arms this session's bot roster so
+   * ticking can drive every mage without Room needing to know the AI exists.
    */
   startMatch(): void {
     const world = this.room.startMatch();
@@ -218,7 +220,8 @@ export class Session {
     this.commanders = new Map();
 
     // One seat per team in a 1v1; an empty or bot seat gets an AI commander so
-    // the match is always contested.
+    // the match is always contested. There is no squad-builder yet (GDD §16),
+    // so every team fields the same default squad.
     for (const team of [TEAM_A, TEAM_B] as Team[]) {
       const slot = this.room.slots().find((s) => s.team === team);
       const cards = (slot?.playerId ? this.playerDecks.get(slot.playerId) : null) ?? defaultDeck();
@@ -227,7 +230,13 @@ export class Session {
       if (!slot || slot.isBot || !slot.playerId) {
         this.commanders.set(team, new Commander(this.rng, (slot?.difficulty as Difficulty) ?? 'normal'));
       }
+
+      world.initSquad(team, defaultSquad());
     }
+
+    // Every mage on the board is permanent from tick one — Brain drives all
+    // of them, since nobody steers a mage by hand (GDD §1).
+    for (const id of world.mages.keys()) this.registerUnit(id);
   }
 
   /** Registers the deck a player brought, used on the next `startMatch`. */
@@ -250,14 +259,14 @@ export class Session {
   }
 
   /**
-   * The one in-match action a player can take (GDD §13): spend mana to put a
-   * card down. Returns the rejection reason so the client can say why.
+   * The one in-match action a player can take (GDD §13): spend mana to cast a
+   * spell on an area. Returns the rejection reason so the client can say why.
    */
   submitCast(
     playerId: string,
     cardId: string,
     position: Vec2,
-  ): { ok: true } | { ok: false; reason: DeployRejection | 'not_in_hand' | 'not_a_player' } {
+  ): { ok: true } | { ok: false; reason: CastRejection | 'not_in_hand' | 'not_a_player' } {
     if (!this.world) throw new Error('match: not started yet');
 
     const team = this.teamOf(playerId);
@@ -266,12 +275,11 @@ export class Session {
     const deck = this.decks.get(team);
     if (!deck || !deck.holds(cardId)) return { ok: false, reason: 'not_in_hand' };
 
-    const result = this.world.deploy(team, cardId, position);
+    const result = this.world.castSpell(team, cardId, position);
     if (!result.ok) return { ok: false, reason: result.reason };
 
     // Only cycle the deck once the world actually accepted and charged for it.
     deck.play(cardId);
-    this.registerUnit(result.mage.id);
     return { ok: true };
   }
 
@@ -289,10 +297,9 @@ export class Session {
       const intent = commander.step(this.world, team, deck, dt);
       if (!intent) continue;
 
-      const result = this.world.deploy(team, intent.cardId, intent.position);
+      const result = this.world.castSpell(team, intent.cardId, intent.position);
       if (!result.ok) continue;
       deck.play(intent.cardId);
-      this.registerUnit(result.mage.id);
     }
   }
 
@@ -304,12 +311,6 @@ export class Session {
     this.brain.step(this.world, this.bots, SIM_DT);
     this.world.step(SIM_DT);
     this.tickCount++;
-
-    // Units that died this tick are gone from the world; drop them from the
-    // roster so Brain does not scan a growing list of ghosts.
-    for (const id of [...this.bots.keys()]) {
-      if (!this.world.mage(id)) this.bots.delete(id);
-    }
 
     const snap =
       this.tickCount % SNAPSHOT_EVERY_N_TICKS === 0 ? this.buildSnapshot(this.world) : null;
@@ -402,13 +403,13 @@ export class Session {
         facing: m.facing,
         health: m.health,
         maxHealth: m.maxHealth,
-        lives: m.lives,
         charging: m.charging,
         charge: m.charge,
         element: m.element,
         role: m.role,
-        cardId: m.cardId,
+        rosterId: m.rosterId,
         alive: m.alive,
+        shielded: m.shieldAmount > 0,
       })),
       projectiles: [...world.projectiles.values()].map((p) => ({
         id: p.id,

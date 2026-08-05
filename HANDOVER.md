@@ -35,9 +35,26 @@ O smoke em browser (`scripts/siege.mjs`) pegou o que o teste unitário não pega
 2. **"Mana não é cobrada" era falso alarme meu.** Eu estava lendo o snapshot de antes do cast. Com a asserção certa: 5 → 1 no `alchemist`, e a mão cicla (`alchemist` sai, `stone_golem` entra).
 3. **Unidade no mundo não prova nada** — o comandante de IA está invocando do outro lado ao mesmo tempo. A asserção precisa ser por time (`m.team === yourTeam`), senão o teste passa mesmo com o cast do humano rejeitado.
 
+## ⚠️ O GDD virou v1.1 no fim desta sessão — o modelo do jogo mudou
+
+Depois da UI, o usuário redirecionou o produto: **a carta não invoca mais mago.**
+Cada jogador tem um **esquadrão fixo de 4 magos** que já está em campo e ressuscita
+ao morrer, e a mão passa a ser **só de buffs e maldições**. As 9 unidades continuam
+existindo, mas como catálogo de montagem do esquadrão, fora da mão.
+
+`GDD.md` foi reescrito para v1.1 (quase todas as seções, mais uma §17 nova de arte
+e áudio). **Leia o GDD antes de tocar em `sim/`** — boa parte do que esta sessão
+construiu (invocação, zona de deploy, custo de mana por unidade) é justamente o que
+sai. Nada disso foi implementado ainda: só o design está registrado.
+
+Duas coisas que o pivot quebra e que estão escritas no GDD, não escondidas:
+
+- **O teste de agência (§10) está invalidado.** Ele passava 5/5 porque o AFK não tinha nada em campo. Com esquadrão permanente o AFK tem 4 magos lutando. `sim/agency.test.ts` vai ficar vermelho, e afrouxar o teste é a resposta errada.
+- **Metade do baralho não existe.** O baralho é de 8 e só há 4 cartas de efeito desenhadas. O GDD §9 lista os eixos que as 4 faltantes deveriam cobrir em vez de números inventados.
+
 ## Cuidado / não feito
 
-- **Balance continua o problema aberto nº 1.** Nada nesta sessão mexeu nisso: empate entre dois jogadores bons segue sendo o resultado mais comum. Ver §14.
+- **Balance continua o problema aberto nº 1.** Nada nesta sessão mexeu nisso: empate entre dois jogadores bons segue sendo o resultado mais comum, e o pivot da v1.1 **piora** o prognóstico, porque os dois lados passam a ter força idêntica em campo por construção. Ver §14.
 - **Feitiços não existem** (§13 passo 7, depende de status effects genéricos).
 - **Seleção de elemento é vestigial e agora tem cúmplice**: a fila escolhe um elemento fixo só para o `Room` não reclamar. Quando `Room` parar de exigir elemento, remover isso do `startQueuedMatch` junto.
 - **Deck é fixo.** Ninguém monta baralho; `Deck` já valida construção, mas não há UI.
