@@ -1,4 +1,59 @@
-# Handover — 2026-08-04 (Claude — o jogo novo foi CONSTRUÍDO: estruturas, mana, cartas, fila 1v1) — READ THIS FIRST
+# Handover — 2026-08-04 (Cursor — a UI da partida existe: um humano joga pelo browser) — READ THIS FIRST
+
+## O que esta sessão fez
+
+Fechou o passo 6 do `GDD.md` §13 e a UI da fila. **A lacuna do handover anterior
+("não há UI", "só bots jogam") está fechada**: aperta Batalhar, entra na fila,
+cai numa partida, escolhe carta, clica no campo, a unidade nasce e a mana é
+cobrada. Verificado num browser real, não só por teste unitário.
+
+`npm run typecheck && npm run lint && npm test && npm run build` — verdes.
+**273 testes** (eram 262), 0 erros de lint.
+
+### Arquivos novos
+
+| Arquivo | O que é |
+| --- | --- |
+| `src/ui/MatchHUD.tsx` + `.module.css` | O HUD de comandante: relógio/morte súbita, HP das estruturas dos dois lados, mão de 4 cartas clicável, preview da próxima, barra de mana |
+| `src/render/StructureRenderer.ts` | Núcleo e Torres em 3D, com barra de HP no chão e escudo visível enquanto o Núcleo é imune |
+| `src/net/SnapshotSync.test.ts` | Estruturas por POV, mana/relógio/mão vindos do snapshot |
+| `scripts/siege.mjs` | Smoke de ponta a ponta no browser: fila → partida → cast → mana cobrada → mão ciclada |
+
+### Mudanças principais
+
+- **`sim/protocol.ts` + `server/src/App.ts`**: o snapshot agora leva `hand` e `next`. São **por destinatário** — cada cliente recebe a mão do seu time, então `broadcastSnapshot` monta a base uma vez e completa por receptor.
+- **`server/src/App.ts` — a fila estava quebrada.** `startQueuedMatch` montava a sala sem satisfazer duas exigências do `Room.startMatch()`: slot sem elemento (`slot ... has no element selected`) e time adversário vazio no fallback de bot (`slots.length !== teamSize`). Agora seleciona elemento pelo humano e preenche o assento vazio com bot. `sweepQueue()` virou público para o teste poder empurrar o relógio.
+- **`src/net/SnapshotSync.ts`**: consome `structures`/`mana`/`elapsed`/`suddenDeath`/`hand`/`next` e recebe `localTeam` para traduzir time do servidor em "meu/dele". Estrutura destruída **continua no mundo** (vira entulho) em vez de desaparecer.
+- **`src/net/OnlineMatch.ts`**: carregava `arena1.json` enquanto o servidor jogava `siege1.json` — corrigido. Câmera ficou parada (não há avatar para seguir). Teclas `1`–`4` selecionam carta, `Escape` cancela.
+- **`src/app/App.tsx`**: tela de fila com `queue_status`/`match_found` via `lobbyBridge`, e `localTeam` derivado do `room_state`.
+
+## 🔬 O que a medição revelou
+
+O smoke em browser (`scripts/siege.mjs`) pegou o que o teste unitário não pegava:
+
+1. **O HUD inteiro nascia `hidden` e ninguém sabia.** O construtor do `MatchHUD` lançava `TypeError: Cannot convert undefined or null to object` porque os refs aninhados (`refs.mine`, `refs.theirs`) não eram inicializados antes do `Object.assign`. O erro morria num `.catch` silencioso no `App.tsx` — a tela só ficava vazia. **O `.catch` agora loga.** Um `.catch` sem log num caminho de inicialização é um bug invisível esperando acontecer.
+2. **"Mana não é cobrada" era falso alarme meu.** Eu estava lendo o snapshot de antes do cast. Com a asserção certa: 5 → 1 no `alchemist`, e a mão cicla (`alchemist` sai, `stone_golem` entra).
+3. **Unidade no mundo não prova nada** — o comandante de IA está invocando do outro lado ao mesmo tempo. A asserção precisa ser por time (`m.team === yourTeam`), senão o teste passa mesmo com o cast do humano rejeitado.
+
+## Cuidado / não feito
+
+- **Balance continua o problema aberto nº 1.** Nada nesta sessão mexeu nisso: empate entre dois jogadores bons segue sendo o resultado mais comum. Ver §14.
+- **Feitiços não existem** (§13 passo 7, depende de status effects genéricos).
+- **Seleção de elemento é vestigial e agora tem cúmplice**: a fila escolhe um elemento fixo só para o `Room` não reclamar. Quando `Room` parar de exigir elemento, remover isso do `startQueuedMatch` junto.
+- **Deck é fixo.** Ninguém monta baralho; `Deck` já valida construção, mas não há UI.
+- **A mão não mostra alcance nem zona de invocação.** O clique fora da zona é rejeitado pelo servidor sem feedback visual — o jogador só vê nada acontecer.
+- Containers Docker desatualizados.
+
+## Próximos passos
+
+1. **Feedback de invocação inválida**: pintar a zona de deploy no chão quando uma carta está selecionada. É o buraco de UX mais óbvio que sobrou.
+2. Status effects genéricos + os 4 feitiços (§13 passo 7).
+3. **Atacar a taxa de empate** com simulação em massa (§13 passo 8).
+4. UI de montagem de baralho (o `Deck` já suporta).
+
+---
+
+# Handover — 2026-08-04 (Claude — o jogo novo foi CONSTRUÍDO: estruturas, mana, cartas, fila 1v1)
 
 ## 🛑 Antes de qualquer coisa: NÃO DELETAR `sim/**` NEM `server/src/**`
 

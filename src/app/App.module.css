@@ -385,6 +385,12 @@
   transform: translateY(-2px);
 }
 
+/* The queue is the intended way in, so it reads as the primary action. */
+.actionCardPrimary {
+  background: rgba(62, 207, 191, 0.12);
+  border-color: rgba(62, 207, 191, 0.45);
+}
+
 .actionCard h3 {
   font-family: Cinzel, Georgia, serif;
   font-size: 18px;

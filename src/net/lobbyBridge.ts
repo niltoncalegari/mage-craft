@@ -1,7 +1,9 @@
 import { NetworkClient } from './NetworkClient';
 import type {
   ErrorMsg,
+  MatchFoundMsg,
   MatchStartMsg,
+  QueueStatusMsg,
   RoomListMsg,
   RoomStateMsg,
   RoundEndMsg,
@@ -14,6 +16,8 @@ export type LobbyBridgeHandlers = {
   onMatchStart(msg: MatchStartMsg): void;
   onSnapshot(msg: SnapshotMsg): void;
   onRoundEnd(msg: RoundEndMsg): void;
+  onQueueStatus(msg: QueueStatusMsg): void;
+  onMatchFound(msg: MatchFoundMsg): void;
   onError(msg: ErrorMsg): void;
   onClose(): void;
 };
@@ -34,6 +38,8 @@ export class LobbyBridge {
       onMatchStart: (m) => this.handlers?.onMatchStart(m),
       onSnapshot: (m) => this.handlers?.onSnapshot(m),
       onRoundEnd: (m) => this.handlers?.onRoundEnd(m),
+      onQueueStatus: (m) => this.handlers?.onQueueStatus(m),
+      onMatchFound: (m) => this.handlers?.onMatchFound(m),
       onError: (m) => this.handlers?.onError(m),
       onClose: () => this.handlers?.onClose(),
     });

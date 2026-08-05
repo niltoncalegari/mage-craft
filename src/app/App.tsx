@@ -4,6 +4,7 @@ import { getElement, isElementId, SELECTABLE_ELEMENTS, toCssColor, type ElementI
 import { ApiClient, type ElementStat, type MatchLogEntry, type RankingEntry, type UserSummary } from '../net/ApiClient';
 import { LobbyBridge } from '../net/lobbyBridge';
 import { loadOnlineMapData, OnlineMatch } from '../net/OnlineMatch';
+import type { MatchFoundMsg, QueueStatusMsg } from '../net/protocol';
 import { PortalScene } from '../render/PortalScene';
 import { ElementUsageChart } from './ElementUsageChart';
 import styles from './App.module.css';
@@ -32,6 +33,7 @@ export type AppScreen =
   | 'dashboard'
   | 'rooms'
   | 'createRoom'
+  | 'queue'
   | 'lobby'
   | 'onlineMatch'
   | 'ranking';
@@ -70,7 +72,15 @@ function AppShell(props: AppProps): JSX.Element {
   const matchHostRef = useRef<HTMLDivElement>(null);
   const onlineMatchRef = useRef<OnlineMatch | null>(null);
   const bridgeRef = useRef<LobbyBridge | null>(null);
-  const metaRef = useRef({ isHost: false, roomName: '', screen: 'title' as AppScreen, spectating: false, awaitingResultDismiss: false });
+  const metaRef = useRef({
+    isHost: false,
+    roomName: '',
+    screen: 'title' as AppScreen,
+    spectating: false,
+    awaitingResultDismiss: false,
+    /** Which wire team the player commands; the match POV depends on it. */
+    localTeam: null as number | null,
+  });
 
   const [screen, setScreen] = useState<AppScreen>(() => (getSession() ? 'dashboard' : 'title'));
   const [user, setUser] = useState<UserProfile | null>(() => getSession());
@@ -82,6 +92,8 @@ function AppShell(props: AppProps): JSX.Element {
   const [isHost, setIsHost] = useState(false);
   const [spectating, setSpectating] = useState(false);
   const [claimNotice, setClaimNotice] = useState<string | null>(null);
+  const [queueStatus, setQueueStatus] = useState<QueueStatusMsg | null>(null);
+  const [queueFound, setQueueFound] = useState<MatchFoundMsg | null>(null);
 
   metaRef.current = {
     isHost,
@@ -89,6 +101,7 @@ function AppShell(props: AppProps): JSX.Element {
     screen,
     spectating,
     awaitingResultDismiss: metaRef.current.awaitingResultDismiss,
+    localTeam: metaRef.current.localTeam,
   };
 
   const chooseElement = (element: ElementId): void => {
@@ -106,6 +119,9 @@ function AppShell(props: AppProps): JSX.Element {
           isHost: metaRef.current.isHost,
         });
         detail.isHost = metaRef.current.isHost;
+        // The roster is the only place that says which side is yours, and the
+        // match POV (your Core on your side) is built from it.
+        metaRef.current.localTeam = msg.slots.find((s) => s.playerId === bridge.id)?.team ?? null;
         setRoom(detail);
         setSpectating(detail.youRole === 'spectator');
         rememberRoom(detail);
@@ -127,6 +143,13 @@ function AppShell(props: AppProps): JSX.Element {
         setScreen('onlineMatch');
       },
       onSnapshot: (msg) => onlineMatchRef.current?.applySnapshot(msg),
+      onQueueStatus: (msg) => setQueueStatus(msg),
+      onMatchFound: (msg) => {
+        // The queue seats you without a lobby, so this is the first (and for a
+        // bot opponent the only) place that names your side.
+        metaRef.current.localTeam = msg.yourTeam;
+        setQueueFound(msg);
+      },
       onRoundEnd: (msg) => {
         setClaimNotice('Round over — rematch lobby. Claimed bots become your seat.');
         metaRef.current.awaitingResultDismiss = true;
@@ -163,6 +186,7 @@ function AppShell(props: AppProps): JSX.Element {
         onlineMatchRef.current = new OnlineMatch(host, net, {
           spectating: metaRef.current.spectating,
           localPlayerId,
+          localTeam: metaRef.current.localTeam,
           mapData,
           onLeaveMatch: (reason) => {
             metaRef.current.awaitingResultDismiss = false;
@@ -178,6 +202,10 @@ function AppShell(props: AppProps): JSX.Element {
         });
       })
       .catch((err: unknown) => {
+        // Anything thrown while building the match view lands here, including a
+        // bug in the view itself — which used to fail silently into a blank
+        // arena, since netError is only rendered on the lobby screens.
+        console.error('online match failed to start', err);
         if (!cancelled) setNetError(err instanceof Error ? err.message : 'Could not load the arena map');
       });
 
@@ -218,6 +246,35 @@ function AppShell(props: AppProps): JSX.Element {
       setRooms(listLocalRooms());
       setOnline(false);
     }
+  };
+
+  /**
+   * The one-button path into a match (GDD §4): the server pairs by arrival and
+   * builds the room itself, so there is no code to share and nothing to ready up.
+   */
+  const enterQueue = async (name: string): Promise<void> => {
+    setNetError(null);
+    setQueueStatus(null);
+    setQueueFound(null);
+    setScreen('queue');
+    try {
+      const bridge = getBridge();
+      await bridge.connect();
+      setOnline(true);
+      bridge.net.joinQueue(name);
+    } catch (err) {
+      setNetError(err instanceof Error ? err.message : 'Could not reach server');
+      setOnline(false);
+      setScreen('dashboard');
+    }
+  };
+
+  const leaveQueue = (): void => {
+    const bridge = bridgeRef.current;
+    if (bridge?.connected) bridge.net.leaveQueue();
+    setQueueStatus(null);
+    setQueueFound(null);
+    setScreen('dashboard');
   };
 
   const createOnlineRoom = async (opts: {
@@ -319,9 +376,13 @@ function AppShell(props: AppProps): JSX.Element {
               setScreen('rooms');
             }}
             onCreateRoom={() => setScreen('createRoom')}
+            onQuickMatch={() => void enterQueue(user.name)}
             onOpenRanking={() => setScreen('ranking')}
             onSignOut={signOut}
           />
+        ) : null}
+        {screen === 'queue' && user ? (
+          <QueueScreen status={queueStatus} found={queueFound} netError={netError} onCancel={leaveQueue} />
         ) : null}
         {screen === 'ranking' && user ? <RankingScreen onBack={() => setScreen('dashboard')} /> : null}
         {screen === 'rooms' && user ? (
@@ -536,6 +597,7 @@ function DashboardScreen(props: {
   onPractice(): void;
   onBrowseRooms(): void;
   onCreateRoom(): void;
+  onQuickMatch(): void;
   onOpenRanking(): void;
   onSignOut(): void;
 }): JSX.Element {
@@ -628,6 +690,10 @@ function DashboardScreen(props: {
 
         <div>
           <div class={styles.actionGrid}>
+            <button type="button" class={`${styles.actionCard} ${styles.actionCardPrimary}`} onClick={props.onQuickMatch}>
+              <h3>Battle</h3>
+              <p>Queue for a 1v1 siege. Paired by arrival — no code, no ready-up.</p>
+            </button>
             <button type="button" class={styles.actionCard} onClick={props.onBrowseRooms}>
               <h3>Browse halls</h3>
               <p>List open rooms, join by code, or enter a practice hall.</p>
@@ -677,6 +743,61 @@ function DashboardScreen(props: {
             </div>
           ) : null}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The waiting room for the matchmaking queue. The server reports the queue once,
+ * on join, so the clock here is local — and it is the honest number anyway: what
+ * the player wants to know is how long *they* have been waiting.
+ */
+function QueueScreen(props: {
+  status: QueueStatusMsg | null;
+  found: MatchFoundMsg | null;
+  netError: string | null;
+  onCancel(): void;
+}): JSX.Element {
+  const [waited, setWaited] = useState(0);
+
+  useEffect(() => {
+    const started = Date.now() - (props.status?.elapsedSeconds ?? 0) * 1000;
+    const timer = window.setInterval(() => setWaited(Math.floor((Date.now() - started) / 1000)), 250);
+    return () => window.clearInterval(timer);
+  }, [props.status]);
+
+  const found = props.found;
+  return (
+    <div class={`${styles.panel} ${styles.panelNarrow}`}>
+      <p class={styles.tag}>Matchmaking</p>
+      <h2 class={styles.panelTitle}>{found ? 'Opponent found' : 'Finding an opponent'}</h2>
+
+      {found ? (
+        <p class={styles.panelHint}>
+          {found.againstBot
+            ? 'No one else was searching, so an AI commander takes the other side.'
+            : `Facing ${found.opponentName}.`}{' '}
+          Entering the arena…
+        </p>
+      ) : (
+        <>
+          <p class={styles.panelHint}>
+            Waiting {waited}s · {props.status?.waiting ?? 1} in queue · position{' '}
+            {props.status?.position ?? 1}
+          </p>
+          <p class={styles.panelHint} style={{ marginTop: 8 }}>
+            If nobody shows up, an AI commander takes the seat so you still play.
+          </p>
+        </>
+      )}
+
+      {props.netError ? <p class={styles.error}>{props.netError}</p> : null}
+
+      <div class={styles.toolbar} style={{ marginTop: 16 }}>
+        <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onCancel}>
+          Cancel
+        </button>
       </div>
     </div>
   );

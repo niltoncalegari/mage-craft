@@ -15,3 +15,7 @@ blob-report
 
 # Node game server bundle (server/Dockerfile builds it)
 dist-server
+
+# Screenshots written by scripts/*.mjs
+shot.png
+siege-smoke.png

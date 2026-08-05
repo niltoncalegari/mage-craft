@@ -12,11 +12,11 @@ import { ParticleRenderer } from '../render/ParticleRenderer';
 import { PickupRenderer } from '../render/PickupRenderer';
 import { PlayerRenderer } from '../render/PlayerRenderer';
 import { PuddleRenderer } from '../render/PuddleRenderer';
+import { StructureRenderer } from '../render/StructureRenderer';
 import { IdAllocator } from '../ecs/Entity';
 import { MapLoader } from '../game/MapLoader';
-import { Team, type Arena, type MapData, type Player } from '../game/types';
+import { Team, type Arena, type MapData } from '../game/types';
 import { World } from '../game/World';
-import { StructureRenderer } from '../render/StructureRenderer';
 import { MatchHUD } from '../ui/MatchHUD';
 import { Menus } from '../ui/Menus';
 import { Minimap } from '../ui/Minimap';
@@ -37,6 +37,9 @@ export type LeaveMatchReason = 'quit' | 'roundEnd';
  * even the deploy zones would sit in the wrong place.
  */
 const ONLINE_MAP = 'siege1.json';
+
+/** Keyboard shortcuts for the four hand slots, in slot order. */
+const HAND_KEYS = ['1', '2', '3', '4'];
 
 let mapDataPromise: Promise<MapData> | null = null;
 
@@ -86,7 +89,6 @@ export class OnlineMatch {
   private readonly overlay: HTMLDivElement;
   private readonly statusEl: HTMLParagraphElement;
 
-  private readonly keys = new Set<string>();
   /** World point under the cursor — where a selected card would be summoned. */
   private groundPoint = { x: 0, y: 0 };
   /** Set by the card-hand UI; the next click on the arena spends it. */
@@ -186,7 +188,6 @@ export class OnlineMatch {
       const dt = Math.min((now - this.lastFrameTime) / 1000, 0.1);
       this.lastFrameTime = now;
       this.sync.tick(dt);
-      this.pumpInput();
       for (const r of this.renderers) r.sync(0);
       this.renderer.render();
       this.raf = requestAnimationFrame(tick);
@@ -235,29 +236,15 @@ export class OnlineMatch {
     this.events.emit('GamePaused', { paused });
   }
 
-  private localHero(): Player | undefined {
-    const id = this.sync.localEntityId;
-    return id !== null ? this.world.getPlayer(id) : undefined;
-  }
-
-  private updateStatus(): void {
-    this.statusEl.textContent = this.spectating
-      ? 'Spectating — you join next round (claim a bot in the lobby overlay)'
-      : 'Online duel — WASD move · hold click to charge · release to throw';
-  }
-
   /**
-   * Intentionally inert since the product pivot.
-   *
-   * This used to sample WASD + mouse and push an `input` frame every tick. In
-   * the summon model nobody steers a mage, so there is nothing per-frame to
-   * send: the player's only action is `net.sendCast(cardId, position)`, driven
-   * by the card-hand UI. That UI is the next block of work (GDD §13, step 6);
-   * until it lands this view still renders live snapshots correctly, it just
-   * has no way to spend mana.
+   * The overlay only speaks for spectators now: a player's instructions live in
+   * the card bar, which explains itself as the hand changes.
    */
-  private pumpInput(): void {
-    // No per-frame input in the summon model — see the note above.
+  private updateStatus(): void {
+    this.statusEl.hidden = !this.spectating;
+    this.statusEl.textContent = this.spectating
+      ? 'Assistindo — você entra na próxima partida'
+      : '';
   }
 
   /** Arms a card; the next click on the arena summons it there. */
@@ -276,12 +263,26 @@ export class OnlineMatch {
   }
 
   private onKey(ev: KeyboardEvent): void {
-    if (ev.type === 'keydown' && (ev.key === 'Escape' || ev.key === 'p' || ev.key === 'P') && !this.roundEnded) {
-      this.setPaused(!this.paused);
+    if (ev.type !== 'keydown') return;
+
+    // 1–4 arm a hand slot, mirroring the card bar's own labels.
+    const slot = HAND_KEYS.indexOf(ev.key);
+    if (slot !== -1) {
+      const cardId = this.sync.matchState.hand[slot];
+      if (cardId) this.selectCard(this.selectedCardId === cardId ? null : cardId);
       return;
     }
-    if (ev.type === 'keydown') this.keys.add(ev.code);
-    else this.keys.delete(ev.code);
+
+    if (ev.key === 'Escape' && this.selectedCardId) {
+      // Escape disarms first; only an unarmed Escape opens the pause menu, so a
+      // mis-picked card never costs you the match view.
+      this.selectCard(null);
+      return;
+    }
+
+    if ((ev.key === 'Escape' || ev.key === 'p' || ev.key === 'P') && !this.roundEnded) {
+      this.setPaused(!this.paused);
+    }
   }
 
   /**
@@ -299,9 +300,15 @@ export class OnlineMatch {
     const point = this.raycaster.ray.intersectPlane(this.groundPlane, this.hit);
     if (point) this.groundPoint = { x: point.x, y: point.z };
 
-    if (ev.type === 'pointerup' && this.selectedCardId) {
+    // Secondary button disarms instead of summoning, so a card can be taken back.
+    if (ev.type === 'pointerdown' && ev.button !== 0) {
+      this.selectCard(null);
+      return;
+    }
+
+    if (ev.type === 'pointerup' && ev.button === 0 && this.selectedCardId) {
       this.castCard(this.selectedCardId, this.groundPoint);
-      this.selectedCardId = null;
+      this.selectCard(null);
     }
   }
 }

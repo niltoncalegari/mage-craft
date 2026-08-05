@@ -160,9 +160,15 @@ function MatchHudView({ refs }: { refs: HudRefs }): JSX.Element {
  */
 export class MatchHUD implements GameRenderer {
   private readonly host: HTMLDivElement;
-  private readonly refs: HudRefs = {
-    hand: [],
-  } as unknown as HudRefs;
+  /**
+   * The nested holders have to exist before the view mounts: a callback ref
+   * fires during render and writes straight into them.
+   */
+  private readonly refs = {
+    hand: [] as CardRefs[],
+    mine: {} as SideRefs,
+    theirs: {} as SideRefs,
+  } as HudRefs;
 
   constructor(
     container: HTMLElement,
