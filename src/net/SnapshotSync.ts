@@ -2,17 +2,49 @@ import type { EntityId } from '../ecs/Entity';
 import type { EventBus } from '../core/EventBus';
 import { DAMAGE, SIM } from '../game/config';
 import { launchSnowball } from '../game/Snowball';
-import { type AnimationName, PlayerState, Team, type Player } from '../game/types';
+import { type AnimationName, PlayerState, Team, type Player, type Structure } from '../game/types';
 import type { World } from '../game/World';
 import { rotateTowards } from '../utils/math';
 import { Vector2 } from '../utils/Vector2';
-import type { MageSnapshotDTO, ProjectileSnapshotDTO, PuddleSnapshotDTO, SnapshotMsg } from './protocol';
+import type {
+  MageSnapshotDTO,
+  ProjectileSnapshotDTO,
+  PuddleSnapshotDTO,
+  SnapshotMsg,
+  StructureSnapshotDTO,
+} from './protocol';
 
 /** How fast rendered position/rotation ease toward the latest snapshot, per second. */
 const POSITION_SMOOTHING_RATE = 18;
 const ROTATION_SMOOTHING_RATE = 12;
 /** Speed (world units/sec) above which a mage is considered "moving" for animation purposes. */
 const MOVE_SPEED_THRESHOLD = 0.15;
+
+/**
+ * The per-player state a siege match is played from (GDD §6, §7): everything
+ * the card bar and the match clock need, none of which is derivable from the
+ * rendered world. The server sends it in every snapshot, so this is always the
+ * authoritative view — a rejected cast corrects itself on the next one.
+ */
+export interface MatchState {
+  /** The local player's own mana, 0..MANA_MAX. */
+  mana: number;
+  /** Seconds of match time elapsed. */
+  elapsed: number;
+  suddenDeath: boolean;
+  /** The local player's hand, in slot order. Empty while spectating. */
+  hand: string[];
+  /** The card entering the hand next, or null when unknown. */
+  next: string | null;
+}
+
+const EMPTY_MATCH_STATE: MatchState = {
+  mana: 0,
+  elapsed: 0,
+  suddenDeath: false,
+  hand: [],
+  next: null,
+};
 
 interface MageTrack {
   entityId: EntityId;
@@ -43,20 +75,36 @@ export class SnapshotSync {
   private readonly mageTracks = new Map<string, MageTrack>();
   private readonly projectileIds = new Map<string, EntityId>();
   private readonly puddleIds = new Map<string, EntityId>();
-  private myTeamNumber: number | null = null;
+  private readonly structureIds = new Map<string, EntityId>();
+  private myTeamNumber: number | null;
   private localEntity: EntityId | null = null;
   private lastTick: number | null = null;
   /** Local wall clock (seconds), advanced by `tick()`; used for the hit-hold timer. */
   private clock = 0;
+  private match: MatchState = EMPTY_MATCH_STATE;
 
   constructor(
     private readonly world: World,
     private readonly localPlayerId: string,
     private readonly events: EventBus,
-  ) {}
+    /**
+     * Which wire team the local player commands. Since the pivot a player has no
+     * mage in the arena, so it can no longer be inferred from the snapshot — and
+     * guessing wrong would mirror the whole POV, showing your own Core as the
+     * enemy's. Null only while spectating.
+     */
+    localTeam: number | null = null,
+  ) {
+    this.myTeamNumber = localTeam;
+  }
 
   get localEntityId(): EntityId | null {
     return this.localEntity;
+  }
+
+  /** The latest per-player match state (mana, clock, hand) from the wire. */
+  get matchState(): MatchState {
+    return this.match;
   }
 
   /** Whether the given wire team number (0/1) is the local player's team. */
@@ -74,9 +122,18 @@ export class SnapshotSync {
     this.lastTick = snap.tick;
     this.world.time = snap.tick / SIM.hz;
 
+    this.match = {
+      mana: snap.mana,
+      elapsed: snap.elapsed,
+      suddenDeath: snap.suddenDeath,
+      hand: snap.hand ?? [],
+      next: snap.next ?? null,
+    };
+
     this.syncMages(snap.mages, dtSim);
     this.syncProjectiles(snap.projectiles);
     this.syncPuddles(snap.puddles);
+    this.syncStructures(snap.structures);
   }
 
   /** Per-rAF-frame smoothing toward the latest authoritative snapshot. */
@@ -231,6 +288,43 @@ export class SnapshotSync {
       }
       this.projectileIds.delete(wireId);
       this.events.emit('SnowballImpact', { snowballId: entityId, x: 0, y: 0, hitPlayerId: null });
+    }
+  }
+
+  /**
+   * Cores and Towers. Unlike every other entity these are created once and then
+   * only ever change health — a destroyed structure keeps arriving with
+   * `alive: false` so the renderer can leave rubble behind.
+   */
+  private syncStructures(structures: StructureSnapshotDTO[]): void {
+    for (const s of structures) {
+      const entityId = this.structureIds.get(s.id);
+      const existing =
+        entityId !== undefined ? this.world.structures.find((x) => x.id === entityId) : undefined;
+      const target =
+        existing ??
+        (() => {
+          const created: Structure = {
+            id: this.world.ids.allocate(),
+            team: this.teamOf(s.team),
+            kind: s.kind === 'core' ? 'core' : 'tower',
+            position: new Vector2(s.position.x, s.position.y),
+            radius: s.radius,
+            health: s.health,
+            maxHealth: s.maxHealth,
+            alive: s.alive,
+            invulnerable: s.invulnerable,
+          };
+          this.world.structures.push(created);
+          this.structureIds.set(s.id, created.id);
+          return created;
+        })();
+
+      target.team = this.teamOf(s.team);
+      target.health = s.health;
+      target.maxHealth = s.maxHealth;
+      target.alive = s.alive;
+      target.invulnerable = s.invulnerable;
     }
   }
 

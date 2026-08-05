@@ -2,7 +2,9 @@ import {
   peekType,
   type ClientMsg,
   type ErrorMsg,
+  type MatchFoundMsg,
   type MatchStartMsg,
+  type QueueStatusMsg,
   type RoomListMsg,
   type RoomStateMsg,
   type RoundEndMsg,
@@ -16,6 +18,8 @@ export type NetworkHandlers = {
   onMatchStart?(msg: MatchStartMsg): void;
   onSnapshot?(msg: SnapshotMsg): void;
   onRoundEnd?(msg: RoundEndMsg): void;
+  onQueueStatus?(msg: QueueStatusMsg): void;
+  onMatchFound?(msg: MatchFoundMsg): void;
   onError?(msg: ErrorMsg): void;
   onOpen?(): void;
   onClose?(): void;
@@ -29,7 +33,7 @@ function defaultWsUrl(): string {
 }
 
 /**
- * Thin WebSocket client for the Go mageserver protocol.
+ * Thin WebSocket client for the mageserver protocol (see sim/protocol.ts).
  */
 export class NetworkClient {
   private ws: WebSocket | null = null;
@@ -134,13 +138,21 @@ export class NetworkClient {
     this.send({ type: 'start_match' });
   }
 
-  sendInput(input: {
-    move: { x: number; y: number };
-    aim: { x: number; y: number };
-    charging: boolean;
-    release: boolean;
-  }): void {
-    this.send({ type: 'input', ...input });
+  /**
+   * The only in-match message since the pivot (GDD §13): spend mana to put a
+   * card down. Sparse and event-driven, where the old input was ~60 Hz.
+   */
+  sendCast(cardId: string, position: { x: number; y: number }): void {
+    this.send({ type: 'cast', cardId, position });
+  }
+
+  /** Enter matchmaking. Omit the deck to let the server use the default one. */
+  joinQueue(name: string, deck?: string[]): void {
+    this.send(deck ? { type: 'join_queue', name, deck } : { type: 'join_queue', name });
+  }
+
+  leaveQueue(): void {
+    this.send({ type: 'leave_queue' });
   }
 
   private dispatch(msg: ServerMsg): void {
@@ -160,6 +172,12 @@ export class NetworkClient {
         break;
       case 'round_end':
         this.handlers.onRoundEnd?.(msg as RoundEndMsg);
+        break;
+      case 'queue_status':
+        this.handlers.onQueueStatus?.(msg as QueueStatusMsg);
+        break;
+      case 'match_found':
+        this.handlers.onMatchFound?.(msg as MatchFoundMsg);
         break;
       case 'error':
         this.handlers.onError?.(msg as ErrorMsg);

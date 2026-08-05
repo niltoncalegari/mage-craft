@@ -16,7 +16,8 @@ import { IdAllocator } from '../ecs/Entity';
 import { MapLoader } from '../game/MapLoader';
 import { Team, type Arena, type MapData, type Player } from '../game/types';
 import { World } from '../game/World';
-import { HUD } from '../ui/HUD';
+import { StructureRenderer } from '../render/StructureRenderer';
+import { MatchHUD } from '../ui/MatchHUD';
 import { Menus } from '../ui/Menus';
 import { Minimap } from '../ui/Minimap';
 import type { NetworkClient } from './NetworkClient';
@@ -27,11 +28,15 @@ import type { SnapshotMsg } from './protocol';
 export type LeaveMatchReason = 'quit' | 'roundEnd';
 
 /**
- * The map online matches are played on. The Go server embeds a byte-identical
- * copy (server/internal/game/maps/, guarded by TestEmbeddedMapMatchesClientCopy)
- * so both simulations agree on arena size, obstacles and spawns.
+ * The map online matches are played on. The server loads this exact file too
+ * (see `sim/defaultMap.ts`), so there is no second copy that could disagree
+ * about arena size, obstacles or spawns — which is why this has to be the siege
+ * map: `arena1.json` predates structures and is 44×30 against siege1's own
+ * dimensions, so loading it here would render a different arena than the one
+ * being played: a 40×30 arena with no structures instead of siege1's 44×30, so
+ * even the deploy zones would sit in the wrong place.
  */
-const ONLINE_MAP = 'arena1.json';
+const ONLINE_MAP = 'siege1.json';
 
 let mapDataPromise: Promise<MapData> | null = null;
 
@@ -82,9 +87,10 @@ export class OnlineMatch {
   private readonly statusEl: HTMLParagraphElement;
 
   private readonly keys = new Set<string>();
-  private pointerDown = false;
-  private aim = { x: 1, y: 0 };
-  private releaseQueued = false;
+  /** World point under the cursor — where a selected card would be summoned. */
+  private groundPoint = { x: 0, y: 0 };
+  /** Set by the card-hand UI; the next click on the arena spends it. */
+  private selectedCardId: string | null = null;
   private readonly raycaster = new THREE.Raycaster();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly ndc = new THREE.Vector2();
@@ -96,6 +102,8 @@ export class OnlineMatch {
     opts: {
       spectating: boolean;
       localPlayerId: string;
+      /** Which wire team the player commands; null while spectating. */
+      localTeam: number | null;
       mapData: MapData;
       onLeaveMatch: (reason: LeaveMatchReason) => void;
     },
@@ -107,24 +115,29 @@ export class OnlineMatch {
     const ids = new IdAllocator();
     this.arena = new MapLoader(ids).build(opts.mapData);
     this.world = new World(this.arena, 0, ids);
-    this.sync = new SnapshotSync(this.world, opts.localPlayerId, this.events);
+    this.sync = new SnapshotSync(this.world, opts.localPlayerId, this.events, opts.localTeam);
 
     this.renderer = new Renderer(container);
+    // No follow target: a commander watches the whole board, and since the pivot
+    // there is no local mage to follow anyway.
     this.renderer.frameArena(this.arena);
-    this.renderer.setFollowTarget(() => {
-      const hero = this.localHero();
-      return hero?.alive ? { x: hero.position.x, y: hero.position.y } : null;
-    });
 
     this.arenaRenderer = new ArenaRenderer(this.renderer.scene, this.assets, this.arena);
     this.renderers = [
+      new StructureRenderer(this.renderer.scene, this.assets, this.world),
       new PlayerRenderer(this.renderer.scene, this.assets, this.world),
       new NavIndicatorRenderer(this.renderer.scene, this.assets, this.world),
       new AimIndicatorRenderer(this.renderer.scene, this.assets, this.world),
       new ParticleRenderer(this.renderer.scene, this.assets, this.world, this.events),
       new PickupRenderer(this.renderer.scene, this.assets, this.world, this.events),
       new PuddleRenderer(this.renderer.scene, this.assets, this.world),
-      new HUD(container, this.world, () => ({ fps: 0, frameTimeMs: 0 }), () => !this.paused, () => this.settings.get('showFps'), () => this.sync.localEntityId),
+      new MatchHUD(container, this.world, {
+        getState: () => this.sync.matchState,
+        getSelectedCard: () => this.selectedCardId,
+        onSelectCard: (cardId) => this.selectCard(cardId),
+        isVisible: () => !this.paused,
+        isSpectating: () => this.spectating,
+      }),
       new Minimap(container, this.world, () => this.renderer.cameraController.getView(), () => !this.paused),
     ];
 
@@ -233,23 +246,30 @@ export class OnlineMatch {
       : 'Online duel — WASD move · hold click to charge · release to throw';
   }
 
+  /**
+   * Intentionally inert since the product pivot.
+   *
+   * This used to sample WASD + mouse and push an `input` frame every tick. In
+   * the summon model nobody steers a mage, so there is nothing per-frame to
+   * send: the player's only action is `net.sendCast(cardId, position)`, driven
+   * by the card-hand UI. That UI is the next block of work (GDD §13, step 6);
+   * until it lands this view still renders live snapshots correctly, it just
+   * has no way to spend mana.
+   */
   private pumpInput(): void {
-    if (this.spectating || this.paused || !this.net.connected) return;
-    let x = 0;
-    let y = 0;
-    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) y -= 1;
-    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) y += 1;
-    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) x -= 1;
-    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) x += 1;
-    const len = Math.hypot(x, y);
-    if (len > 0) {
-      x /= len;
-      y /= len;
-    }
-    const release = this.releaseQueued;
-    this.releaseQueued = false;
+    // No per-frame input in the summon model — see the note above.
+  }
+
+  /** Arms a card; the next click on the arena summons it there. */
+  selectCard(cardId: string | null): void {
+    this.selectedCardId = cardId;
+  }
+
+  /** Spends mana to place a card at a world point (GDD §5). */
+  castCard(cardId: string, position: { x: number; y: number }): void {
+    if (this.spectating || !this.net.connected) return;
     try {
-      this.net.sendInput({ move: { x, y }, aim: this.aim, charging: this.pointerDown, release });
+      this.net.sendCast(cardId, position);
     } catch {
       // disconnected mid-frame
     }
@@ -264,25 +284,24 @@ export class OnlineMatch {
     else this.keys.delete(ev.code);
   }
 
-  /** Ground-plane raycast (same technique as engine/InputManager) so aim tracks the tilted orthographic camera correctly. */
+  /**
+   * Ground-plane raycast (same technique as engine/InputManager) so the cursor
+   * maps to a world point under the tilted orthographic camera.
+   *
+   * This used to feed the aim of a charged throw. It now feeds deployment: the
+   * point under the cursor is where a selected card will be summoned.
+   */
   private onPointer(ev: PointerEvent): void {
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.ndc.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
     this.ndc.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.ndc, this.renderer.camera);
     const point = this.raycaster.ray.intersectPlane(this.groundPlane, this.hit);
-    if (point) {
-      // MageInput.Aim is a world-space *point*, not a direction — the server
-      // does aim.Sub(mage.Position) itself (game/world.go). Sending a
-      // normalized direction here made every shot aim near the world origin.
-      this.aim = { x: point.x, y: point.z };
-    }
-    if (ev.type === 'pointerdown') {
-      this.pointerDown = true;
-      this.renderer.domElement.setPointerCapture(ev.pointerId);
-    } else if (ev.type === 'pointerup') {
-      if (this.pointerDown) this.releaseQueued = true;
-      this.pointerDown = false;
+    if (point) this.groundPoint = { x: point.x, y: point.z };
+
+    if (ev.type === 'pointerup' && this.selectedCardId) {
+      this.castCard(this.selectedCardId, this.groundPoint);
+      this.selectedCardId = null;
     }
   }
 }

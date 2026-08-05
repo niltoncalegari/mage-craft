@@ -1,0 +1,389 @@
+/**
+ * End-to-end coverage of the wire protocol against a recording transport: the
+ * same JSON the browser sends goes in, and the JSON it would receive comes out.
+ * This is the test that would catch a message changing shape on the server side
+ * only — the failure mode the old Go/TypeScript split made easy.
+ */
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type {
+  ClientMsg,
+  ErrorMsg,
+  MatchFoundMsg,
+  QueueStatusMsg,
+  RoomListMsg,
+  RoomStateMsg,
+  ServerMsg,
+  SnapshotMsg,
+} from '../../sim/protocol';
+import { HAND_SIZE } from '../../sim/Deck';
+import { BOT_FALLBACK_SECONDS } from './Matchmaker';
+import { App, type Transport } from './App';
+
+interface Sent {
+  clientId: string;
+  msg: ServerMsg;
+}
+
+class RecordingTransport implements Transport {
+  readonly sent: Sent[] = [];
+
+  sendTo(clientId: string, data: string): boolean {
+    this.sent.push({ clientId, msg: JSON.parse(data) as ServerMsg });
+    return true;
+  }
+
+  broadcast(clientIds: Iterable<string>, data: string): void {
+    for (const id of clientIds) this.sendTo(id, data);
+  }
+
+  /** Every message of a given type delivered to a client, oldest first. */
+  to<T extends ServerMsg>(clientId: string, type: T['type']): T[] {
+    return this.sent.filter((s) => s.clientId === clientId && s.msg.type === type).map((s) => s.msg as T);
+  }
+
+  last<T extends ServerMsg>(clientId: string, type: T['type']): T | undefined {
+    return this.to<T>(clientId, type).at(-1);
+  }
+
+  clear(): void {
+    this.sent.length = 0;
+  }
+}
+
+let hub: RecordingTransport;
+let app: App;
+
+beforeEach(() => {
+  hub = new RecordingTransport();
+  app = new App(hub);
+});
+
+// Leaving a match loop running would leak an interval into the next test.
+afterEach(() => app.dispose());
+
+function send(clientId: string, msg: ClientMsg): void {
+  app.handleMessage(clientId, JSON.stringify(msg));
+}
+
+/** create_room -> join -> team -> element, returning the room code. */
+function hostRoom(clientId: string, name: string, teamSize = 1): string {
+  send(clientId, { type: 'create_room', teamSize });
+  const roomId = hub.last<RoomStateMsg>(clientId, 'room_state')?.roomId;
+  if (!roomId) throw new Error('create_room did not return a room_state');
+
+  send(clientId, { type: 'join_room', roomId, name });
+  send(clientId, { type: 'select_team', team: 0 });
+  send(clientId, { type: 'select_element', element: 'fire' });
+  return roomId;
+}
+
+describe('App — lobby protocol', () => {
+  it('creates a room and reports its code back to the creator', () => {
+    send('c1', { type: 'create_room', teamSize: 2 });
+
+    const state = hub.last<RoomStateMsg>('c1', 'room_state');
+    expect(state?.roomId).toMatch(/^[A-Z2-9]{4}$/);
+    expect(state?.teamSize).toBe(2);
+    expect(state?.state).toBe('lobby');
+    expect(state?.slots).toEqual([]);
+  });
+
+  it('rejects an invalid team size with an error message', () => {
+    send('c1', { type: 'create_room', teamSize: 99 });
+    expect(hub.last<ErrorMsg>('c1', 'error')?.message).toMatch(/teamSize/);
+  });
+
+  it('broadcasts room_state to everyone, with a per-recipient youRole', () => {
+    const roomId = hostRoom('host', 'Alice');
+    hub.clear();
+
+    send('guest', { type: 'join_room', roomId, name: 'Bob' });
+
+    expect(hub.last<RoomStateMsg>('host', 'room_state')?.youRole).toBe('player');
+    expect(hub.last<RoomStateMsg>('guest', 'room_state')?.youRole).toBe('player');
+    expect(hub.last<RoomStateMsg>('guest', 'room_state')?.slots).toHaveLength(1);
+  });
+
+  it('omits empty optional slot fields rather than sending empty strings', () => {
+    hostRoom('host', 'Alice');
+    send('host', { type: 'add_bot', team: 1, difficulty: 'normal' });
+
+    const slots = hub.last<RoomStateMsg>('host', 'room_state')?.slots ?? [];
+    const bot = slots.find((s) => s.isBot);
+    expect(bot).toBeDefined();
+    // A bot has no playerId and no pending claim: those keys must be absent,
+    // because the client tests them for presence.
+    expect(bot && 'playerId' in bot).toBe(false);
+    expect(bot && 'pendingClaimPlayerId' in bot).toBe(false);
+    expect(bot?.element).toBeTruthy();
+  });
+
+  it('rejects a duplicate element on the same team', () => {
+    const roomId = hostRoom('host', 'Alice', 2);
+    send('guest', { type: 'join_room', roomId, name: 'Bob' });
+    send('guest', { type: 'select_team', team: 0 });
+    hub.clear();
+
+    send('guest', { type: 'select_element', element: 'fire' });
+    expect(hub.last<ErrorMsg>('guest', 'error')?.message).toMatch(/already taken/);
+  });
+
+  it('lists joinable rooms', () => {
+    hostRoom('host', 'Alice');
+    hub.clear();
+
+    send('browser', { type: 'list_rooms' });
+
+    const rooms = hub.last<RoomListMsg>('browser', 'room_list')?.rooms ?? [];
+    expect(rooms).toHaveLength(1);
+    expect(rooms[0]).toMatchObject({ teamSize: 1, state: 'lobby', filled: 1, capacity: 2 });
+  });
+
+  it('auto-fills bots when the room was created with fillBots', () => {
+    send('host', { type: 'create_room', teamSize: 2, fillBots: true, botDifficulty: 'hard' });
+    const roomId = hub.last<RoomStateMsg>('host', 'room_state')!.roomId;
+    send('host', { type: 'join_room', roomId, name: 'Alice' });
+    send('host', { type: 'select_team', team: 0 });
+    send('host', { type: 'select_element', element: 'fire' });
+
+    const slots = hub.last<RoomStateMsg>('host', 'room_state')?.slots ?? [];
+    expect(slots).toHaveLength(4);
+    expect(slots.filter((s) => s.isBot)).toHaveLength(3);
+  });
+
+  it('tells a client that has not joined a room to join one first', () => {
+    send('stranger', { type: 'set_ready', ready: true });
+    expect(hub.last<ErrorMsg>('stranger', 'error')?.message).toMatch(/not joined a room/);
+  });
+
+  it('reports malformed input instead of throwing', () => {
+    app.handleMessage('c1', 'not json');
+    expect(hub.last<ErrorMsg>('c1', 'error')?.message).toMatch(/malformed message/);
+
+    app.handleMessage('c1', '{"nope":1}');
+    expect(hub.last<ErrorMsg>('c1', 'error')?.message).toMatch(/missing a "type"/);
+
+    app.handleMessage('c1', '{"type":"teleport"}');
+    expect(hub.last<ErrorMsg>('c1', 'error')?.message).toMatch(/unknown message type/);
+  });
+});
+
+describe('App — match protocol', () => {
+  /**
+   * A 1v1 room against a bot, already started. The real 60Hz interval is
+   * stopped immediately so each test drives the sim tick by tick instead of
+   * racing a timer.
+   */
+  function startedMatch(): void {
+    hostRoom('host', 'Alice');
+    send('host', { type: 'add_bot', team: 1, difficulty: 'easy' });
+    send('host', { type: 'start_match' });
+    app.dispose();
+  }
+
+  it('announces match_start and pushes snapshots as the sim ticks', () => {
+    startedMatch();
+    expect(hub.to('host', 'match_start')).toHaveLength(1);
+    hub.clear();
+
+    // Drive the sim by hand rather than waiting on the real 60Hz interval.
+    const session = getSession();
+    for (let i = 0; i < 3; i++) session.tick();
+
+    const snap = hub.last<SnapshotMsg>('host', 'snapshot');
+    expect(snap?.structures.length).toBeGreaterThan(0);
+    expect(snap?.structures[0]).toMatchObject({
+      kind: expect.any(String),
+      position: { x: expect.any(Number), y: expect.any(Number) },
+      health: expect.any(Number),
+      maxHealth: expect.any(Number),
+      alive: expect.any(Boolean),
+      invulnerable: expect.any(Boolean),
+    });
+    expect(snap?.mana).toEqual(expect.any(Number));
+    expect(snap?.elapsed).toEqual(expect.any(Number));
+  });
+
+  it('sends each player their own hand plus the card queued behind it', () => {
+    startedMatch();
+    const session = getSession();
+    for (let i = 0; i < 3; i++) session.tick();
+
+    const snap = hub.last<SnapshotMsg>('host', 'snapshot');
+    expect(snap?.hand).toEqual(session.deckFor(0)!.hand());
+    expect(snap?.hand).toHaveLength(HAND_SIZE);
+    expect(snap?.next).toBe(session.deckFor(0)!.next());
+    // The preview is the card *behind* the hand, never one already in it.
+    expect(snap?.hand).not.toContain(snap?.next);
+  });
+
+  it('cycles the hand on the wire once a card is played', () => {
+    startedMatch();
+    const session = getSession();
+    const played = session.deckFor(0)!.hand()[0];
+
+    send('host', { type: 'cast', cardId: played, position: { x: -12, y: 0 } });
+    for (let i = 0; i < 3; i++) session.tick();
+
+    const snap = hub.last<SnapshotMsg>('host', 'snapshot');
+    expect(snap?.hand).toHaveLength(HAND_SIZE);
+    expect(snap?.hand).not.toContain(played);
+  });
+
+  it('deploys a unit for a cast from the sender’s hand', () => {
+    startedMatch();
+    const session = getSession();
+    const card = session.deckFor(0)!.hand()[0];
+
+    send('host', { type: 'cast', cardId: card, position: { x: -10, y: 0 } });
+
+    expect(session.liveWorld?.mages.size).toBe(1);
+  });
+
+  it('tells the caster why a cast was rejected', () => {
+    startedMatch();
+    const session = getSession();
+    const card = session.deckFor(0)!.hand()[0];
+
+    // The far side of the map is the opponent's deploy zone.
+    send('host', { type: 'cast', cardId: card, position: { x: 18, y: 0 } });
+
+    expect(session.liveWorld?.mages.size).toBe(0);
+    expect(hub.last('host', 'error')).toMatchObject({
+      message: expect.stringContaining('outside_deploy_zone'),
+    });
+  });
+
+  it('survives a malformed cast without disturbing the match', () => {
+    startedMatch();
+    const session = getSession();
+
+    app.handleMessage('host', '{"type":"cast"}');
+    session.tick();
+
+    expect(session.liveWorld).toBeTruthy();
+  });
+
+  it('broadcasts round_end followed by the rematch room_state', () => {
+    startedMatch();
+    const session = getSession();
+    hub.clear();
+
+    for (const st of session.liveWorld?.structures.values() ?? []) {
+      if (st.team === 1) {
+        st.invulnerable = false;
+        st.health = 0;
+        st.alive = false;
+      }
+    }
+    session.tick();
+
+    const types = hub.sent.filter((s) => s.clientId === 'host').map((s) => s.msg.type);
+    expect(types).toContain('round_end');
+    // The client relies on room_state arriving *after* round_end so it can hold
+    // the result screen until the player dismisses it.
+    expect(types.indexOf('room_state')).toBeGreaterThan(types.indexOf('round_end'));
+    expect(hub.last('host', 'room_state')).toMatchObject({ state: 'lobby' });
+  });
+
+  it('drops a disconnecting player from the roster', () => {
+    const roomId = hostRoom('host', 'Alice', 2);
+    send('guest', { type: 'join_room', roomId, name: 'Bob' });
+    send('guest', { type: 'select_team', team: 1 });
+    hub.clear();
+
+    app.handleDisconnect('guest');
+
+    expect(hub.last<RoomStateMsg>('host', 'room_state')?.slots).toHaveLength(1);
+  });
+});
+
+describe('App — matchmaking queue', () => {
+  /** Drives the bot-fallback timeout without waiting 12 real seconds. */
+  let clockMs = 0;
+
+  beforeEach(() => {
+    clockMs = 0;
+    app = new App(hub, () => clockMs);
+  });
+
+  it('reports the queue back to a player who just joined', () => {
+    send('c1', { type: 'join_queue', name: 'Alice' });
+
+    expect(hub.last<QueueStatusMsg>('c1', 'queue_status')).toMatchObject({
+      waiting: 1,
+      position: 1,
+      elapsedSeconds: 0,
+    });
+  });
+
+  it('drops two queued players straight into a live match, with no lobby step', () => {
+    send('c1', { type: 'join_queue', name: 'Alice' });
+    send('c2', { type: 'join_queue', name: 'Bob' });
+    // Stop the real 60Hz loop so this test drives the sim tick by tick.
+    app.dispose();
+
+    expect(hub.to<ErrorMsg>('c1', 'error')).toEqual([]);
+    expect(hub.to<ErrorMsg>('c2', 'error')).toEqual([]);
+    expect(hub.last<MatchFoundMsg>('c1', 'match_found')).toMatchObject({
+      opponentName: 'Bob',
+      yourTeam: 0,
+      againstBot: false,
+    });
+    expect(hub.last<MatchFoundMsg>('c2', 'match_found')).toMatchObject({
+      opponentName: 'Alice',
+      yourTeam: 1,
+      againstBot: false,
+    });
+    expect(hub.to('c1', 'match_start')).toHaveLength(1);
+    expect(hub.to('c2', 'match_start')).toHaveLength(1);
+
+    const session = getSession();
+    for (let i = 0; i < 3; i++) session.tick();
+
+    // Each side sees its own mana, so both must actually receive snapshots.
+    expect(hub.last<SnapshotMsg>('c1', 'snapshot')?.structures.length).toBeGreaterThan(0);
+    expect(hub.last<SnapshotMsg>('c2', 'snapshot')?.structures.length).toBeGreaterThan(0);
+  });
+
+  it('gives a lone player an AI commander once the wait runs out', () => {
+    send('solo', { type: 'join_queue', name: 'Alice' });
+    expect(hub.last<MatchFoundMsg>('solo', 'match_found')).toBeUndefined();
+
+    clockMs = (BOT_FALLBACK_SECONDS + 1) * 1000;
+    app.sweepQueue();
+    app.dispose();
+
+    expect(hub.to<ErrorMsg>('solo', 'error')).toEqual([]);
+    expect(hub.last<MatchFoundMsg>('solo', 'match_found')).toMatchObject({ againstBot: true });
+    expect(hub.to('solo', 'match_start')).toHaveLength(1);
+
+    const session = getSession();
+    for (let i = 0; i < 3; i++) session.tick();
+    expect(hub.last<SnapshotMsg>('solo', 'snapshot')).toBeTruthy();
+  });
+
+  it('lets both queued players cast from their own hand', () => {
+    send('c1', { type: 'join_queue', name: 'Alice' });
+    send('c2', { type: 'join_queue', name: 'Bob' });
+    app.dispose();
+
+    const session = getSession();
+    send('c1', { type: 'cast', cardId: session.deckFor(0)!.hand()[0], position: { x: -12, y: 0 } });
+    send('c2', { type: 'cast', cardId: session.deckFor(1)!.hand()[0], position: { x: 12, y: 0 } });
+
+    expect(hub.to<ErrorMsg>('c1', 'error')).toEqual([]);
+    expect(hub.to<ErrorMsg>('c2', 'error')).toEqual([]);
+    expect(session.liveWorld?.mages.size).toBe(2);
+  });
+});
+
+/** Reaches into App for the one live session, so tests can tick deterministically. */
+function getSession(): import('./Session').Session {
+  const sessions = (app as unknown as { sessions: Map<string, import('./Session').Session> })
+    .sessions;
+  const [first] = sessions.values();
+  if (!first) throw new Error('no session');
+  return first;
+}

@@ -1,3 +1,12 @@
+> # ⚠️ DOCUMENTO HISTÓRICO — NÃO EDITAR
+>
+> Descreve o produto **anterior**: um brawl de controle direto (WASD + mira
+> manual, mago único por jogador). O jogo pivotou para um auto-battler real-time
+> de invocação por mana — ver **`GDD.md`**, que é o documento vigente.
+>
+> Mantido como referência do feel de movimento/projétil, cujo tuning numérico
+> sobrevive em `sim/config.ts` e `sim/elements.ts`. Não usar como especificação.
+
 \# SnowCraft Remake Technical Design Document
 
 \*\*Project:\*\* SnowCraft (1999 Flash Game) Recreation  

@@ -6,7 +6,11 @@
   "description": "Mage Craft — arena mage duel with elemental projectiles (Three.js + TypeScript)",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "dev:server": "tsx watch server/src/main.ts",
+    "build": "tsc --noEmit && npm run build:client && npm run build:server",
+    "build:client": "vite build",
+    "build:server": "vite build --config vite.server.config.ts",
+    "start:server": "node dist-server/main.js",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
@@ -20,16 +24,20 @@
   },
   "dependencies": {
     "preact": "^10.29.4",
-    "three": "^0.185.1"
+    "three": "^0.185.1",
+    "ws": "^8.21.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.1",
+    "@types/node": "^26.1.2",
     "@types/three": "^0.185.0",
+    "@types/ws": "^8.18.1",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^4.0.0-alpha.13",
     "puppeteer-core": "^25.3.0",
+    "tsx": "^4.23.5",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.62.2-alpha.11",
     "vite": "^8.1.3",

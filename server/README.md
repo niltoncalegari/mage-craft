@@ -1,20 +1,23 @@
-# Mage Craft — servidor Go
+# Mage Craft — servidor autoritativo (Node)
 
-Servidor autoritativo do Mage Craft: lobby de salas por time (NxN, até 6x6),
-seleção de elemento único por mago dentro do time, preenchimento de vagas com
-bots, e um loop de simulação 60Hz (movimento, carga/lançamento, projéteis por
-elemento, dano/knockback/slow/interrupt, poças, vidas/respawn, fim de round).
+Lobby de salas por time (NxN, até 6x6), seleção de elemento único por mago
+dentro do time, preenchimento de vagas com bots, e um loop de simulação 60Hz
+(movimento, carga/lançamento, projéteis por elemento, dano/knockback/slow/
+interrupt, poças, vidas/respawn, fim de round).
 
-Ver `../GDD.md` (§7, §10.2, §14) para o contrato de produto e
-`../multiplayer-plan.md` para o histórico de decisão (o plano original
-assumia Node.js reaproveitando a simulação TypeScript; a implementação real é
-este módulo Go independente, que reimplementa a simulação do zero).
+**O servidor não tem simulação própria.** Ele importa `sim/` — o mesmo código
+TypeScript que o cliente usa. Antes existia um módulo Go que reimplementava a
+simulação do zero, e mantê-lo em sincronia com o cliente à mão foi a maior
+fonte de bugs do projeto (mira, knockback, movimento travado, bot burro, mapa
+diferente). Ver `../multiplayer-plan.md` para o histórico e `../GDD.md`
+(§7, §10.2, §14) para o contrato de produto.
 
 ## Rodando
 
 ```bash
-cd server
-go run ./cmd/mageserver
+npm run dev:server        # tsx watch, recarrega ao salvar
+npm run build:server      # bundle -> dist-server/main.js
+npm run start:server      # roda o bundle
 ```
 
 Variáveis de ambiente:
@@ -27,61 +30,71 @@ Endpoints:
 
 - `GET /healthz` — health check simples (`200 ok`).
 - `GET /ws?id=<clientId>` — upgrade para WebSocket; `id` é opcional (o
-  servidor gera um `anon-N` se omitido). Ver protocolo abaixo.
+  servidor gera um `anon-N` se omitido).
 
 ## Testes
 
 ```bash
-cd server
-go test ./...        # suíte completa
-go test ./... -race  # com detector de corrida (recomendado após mexer em internal/match)
+npm test                  # cliente + sim + servidor, uma suíte só
 ```
 
-A suíte cobre cada pacote isoladamente (TDD, seams por pacote) mais um smoke
-test ponta a ponta em `cmd/mageserver/integration_test.go` que sobe o
-servidor real (via `httptest`), conecta dois clientes WebSocket de verdade e
-percorre o fluxo completo: `create_room` → `join_room` → `select_team` →
-`select_element` → `start_match` → `input` → recebe um `snapshot` da
-simulação rodando.
+Não há suíte separada por linguagem: `sim/**/*.test.ts` cobre a simulação
+(incluindo checagens de paridade contra as tabelas de obstáculo do cliente),
+`server/src/*.test.ts` cobre lobby, sessão e o protocolo ponta a ponta
+(`App.test.ts` injeta um transporte gravador e percorre `create_room` →
+`join_room` → `select_team` → `select_element` → `add_bot` → `start_match` →
+`input` → `snapshot` → `round_end`).
 
-## Arquitetura (pacotes)
+## Arquitetura
 
 ```mermaid
 flowchart TB
-    subgraph server ["server/ (Go module)"]
-        main["cmd/mageserver — composition root (App: dispatch + broadcast)"]
-        ws["internal/ws — hub de conexões WebSocket"]
-        protocol["internal/protocol — mensagens JSON cliente↔servidor"]
-        matchPkg["internal/match — Session: liga lobby + simulação + bots, 60Hz"]
-        roomPkg["internal/room — RoomManager/Room: lobby, times, elementos"]
-        gamePkg["internal/game — elementos, config, entidades, World.Step"]
-        botPkg["internal/bot — IA utility-scoring"]
+    subgraph shared ["sim/ — simulação compartilhada com o cliente"]
+        world["World — Step 60Hz, colisão, dano, vidas, fim de round"]
+        arena["Arena — parse de public/maps/*.json, LOS, blocking"]
+        elements["elements — catálogo dos 7 elementos"]
+        brain["bot/Brain — IA utility-scoring (porte do AISystem.ts)"]
+        proto["protocol — contrato de fio cliente↔servidor"]
     end
-    main --> ws
-    main --> matchPkg
-    main --> protocol
-    ws --> protocol
-    matchPkg --> roomPkg
-    matchPkg --> botPkg
-    roomPkg --> gamePkg
-    botPkg --> gamePkg
+    subgraph srv ["server/src — só lobby e transporte"]
+        main["main — HTTP + WebSocketServer"]
+        hub["Hub — conexões, broadcast"]
+        app["App — dispatch do protocolo + broadcast"]
+        session["Session — liga lobby + sim + bots, loop 60Hz"]
+        room["Room / RoomManager — lobby, times, elementos"]
+    end
+    main --> hub
+    main --> app
+    app --> session
+    app --> proto
+    session --> room
+    session --> brain
+    room --> world
+    brain --> world
+    world --> arena
+    world --> elements
 ```
 
-| Pacote | Responsabilidade |
+| Módulo | Responsabilidade |
 | --- | --- |
-| `internal/game` | Catálogo de 7 elementos, config de tuning, entidades (`Mage`/`Projectile`/`Puddle`) e `World.Step` (movimento, charge/lançamento, colisão, dano/knockback/slow/interrupt, poça, vidas/respawn, fim de round) |
-| `internal/bot` | IA utility-scoring simplificada (retreat/attack/advance/wander), dificuldades `easy`/`normal`/`hard` |
-| `internal/room` | `RoomManager`/`Room` — lobby puro: join/leave, times, seleção de elemento com validação de unicidade por time, bots, `StartMatch` (constrói o `game.World`). Não depende de `internal/bot` nem de transporte. |
-| `internal/match` | `Session` — o único ponto que conhece `room` **e** `bot`: serializa lobby + tick de simulação atrás de um mutex, roda o loop 60Hz (`RunLoop`/`Tick`) e expõe callbacks (`OnSnapshot`, `OnRoundEnd`) como dados puros (sem depender de `protocol`) |
-| `internal/protocol` | Structs JSON das mensagens cliente↔servidor + `PeekType` para dispatch |
-| `internal/ws` | Hub de conexões WebSocket (upgrade, leitura/escrita, broadcast) — não sabe nada sobre salas/protocolo |
-| `cmd/mageserver` | Composition root (`App`): decodifica mensagens do protocolo, chama `match.Session`, serializa e faz broadcast das respostas via `ws.Hub` |
+| `sim/World.ts` | `step()` — movimento, charge/lançamento, colisão, dano/knockback/slow/interrupt, poça, vidas/respawn, fim de round |
+| `sim/Arena.ts` | Carrega `public/maps/*.json` (o mesmo arquivo que o cliente renderiza): obstáculos, bloqueio de movimento/projétil por altura, linha de visão |
+| `sim/elements.ts` | Catálogo dos 7 elementos (números de combate) |
+| `sim/bot/Brain.ts` | IA utility-scoring (retreat/takeCover/attack/advance/wander + dodge), dificuldades `easy`/`normal`/`hard` |
+| `sim/protocol.ts` | Tipos das mensagens JSON — importado pelos **dois** lados |
+| `server/src/Room.ts` | Lobby puro: join/leave, times, unicidade de elemento por time, bots, espectador/claim, `startMatch()` |
+| `server/src/Session.ts` | O único ponto que conhece lobby **e** IA: roda o loop 60Hz e expõe callbacks (`onSnapshot`, `onRoundEnd`) como dados puros |
+| `server/src/App.ts` | Decodifica o protocolo, chama `Session`, serializa e faz broadcast |
+| `server/src/Hub.ts` | Conexões WebSocket (registro, envio, broadcast) — não sabe nada sobre salas/protocolo |
+
+Sobre concorrência: o servidor Go precisava de um mutex em `Session` para
+serializar mutações de lobby contra a goroutine de tick. No Node o event loop
+já garante isso, então esse mutex simplesmente não existe — não foi traduzido.
 
 ## Protocolo WebSocket (resumo)
 
 Todas as mensagens são JSON planas com um campo `"type"` (ver
-`internal/protocol/protocol.go` para os structs completos e `PeekType` para o
-dispatch).
+`../sim/protocol.ts` para os tipos completos).
 
 **Cliente → Servidor**
 
@@ -97,7 +110,7 @@ dispatch).
 | `claim_slot` | `slotId` | Espectador reserva um bot para o **próximo rematch** (bot segue jogando) |
 | `set_ready` | `ready` | Alterna o estado "pronto" no lobby |
 | `start_match` | — | Inicia (ou reinicia) a partida; dispara o loop 60Hz |
-| `input` | `move`, `aim`, `charging`, `release` | Input do mago durante a partida (no-op para espectador) |
+| `input` | `move`, `aim`, `charging`, `release` | Input do mago durante a partida (no-op para espectador). `aim` é um **ponto** no mundo, não uma direção |
 
 **Servidor → Cliente**
 
@@ -110,15 +123,15 @@ dispatch).
 | `round_end` | `winnerTeam` | Fim da rodada → sala volta a `lobby` (rematch); claims aplicados |
 | `error` | `message` | Ação rejeitada / mensagem inválida |
 
-## Simplificações conhecidas do v1 (registradas no GDD como próximos passos)
+## Limitações conhecidas
 
-- **Sem obstáculos/cover/linha de visão** na simulação — arena v1 é um
-  retângulo aberto (`internal/game/config.go`).
-- **Desconexão em partida** apenas congela o input daquele mago (ele para de
-  se mover/atacar, mas continua no mundo); forfeit / bot-takeover mid-round
-  ainda não implementado (join mid-match é via espectador + claim no rematch).
-- **Sem host explícito** — qualquer jogador na sala pode chamar `add_bot`/
-  `remove_bot`/`start_match`, não só quem criou a sala.
-- **Sem limpeza de salas encerradas** — `room.Manager` mantém salas em
-  memória indefinidamente; ok para dev/testes, precisa de um TTL/GC antes de
-  produção.
+- **Sem path planner.** Bots usam um probe curto + sidestep (`steerTo`) em vez
+  do `PathGrid` do cliente, então podem raspar numa parede longa em vez de
+  contorná-la.
+- **Desconexão em partida** apenas congela o input daquele mago (ele para de se
+  mover/atacar, mas continua no mundo); forfeit / bot-takeover mid-round ainda
+  não existe (join mid-match é via espectador + claim no rematch).
+- **Sem host explícito** — qualquer jogador na sala pode chamar `add_bot` /
+  `remove_bot` / `start_match`, não só quem criou a sala.
+- **Sem limpeza de salas encerradas** — `RoomManager` mantém salas em memória
+  indefinidamente; ok para dev/testes, precisa de TTL/GC antes de produção.

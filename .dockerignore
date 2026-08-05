@@ -1,9 +1,11 @@
 node_modules
 dist
+dist-server
 .git
 .env
 api
-server
+# server/ is NOT ignored: both images build from the repo root now, and the
+# gameserver image needs server/src plus sim/ and public/maps/.
 e2e
 .cursor
 .claude

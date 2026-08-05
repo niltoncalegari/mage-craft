@@ -10,9 +10,8 @@ test-results
 playwright-report
 blob-report
 
-# Go server build output
-server/mageserver
-server/*.exe
-
 # Claude Code local worktrees
 .claude/
+
+# Node game server bundle (server/Dockerfile builds it)
+dist-server

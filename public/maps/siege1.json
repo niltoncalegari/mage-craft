@@ -1,0 +1,46 @@
+{
+  "name": "Arcane Siege",
+  "width": 44,
+  "height": 30,
+  "structures": [
+    { "kind": "core", "team": "player", "x": -17, "y": 0 },
+    { "kind": "tower", "team": "player", "x": -12, "y": -8 },
+    { "kind": "tower", "team": "player", "x": -12, "y": 8 },
+    { "kind": "core", "team": "enemy", "x": 17, "y": 0 },
+    { "kind": "tower", "team": "enemy", "x": 12, "y": -8 },
+    { "kind": "tower", "team": "enemy", "x": 12, "y": 8 }
+  ],
+  "spawns": [
+    { "team": "player", "x": -19, "y": -4 },
+    { "team": "player", "x": -19, "y": 4 },
+    { "team": "enemy", "x": 19, "y": -4 },
+    { "team": "enemy", "x": 19, "y": 4 }
+  ],
+  "objects": [
+    { "type": "fort", "x": 0, "y": -11, "width": 1.4, "height": 6 },
+    { "type": "fort", "x": 0, "y": 11, "width": 1.4, "height": 6 },
+
+    { "type": "rock", "x": -4, "y": 0 },
+    { "type": "rock", "x": 4, "y": 0 },
+    { "type": "rock", "x": 0, "y": -3.5 },
+    { "type": "rock", "x": 0, "y": 3.5 },
+
+    { "type": "tree", "x": -7, "y": -6 },
+    { "type": "tree", "x": -7, "y": 6 },
+    { "type": "tree", "x": 7, "y": -6 },
+    { "type": "tree", "x": 7, "y": 6 },
+
+    { "type": "fence", "x": -12, "y": -3, "width": 0.3, "height": 4 },
+    { "type": "fence", "x": -12, "y": 3, "width": 0.3, "height": 4 },
+    { "type": "fence", "x": 12, "y": -3, "width": 0.3, "height": 4 },
+    { "type": "fence", "x": 12, "y": 3, "width": 0.3, "height": 4 },
+
+    { "type": "rock", "x": -15, "y": -11 },
+    { "type": "rock", "x": -15, "y": 11 },
+    { "type": "rock", "x": 15, "y": -11 },
+    { "type": "rock", "x": 15, "y": 11 },
+
+    { "type": "prop", "x": -9, "y": 0 },
+    { "type": "prop", "x": 9, "y": 0 }
+  ]
+}

@@ -147,7 +147,7 @@ export function createLocalRoom(opts: {
 }): RoomDetail {
   const teamSize = Math.min(6, Math.max(1, Math.round(opts.teamSize)));
   const roomId = makeRoomCode();
-  let slots = emptySlots(teamSize, opts.hostName, opts.element);
+  const slots = emptySlots(teamSize, opts.hostName, opts.element);
   let room: RoomDetail = {
     roomId,
     name: opts.name.trim() || `${opts.hostName}'s Hall`,

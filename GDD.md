@@ -1,23 +1,32 @@
 # GDD — Mage Craft
 
-**Título:** Mage Craft  
-**Versão:** 0.1  
-**Status:** rascunho vivo — base de produto, não especificação de engine  
-**Herança:** remake SnowCraft — loop, feel e arquitetura de simulação (código base neste repo)  
-**Idioma do doc:** PT-BR  
+**Título:** Mage Craft
+**Versão:** 1.0 — reescrito no pivot de produto
+**Status:** rascunho vivo — base de produto, não especificação de engine
+**Modelo de referência:** Clash Royale (real-time, invocação por custo de mana, unidades autônomas)
+**Idioma do doc:** PT-BR
 
-> Slug sugerido no GitHub / npm: `mage-craft` · Nome Steam: **Mage Craft**
+> **Este documento substitui o GDD 0.1 por inteiro.** O jogo deixou de ser um brawl
+> de controle direto. Quem procura o design antigo (mago único controlado por
+> WASD + mira) deve ler `design.md` e `multiplayer-plan.md`, que passam a ser
+> **documentos históricos** — descrevem o produto anterior e não devem ser editados.
 
 ---
 
 ## 1. Visão
 
-Um duelo rápido de magos em arena top-down: posicionamento, mira com carga e projéteis elementais decidem a luta. O jogador é um **mago solo** (não um esquadrão). Bolinhas de neve viram **conjurações** — fogo, gelo, raio, veneno, pedra e outros — com o mesmo verbo de input (carregar → soltar), mas efeitos distintos no hit e no chão.
+Dois conjuradores se enfrentam em tempo real numa arena. Nenhum dos dois controla
+um mago diretamente: eles **invocam** magos que lutam sozinhos, e gastam mana
+lançando **feitiços** — buffs nos seus, maldições nos do rival.
 
-**Promessa ao jogador:**  
-*“Eu leio a arena, escolho o elemento certo e acerto o oponente com timing — ou morro porque fiquei no lugar errado.”*
+A partida é decidida por *o que você invoca, onde e quando* — nunca por mira ou
+reflexo. O mago invocado é autônomo a partir do instante em que toca o chão.
 
-**Sensação-alvo:** tático, cartunesco, legível, intenso em partidas curtas (1–3 min).
+**Promessa ao jogador:**
+*"Eu li o que ele invocou, respondi com o contra certo no lugar certo, e a mana
+que eu guardei virou a vantagem que fechou a partida."*
+
+**Sensação-alvo:** tenso, legível, de leitura e resposta. Partidas de 3 minutos.
 
 ---
 
@@ -25,401 +34,376 @@ Um duelo rápido de magos em arena top-down: posicionamento, mira com carga e pr
 
 | Campo | Definição |
 | --- | --- |
-| Fantasia | Mago de arena num duelo elemental |
-| Feeling | Tenso, rápido, posicional, legível |
-| Verbo primário | **Carregar e lançar** projétil |
-| Verbos secundários | Mover, usar cover, trocar elemento, coletar buff, dodgar |
-| Loop curto (5–20s) | Posicionar → mirar/carregar → lançar → reagir ao retorno |
-| Loop de partida (1–5 min) | Gastar lives do oponente; adaptar elemento ao padrão dele |
-| Falha / retry | Perde life → respawn com imunidade curta; 0 lives = derrota |
-| Skill expression | Lead de mira, uso de cover, escolha de elemento, bait de charge |
-| Legibilidade | Silhueta + cor por elemento; poças/zonas no chão óbvias; telegraph de charge |
-| Non-goals (v1) | RPG de progressão profunda, inventário complexo, open world, MOBA de lanes, 5v5 |
+| Fantasia | Conjurador que comanda um esquadrão de magos elementais |
+| Feeling | Leitura, resposta, economia — tenso sem exigir reflexo |
+| Verbo primário | **Invocar** (escolher carta + escolher onde plantar) |
+| Verbos secundários | Lançar feitiço (buff/maldição), guardar mana, ciclar a mão |
+| Loop curto (3–10s) | Ler o que ele invocou → escolher o contra → plantar no lugar certo |
+| Loop de partida (3 min) | Trocar pushes, abrir vantagem de mana, converter em dano de estrutura |
+| Falha / retry | Push mal respondido custa Torre; sem vida do jogador, sem respawn pessoal |
+| Skill expression | Contra-invocação, posicionamento, gestão de mana, ciclo de baralho |
+| Legibilidade | Papel pela silhueta, elemento pela cor, mana e mão sempre visíveis |
+| Non-goals (v1) | Controle direto de unidade, ordens táticas, mira manual, lanes de MOBA com creeps, 5v5, gacha |
 
 **Core loop contract:**
 
 ```text
-O jogador move e carrega um conjuro para eliminar o oponente
-enquanto projéteis, knockback e zonas no chão criam risco;
-acerto/controle gera pressão e perda de lives do rival;
-morrer gasta uma life e respawna com janela curta de imunidade.
+O jogador gasta mana invocando magos e lançando feitiços;
+os magos lutam sozinhos e avançam para as estruturas inimigas;
+ler o push do rival e responder com o contra certo gera vantagem de mana;
+vantagem de mana vira push maior, que derruba Torre e depois o Núcleo.
 ```
 
 ---
 
-## 3. O que herdamos do SnowCraft (e o que muda)
+## 3. O modelo: o que copiamos do Clash Royale e o que não
 
-### Mantém (DNA)
+### Copiamos (é o que faz o gênero funcionar)
 
-- Arena vista ortográfica / quase top-down, mapa inteiro legível
-- Movimento responsivo + cover que importa (LoS / altura de obstáculo)
-- Projétil com tempo de voo, arco, miss e dodge possíveis
-- Charge no hold do mouse; release = lançar (sem cancel fácil)
-- Lives + respawn com imunidade
-- Simulação desacoplada do render (fixed timestep ~60 Hz)
-- Modo treino vs AI antes / junto do PvP
+- **Real-time, simétrico, 1v1.** Os dois jogam ao mesmo tempo, na mesma sim autoritativa.
+- **Mana única que regenera.** Um recurso só, teto baixo, regeneração constante. É o relógio da partida.
+- **Baralho + mão + ciclo.** Você não tem acesso a tudo o tempo todo; a ordem das cartas é parte da decisão.
+- **Unidades autônomas.** Invocou, acabou o seu controle sobre aquela unidade.
+- **Posicionamento como agência.** Onde você planta é a decisão mais densa do jogo.
+- **Objetivo estrutural.** Ganha quem derruba mais estrutura, não quem mata mais.
 
-### Muda
+### Não copiamos
 
-| Antes (SnowCraft) | Agora |
+- **Lanes com ponte e rio.** Nossa arena é aberta e tem **cover real** — obstáculos com altura, bloqueio de projétil e line-of-sight, que já existem em [sim/Arena.ts](sim/Arena.ts). Isso é vantagem nossa: projétil com tempo de voo e cobertura dão profundidade posicional que a grade do CR não tem.
+- **Progressão de nível de carta paga.** Cartas não sobem de poder. Ver §12.
+- **Gacha / baús.** Ver §12.
+- **Alvo travado até a morte.** Nossos magos têm IA real (esquiva, cover, focus-fire de esquadrão) — ver §11.
+
+### A diferença que define nosso jogo
+
+No Clash Royale a unidade é um autômato burro que anda reto. Aqui ela é um mago com
+o `Brain` de 671 linhas que já existe no repo: ele busca cobertura, esquiva de
+projétil, lidera a mira e coordena foco com os aliados. **A mesma invocação, no
+mesmo lugar, joga diferente dependendo do terreno.** É esse o nosso diferencial, e
+ele já está construído.
+
+---
+
+## 4. A partida
+
+| Item | Definição |
 | --- | --- |
-| Tema neve / crianças | Magos / arena arcana |
-| Snowball único | Catálogo elemental de projéteis |
-| Fantasia “brigada de neve” | Fantasia “duelo de conjuradores” |
-| Remake fiel Flash 1999 | IP própria (Steam / desktop) |
-| Foco SP + AI | Foco **PvP 1v1**, SP como modo offline |
+| Formato | 1v1 real-time, entrada por **fila de matchmaking** (sem código de sala) |
+| Duração | 3 min de tempo normal + até 1 min de morte súbita |
+| Tick | 60 Hz autoritativo, snapshots a 20 Hz (já em produção) |
+| Vitória normal | Mais estruturas derrubadas ao fim dos 3 min |
+| Empate em estruturas | Morte súbita: **mana dobrada**, primeira estrutura a cair vence |
+| Empate total | Menor HP restante de Núcleo perde; se idêntico, empate |
 
-### Em pausa (outro projeto)
+**Entrada na partida:** o jogador aperta Batalhar e entra numa fila. O servidor
+pareia dois jogadores por ordem de chegada e monta a sala sozinho — sem lobby,
+sem ready-up, sem código. Depois de 12 s sem par humano, ele recebe um
+comandante de IA em vez de encarar um spinner. Salas manuais continuam
+existindo para partidas privadas.
 
-O protótipo MOBA atual fica em hold (`moba_hold` / archive). Este GDD **não** cobre lanes, minions nem draft de heróis MOBA.
+**Sem vidas de jogador. Sem respawn pessoal.** O jogador não tem corpo na arena —
+ele é o conjurador fora dela. Magos invocados morrem e não voltam; o que volta é a
+mana para invocar outros.
 
----
-
-## 4. Pilares
-
-1. **Posicionamento > aim perfeito** — cover, ângulos e spacing decidem mais que tracking pixel-perfect.
-2. **Combate de projétil imperfeito** — tudo voa no tempo; dá para errar, desviar e baitar.
-3. **Elementos como identidade tática** — mesmo input, consequências diferentes (hit, zona, CC).
-4. **Partidas curtas e legíveis** — round rápido, silhuetas claras, pouca UI obrigatória.
-5. **Fair PvP** — servidor autoritativo; cosméticos ≠ poder pago (ver §12).
-
----
-
-## 5. Entidade jogável — o Mago
-
-- **1 herói** controlado por jogador (auto-selecionado; sem squad click).
-- Stats base herdados do feel SnowCraft (tuning em data): move speed, radius, HP, charge time, windup/recovery/cooldown.
-- Visual: corpo procedural ou mesh simples de mago; staff / mãos como origem do projétil.
-- **Loadout elemental** (ver §7): 1 elemento ativo por vez no MVP; expansão para 2 slots depois.
-- Times: team 0 / team 1 (cores POV-relative no cliente: *eu* sempre “aliado”, oponente “inimigo”).
+> Isto substitui o modelo de `lives` + `respawn` do GDD 0.1. Ver §13 para o que
+> isso significa em `sim/config.ts` e `World.checkRoundEnd`.
 
 ---
 
-## 6. Controles (MVP)
+## 5. Arena e estruturas
 
-| Ação | Input |
-| --- | --- |
-| Mover | WASD ou botão direito no chão |
-| Mirar + carregar | Segurar botão esquerdo |
-| Lançar | Soltar botão esquerdo |
-| Trocar elemento | Teclas `1–5` ou scroll (se multi-elemento na build) |
-| Pause (só offline) | Esc / P |
+A arena é aberta, simétrica no eixo do adversário, com obstáculos que importam.
 
-Aiming: deadzone perto do mago, rotação suave para o cursor, reticle a raio fixo (herança AIM do SnowCraft).
+Cada lado tem:
 
----
-
-## 7. Sistema de elementos e loadout
-
-### Regras gerais
-
-- Todo conjuro usa o **mesmo pipeline**: charge → windup → spawn projétil → arco/física → hit ou expiração.
-- Diferenças vêm de **dados** (`ProjectileDef`): velocidade, arco, dano, knockback, onHit, onExpire, groundEffect.
-- Charge escala poder **dentro da def** (ex.: veneno aumenta raio/duração da poça; pedra aumenta dano e reduz velocidade).
-- Legibilidade: **cor dominante + trail + ícone de carga** únicos por elemento.
-
-### Seleção (fases)
-
-| Fase | Modelo |
-| --- | --- |
-| **Alpha** | Um elemento fixo por partida (menu) — validar feel |
-| **Beta** | Troca no match via teclas / pickups de elemento na arena |
-| **Release** | Loadout pré-partida: escolher 2–3 elementos; hotkeys in-match |
-
-O menu Alpha (single-player) permite escolher entre os **7 elementos** do
-catálogo completo (§8.1), não só os 5 originalmente listados como "MVP
-obrigatório" — `arcane` e `wind` também ficam selecionáveis desde já. A
-simulação single-player ainda não diferencia o projétil por elemento (usa o
-`SNOWBALL` genérico); a diferenciação real de combate por elemento chega
-junto com a integração ao servidor Go (§14), que já implementa os 7.
-
-### Sala pré-jogo e times (servidor autoritativo)
-
-O jogo é organizado em **salas** com times de tamanho configurável, de **1x1 até 6x6** (capacidade total = 2× o tamanho do time, definido na criação da sala).
-
-Fluxo da sala (fase Alpha — 1 elemento fixo por mago, ver tabela acima):
-
-1. Jogadores entram na sala e escolhem um time (0 ou 1).
-2. Cada mago escolhe **exatamente 1 elemento** do catálogo completo de **7 elementos** (`fire`, `ice`, `lightning`, `poison`, `stone`, `arcane`, `wind` — ver §8.1). Esse catálogo de 7 é usado desde já **na seleção de sala** mesmo com `arcane`/`wind` marcados como pós-MVP no combate (§8.1), justamente para garantir que um time de até 6 jogadores sempre tenha um elemento livre.
-3. **Regra de unicidade:** um elemento só pode estar selecionado por **um mago por vez dentro do mesmo time**; dois magos do mesmo time nunca podem usar o mesmo elemento simultaneamente. Times adversários podem repetir elementos livremente entre si.
-4. O host pode **preencher vagas vazias com bots** (dificuldade easy/normal/hard); o bot seleciona automaticamente um elemento ainda livre no seu time.
-5. A partida começa quando todas as vagas do(s) time(s) estão preenchidas (humano ou bot) e cada mago tem um elemento válido selecionado.
-
-Ao desconectar durante a sala (fase de lobby), a vaga e o elemento do jogador voltam a ficar livres para os demais.
-
----
-
-## 8. Catálogo de projéteis
-
-Valores abaixo são **direção de design** (não constantes finais). Balanceamento vive em data (`config` / Data Assets).
-
-### 8.1 Matriz rápida
-
-| ID | Nome | Papel | On-hit | No chão / extra | Risco |
-| --- | --- | --- | --- | --- | --- |
-| `fire` | Bola de fogo | Pressão / padrão | Dano médio + knockback leve; opcional DoT curto | — | Leitura fácil; baseline |
-| `ice` | Fragmento de gelo | Controle | Dano baixo–médio + **slow** | — | Bom para fechar espaço |
-| `lightning` | Raio / bolt | Poke | Dano médio, voo **mais rápido**, arco baixo, knockback menor | — | Errar custa menos tempo; acertar exige lead menor |
-| `poison` | Frasco de veneno | Zona / negação | Dano baixo no impacto | **Poça** no impacto (ou no chão se expirar baixo) | Controla chão; self-damage se mal posicionado |
-| `stone` | Projétil de pedra | Burst / interrupt | Dano **alto**, mais lento, knockback forte; pode **interromper charge** inimigo | Opcional: rimochete leve em parede (fase 2) | Telegraphed; punível se errar |
-| `arcane` *(opcional)* | Orbe arcano | Flex | Dano médio | Pequena explosão AoE no impacto | Preenche gap entre fogo e pedra |
-| `wind` *(opcional)* | Lâmina de vento | Deslocamento | Dano baixo + **empurrão** forte | — | Utility / peel |
-| `holy` / `shadow` | Cosmético ou modo futuro | — | — | — | Fora do MVP |
-
-**MVP obrigatório:** `fire`, `ice`, `lightning`, `poison`, `stone`.  
-**Pós-MVP:** `arcane`, `wind`, e variações cosméticas.
-
----
-
-### 8.2 Fogo (`fire`) — baseline
-
-- **Fantasia:** bola de fogo clássica.
-- **Voo:** velocidade/arco próximos ao snowball atual.
-- **Hit:** dano ~baseline; knockback leve; DoT opcional (ex. 3 ticks fracos) se precisar diferenciar de pedra.
-- **Por que existe:** tutorial do verbo; referência de balanceamento (“1.0×”).
-
----
-
-### 8.3 Gelo (`ice`) — soft CC
-
-- **Fantasia:** estilhaço / orbe gelado.
-- **Voo:** um pouco mais lento que fogo.
-- **Hit:** menos dano; aplica **slow** (ex. 30–40% move speed por 1.0–1.5s); refresha duração, não stacka infinito.
-- **Dinâmica:** força o oponente a respeitar espaço; combina com pedra/fogo no follow-up (quando houver 2 slots).
-
----
-
-### 8.4 Raio (`lightning`) — poke
-
-- **Fantasia:** relâmpago lançado da staff.
-- **Voo:** mais rápido, arco mais baixo (quase “linha com leve queda”).
-- **Hit:** dano médio; pouco knockback (não empurra tanto o aim do rival).
-- **Dinâmica:** castiga inimigo exposto longe do cover; pior contra alguém atrás de fort alto.
-
----
-
-### 8.5 Veneno (`poison`) — poça no chão
-
-- **Fantasia:** frasco / globo tóxico que estoura e contamina o chão.
-- **Voo:** velocidade média; silhueta verde distinta.
-- **On-hit (impacto em player):** dano baixo + spawna **GroundPuddle** no ponto do impacto (ou aos pés do alvo).
-- **On-hit (impacto no chão / obstáculo baixo):** spawna poça no ponto de contato.
-- **On-expire (ttl no ar):** se cair no chão sem acertar player, ainda cria poça (negação de espaço).
-
-#### Poça (`GroundPuddle`)
-
-| Propriedade | Direção de design |
-| --- | --- |
-| Duração | `T` segundos (ex. 3.5–5.0), escalável com charge |
-| Raio | `R` (ex. 1.2–1.8), escalável com charge |
-| Tick | Dano a cada `tickInterval` (ex. 0.25–0.4s) enquanto o collider do mago overlap a poça |
-| Team rule | **Hurt everyone** (incluindo caster) — skill expression / anti-camp |
-| Stack | Mesma célula: refresha duração ou mantém a mais forte; **não** multiplica dano por N poças no mesmo ponto |
-| Max ativas | Cap global por time ou por partida (ex. 4) para não poluir a arena |
-| Visual | Disco / névoa baixa, borda clara, cor veneno; some com fade |
-| Audio | Loop baixo + tick sutil no dano |
-
-**Por que self-damage:** evita spam seguro na própria cara e cria decisões (“nego a porta do respawn ou corto a minha rota?”).
-
-**Interação com outros sistemas:**
-
-- Imunidade de respawn / pickup de immunity: **não** toma dano da poça (ou toma 50% — decidir no balance pass; default: imunidade completa).
-- Slow de gelo + poça: permitido (combo espacial).
-- Pedra / knockback pode **empurrar** o player para dentro/fora da poça (feature, não bug).
-
----
-
-### 8.6 Pedra (`stone`) — heavy hit
-
-- **Fantasia:** pedregulho / meteorito pequeno conjurado.
-- **Voo:** **mais lento**, arco mais alto (mais telegraphed), mais fácil de desviar.
-- **Hit:** dano alto; knockback forte; **cancela charge** do oponente se estiver mirando (interrupt).
-- **Dinâmica:** punidor de erro; ruim como poke spam; ótimo depois de slow/gelo ou para quebrar alguém colado em cover.
-- **Fase 2 (opcional):** ricochete 1× em obstáculo sólido com perda de velocidade.
-
----
-
-### 8.7 Extensões futuras (backlog de design)
-
-| Ideia | Nota |
-| --- | --- |
-| `arcane` | AoE pequena no impacto — limpa cluster / magos colados |
-| `wind` | Quase zero dano, máximo deslocamento — peel / edge kill |
-| Elemento “muro” | Não é projétil: consumível que sobe cover temporário (pode ser pickup, não loadout) |
-| Fusão / overcharge | Segurar charge no máximo muda levemente o efeito (só se legível) |
-
----
-
-## 9. Arena e level design
-
-### Formato
-
-- Arena fechada, tamanho próximo ao SnowCraft.
-- Obstáculos: pedras arcanas, pilares, ruínas baixas (fence), muros médios (fort), árvores/totens altos.
-- Altura de obstáculo continua governando “projétil passa por cima?” e cover/LoS.
-
-### Tema visual
-
-- Chão: pedra / areia mágica / grama amaldiçoada (não neve).
-- Props batem com magia cartunesca, alta legibilidade, baixo ruído.
-
-### Encontro / pacing numa partida
-
-1. Spawn oposto ou assimétrico leve  
-2. Primeira decisão: peek vs rotate  
-3. Primeira troca de conjuro (~10–20s)  
-4. Pickups / zonas (veneno) criam hotspots  
-5. Endgame: poucas lives → respeito a charge e a poças em choke  
-
-Mapas novos = JSON / data (herança `public/maps/`), não hardcode.
-
----
-
-## 10. Modos de jogo
-
-### 10.1 Offline vs AI (sempre disponível)
-
-- Mesmas regras de lives / elementos.
-- Dificuldades: easy / normal / hard (pesos de AI + handicaps só na AI, nunca no PvP humano).
-- Útil para tutorial, practice de elemento e QA.
-
-### 10.2 PvP em salas por time — NxN, até 6x6 (prioridade de produto)
-
-- Servidor autoritativo (Go, ver §14) organiza partidas em **salas de time** configuráveis de 1x1 a 6x6 (§7 — Sala pré-jogo e times); 1v1 é apenas o caso `teamSize = 1`.
-- Servidor autoritativo (snapshots); clientes enviam input commands.
-- Simetria de regras entre jogadores humanos; handicaps de AI só valem para bots (nunca entre humanos).
-- Cores POV-relative.
-- Bots podem preencher vagas vazias de qualquer time na sala (§7).
-- Desconexão: forfeit ou bot takeover curto (decidir na fase netcode).
-
-### 10.3 Fora do escopo inicial
-
-- FFA, ranked seasons, battle pass, matchmaking por rating/contas — times NxN (até 6x6) já deixam de ser "fora de escopo" a partir do servidor Go (§10.2, §14).
-
----
-
-## 11. Progressão, score e meta (leve)
-
-**Release mínimo:**
-
-- Vitória/derrota + rematch  
-- Leaderboard local / conta simples (opcional)  
-- Unlocks **cosméticos** (cor da staff, trail) — não poder  
-
-**Evitar no v1:** árvore de talentos que mude dano base; pay-to-win.
-
-Score offline pode reaproveitar a lógica SnowCraft (tempo, lives gastos, dificuldade).
-
----
-
-## 12. Plataformas e distribuição
-
-| Alvo | Notas |
-| --- | --- |
-| Browser | Dev + playtest rápido (Vite) |
-| Desktop | **Tauri 2** preferido (binário menor que Electron) |
-| Steam | Build desktop + Steamworks (overlay, achivements depois) |
-
-Ordem: **jogo online estável no browser → wrap Tauri → Steam page**.
-
----
-
-## 13. Áudio e feedback
-
-- Cada elemento: SFX de charge, release, voo, hit e (se houver) loop de zona.
-- Hitstop curto / screen shake leve no impacto de pedra; mais sutil no fogo/raio.
-- Poça: feedback contínuo baixo, nunca ensurdecedor.
-- UI: ícone do elemento ativo, charge bar tingida pela cor do elemento, lives.
-
----
-
-## 14. Arquitetura (intenção de implementação)
-
-- Manter simulação pura (sem Three.js) em `core/game/systems/physics` no cliente.
-- `ProjectileDef` + `GroundEffect` como dados; systems genéricos (`ProjectileSystem`, `GroundEffectSystem`).
-- Veneno = projétil que **spawna** entidade `Puddle` no mundo; tick de dano num system dedicado.
-- Testes unitários da simulação (já cultura do SnowCraft) para defs e poças.
-
-### Pivot de servidor: Go (`server/`)
-
-`multiplayer-plan.md` assumia um servidor **Node.js** reaproveitando diretamente a simulação TypeScript do cliente (monorepo `shared/`). Essa suposição foi substituída: o servidor autoritativo real é um **módulo Go independente** em `server/` (WebSocket + JSON), que **reimplementa** a simulação — dados equivalentes a `ProjectileDef`/catálogo de elementos, movimento, projéteis, dano/knockback, vidas/respawn e o sistema de salas/times (§7, §10.2) — já que não há reaproveitamento direto de código entre TypeScript e Go. `multiplayer-plan.md` permanece como referência conceitual (server-authoritative, snapshots, cores POV-relative), não como plano de stack.
-
-Notas de processo adotadas no desenvolvimento do servidor Go:
-
-- Desenvolvimento **test-first** (TDD): seams definidos por pacote (`room`, `game`, `bot`, `protocol`) antes de implementar cada fatia.
-- Padrões de arquitetura de jogo (state machine explícita para sala/mago, configuração data-driven em vez de números soltos, sem alocações no hot loop de simulação a 60 Hz) seguem a mesma disciplina descrita para o cliente.
-- Quando a integração do **cliente** (Three.js/Preact) com o novo protocolo WebSocket do servidor Go começar, essa é uma fase à parte deste documento, ainda não iniciada.
-
----
-
-## 15. Fases de entrega
-
-| Fase | Entrega | Critério de “pronto” |
+| Estrutura | HP | Papel |
 | --- | --- | --- |
-| **0 — Fundação** | Repo novo, rename, tema mago, `fire` only | Feel ≥ SnowCraft baseline |
-| **1 — Catálogo** | `ice`, `lightning`, `poison`+poça, `stone` | 5 elementos jogáveis offline |
-| **2 — PvP** | 1v1 autoritativo + lobby mínimo | Duas machines, partida justa |
-| **3 — Desktop** | Tauri 2 packaging | Installer macOS/Windows (Linux nice-to-have) |
-| **4 — Steam** | Store presence + build pipeline | Depósito Steam OK, playtest externo |
+| **Núcleo** (1) | 900 | Fundo da base. Cair = derrota imediata |
+| **Torre** (2) | 400 cada | Flanqueiam o Núcleo. Atiram em inimigos ao alcance |
 
-MOBA permanece em hold; não bloqueia este roadmap.
+> Estes números **já passaram por uma medição**, não são chute. Os valores
+> originais (1400/700) faziam dois jogadores competentes empatarem em 100% das
+> partidas simuladas: nenhuma torre caía nunca contra defesa. Ver §14.
 
----
+- Torres atacam sozinhas: projétil arcano, alcance 9.0 (o `ENGAGE_RANGE` que o `Brain` já usa), dano moderado. Elas são a defesa base — invocar nada nunca é a jogada certa, mas invocar mal também não.
+- **Enquanto as duas Torres estiverem de pé, o Núcleo é imune.** Isso impede rush direto ao Núcleo no minuto 1 e dá forma à partida: quebrar flanco antes de fechar.
+- Obstáculos (árvore, rocha, forte, cerca) continuam bloqueando movimento e projétil por altura, exatamente como hoje.
 
-## 16. Riscos e decisões abertas
+**Zona de invocação:** você só planta na **sua metade** da arena, mais um avanço
+progressivo — cada Torre inimiga derrubada libera invocação naquele flanco do lado
+dela. É o análogo direto da ponte do CR e é o que transforma vantagem em pressão.
 
-| Tópico | Opções | Inclinação atual |
-| --- | --- | --- |
-| Nome do jogo | — | **Mage Craft** (fechado) |
-| Poça fere o caster? | sim / não / reduzido | **Sim** (skill) |
-| Quantos elementos in-match | 1 fixo / hotswap / 2 slots | Alpha: 1; Beta: hotswap |
-| Interrupt de charge com pedra | sim / não | **Sim** |
-| DoT de fogo | sim / não | Opcional; só se fogo ≠ pedra na prática |
-| 2v2 | depois | Fora do v1 |
+> A arena de lanes/estruturas é um **mapa JSON novo** (`public/maps/`), não código:
+> `Arena.fromData` já lê `width`/`height`/`objects[]`/`spawns[]`. Estruturas são o
+> tipo de entidade novo — ver §13.
 
 ---
 
-## 17. Success metrics (qualitativos)
+## 6. Mana — a economia
 
-- Novo jogador entende charge + cover em &lt; 60s.
-- Em PvP, mortes “baratas” por lag são raras (interpolação / authority ok).
-- Cada um dos 5 elementos MVP aparece como escolha válida em alguma situação (não há elemento morto no meta).
-- Partida média &lt; ~4 min; rematch é imediato.
+| Parâmetro | Valor v1 |
+| --- | --- |
+| Teto | 10 |
+| Início da partida | 5 |
+| Regeneração normal | 1 mana / 2.8 s |
+| Regeneração em morte súbita | 1 mana / 1.4 s (dobrada) |
+| Custo das cartas | 2 a 7 |
 
----
+Por que teto baixo e regeneração lenta: é o que força a decisão. Com teto 10 e o
+Golem custando 5, invocar o Golem é literalmente meio arsenal — e o rival vê o
+Golem chegar e tem uma janela para punir do outro lado. **Toda vantagem no jogo é,
+no fundo, vantagem de mana**: gastar 3 para anular um push de 5 é a jogada boa, e
+é isso que o jogador aprende a fazer.
 
-## 18. Referências internas
-
-- `design.md` — design técnico original SnowCraft (detalhe de sim/ECS)
-- `multiplayer-plan.md` — plano 1v1 server-authoritative
-- `src/game/config.ts` — tuning herdado (ponto de partida numérico)
-- `docs/accounts-ranking-dashboard.md` — sistema de contas, ranking, logs de partida e dashboard (§19)
-- Este `GDD.md` — **fonte da verdade de produto/gameplay** da nova IP
-
----
-
-## 19. Contas, ranking e dashboard
-
-Sistema de contas de jogador, ranking global, logs de partida e dashboard
-pessoal (KDR, elemento mais jogado, gráficos de uso de habilidades),
-implementado como um serviço Node/TypeScript separado (`api/`) + MongoDB,
-consumido por novas telas no client existente (`src/ui/`). Alimentado hoje
-pelo modo **SP-vs-AI** (já funcional); o servidor Go de salas/PvP (`server/`,
-§14) reportará partidas PvP no mesmo contrato assim que `internal/room`
-estiver pronto.
-
-**Detalhe completo (modelo de dados, endpoints, arquitetura):**
-[`docs/accounts-ranking-dashboard.md`](docs/accounts-ranking-dashboard.md).
-
-**Deploy:** `docker-compose.yml` na raiz orquestra `mongo`, `api`,
-`gameserver` (Go) e `client` (Nginx) para rodar em uma VPS.
+Mana é o único freio. Não há cooldown por carta — a carta volta pelo **ciclo do
+baralho** (§7), o que é mais legível e cria a decisão de "ciclar barato agora para
+ter o contra na mão daqui a 20 s".
 
 ---
 
-## Changelog do GDD
+## 7. Baralho, mão e ciclo
 
-| Versão | Data | Notas |
-| --- | --- | --- |
-| 0.3 | 2026-08-02 | Novo §19 — contas de jogador, ranking global, logs de partida e dashboard (KDR, elemento favorito, uso por elemento), serviço `api/` (Node + MongoDB) separado do servidor Go; docker-compose para deploy em VPS; ver `docs/accounts-ranking-dashboard.md` |
-| 0.2 | 2026-08-02 | Sala pré-jogo com times NxN (até 6x6, §7/§10.2); regra de elemento único por mago dentro do time, usando catálogo completo de 7 elementos; bots preenchem vagas vazias; pivot de servidor de Node.js (assumido em `multiplayer-plan.md`) para servidor **Go** independente (`server/`) (§14) |
-| 0.1 | 2026-08-02 | Primeiro rascunho: mago, 5 elementos MVP (veneno+poça, pedra), PvP/Tauri/Steam, herança SnowCraft; título **Mage Craft** |
+- **Baralho:** 8 cartas, montadas fora da partida.
+- **Mão:** 4 cartas visíveis + **1 próxima** em preview.
+- **Ciclo:** jogou uma carta, ela vai para o fim da fila e a próxima entra na mão.
+- **Sem aleatoriedade oculta:** a próxima carta é sempre visível. O jogador planeja dois turnos à frente.
+
+Regra de construção de baralho (v1): **mínimo 1 carta de cada papel** (tank, dano,
+suporte) e **no máximo 3 feitiços**. Isso impede o baralho degenerado de só
+feitiço, que transformaria o jogo em outra coisa.
+
+---
+
+## 8. Papéis — a identidade de uma unidade
+
+Um mago é definido pelo **papel**. O elemento é o *ataque* que ele usa, não a
+identidade dele.
+
+| Papel | Silhueta | HP | Velocidade | Função |
+| --- | --- | --- | --- | --- |
+| **Tank** | Grande, pesado | 200–280 | 3.5–4.0 | Absorve dano e abre caminho. Alcance curto |
+| **Dano** | Magro, alto | 60–90 | 5.0–5.5 | Mata. Morre rápido se alcançado |
+| **Suporte** | Pequeno, curvado | 70–95 | 5.0 | Não mata sozinho. Multiplica quem está perto |
+
+Referência: um mago do jogo antigo tinha 100 HP e velocidade 6 (`MAX_HEALTH`,
+`MOVE_SPEED` em [sim/config.ts](sim/config.ts)). Esses continuam sendo o ponto de
+partida numérico — o Dano é o mago antigo, um pouco mais frágil.
+
+**A trinca é o balanceamento inteiro:** tank apanha bem mas não mata, dano mata mas
+não apanha, suporte não faz nem um nem outro sozinho. Um push só funciona
+combinando papéis, e é isso que dá ao rival algo específico para ler e responder.
+
+---
+
+## 9. Catálogo de cartas (v1)
+
+Treze cartas para o pool inicial: 9 unidades + 4 feitiços. Números são **direção
+de design**, não balance final — ver §14.
+
+### Unidades
+
+| Carta | Papel | Custo | HP | Vel. | Elemento (ataque) | Nota de design |
+| --- | --- | --- | --- | --- | --- | --- |
+| Golem de Pedra | Tank | 5 | 280 | 3.5 | `stone` | Dano 32 e interrompe conjuração. Lento o bastante para ser respondido |
+| Sentinela de Gelo | Tank | 4 | 200 | 4.0 | `ice` | Lentidão em quem encosta. Tank de controle, não de dano |
+| Piromante | Dano | 4 | 80 | 5.0 | `fire` | Dano 20 confiável. A carta de referência do papel |
+| Condutor de Raio | Dano | 4 | 60 | 5.0 | `lightning` | Projétil 30 de velocidade, arco baixo — acerta alvo em movimento |
+| Arqueiro Arcano | Dano | 3 | 70 | 5.5 | `arcane` | Splash 2.0. Contra de grupo, barato de ciclar |
+| Alquimista | Dano | 4 | 70 | 5.0 | `poison` | Poça de 4 s nega terreno. Zoning, não burst |
+| Dervixe do Vento | Dano | 3 | 65 | 7.0 | `wind` | Dano baixo, knockback alto. Empurra tank para fora da cobertura |
+| Clérigo | Suporte | 4 | 95 | 5.0 | — | Cura o aliado ferido mais próximo, 8 HP/s, alcance 5 |
+| Bardo Arcano | Suporte | 3 | 70 | 5.0 | — | Aura: +25% velocidade de conjuração aos aliados em raio 4 |
+
+### Feitiços (sem unidade — efeito direto na área escolhida)
+
+| Carta | Tipo | Custo | Efeito |
+| --- | --- | --- | --- |
+| Bênção de Ímpeto | Buff | 2 | Aliados em raio 4: +40% velocidade, +25% conjuração, 5 s |
+| Maldição da Lentidão | Maldição | 3 | Inimigos em raio 4: 50% de lentidão, 4 s |
+| Escudo Arcano | Buff | 3 | Aliados em raio 4: absorve 60 de dano, 6 s |
+| Praga | Maldição | 4 | Zona de 3.5 por 5 s: 10 de dano/s, atravessa o escudo |
+
+Os quatro feitiços são a expressão direta de "buffs e maldições" — e note que
+todos são de **área escolhida pelo jogador**, ou seja: mesmo o feitiço exige a
+decisão de posicionamento. Nenhuma carta do jogo é um botão que se aperta sem pensar onde.
+
+---
+
+## 10. O teste de agência
+
+> **Uma partida com o jogador AFK e a mesma partida jogada bem precisam terminar
+> diferente, de forma visível.**
+
+Este era o risco número um do pivot. No modelo escolhido ele está resolvido por
+construção, e dá para afirmar isso com precisão:
+
+- **AFK = derrota garantida em ~90 s.** O jogador AFK não invoca nada. As duas
+  Torres dele caem para qualquer push mínimo, e o Núcleo cai em seguida. Não existe
+  estado passivo defensável.
+- **A decisão acontece a cada ~3 s.** É o intervalo de uma mana. Numa partida de
+  3 min o jogador toma ordem de 60 decisões de invocação e posicionamento.
+- **A mesma carta joga diferente.** Plantar o Golem atrás da cobertura ou no aberto
+  muda o resultado do push, porque a sim tem line-of-sight e altura de obstáculo.
+
+**Como isso vira teste de verdade, não parágrafo de GDD:** a sim é determinística
+(`sim/rng.ts`, mulberry32 semeado) e roda headless — o servidor já provou isso
+rodando 4v4 de bots a 19.9 Hz sem browser. Então o teste é executável:
+
+Esse teste **existe e roda** em `sim/agency.test.ts`. Resultado medido:
+
+| Cenário | Resultado |
+| --- | --- |
+| Comandante ativo vs **AFK**, 5 seeds | **AFK perde 5/5**, sempre por Núcleo destruído |
+| Estruturas perdidas | AFK perde 3; o lado ativo perde **0** |
+| Tempo até decidir | **93–136 s** — dentro do que esta seção prometia |
+
+O risco número um está fechado com evidência. O que **não** está fechado é a
+separação por habilidade — ver §14.
+
+---
+
+## 11. Como os magos lutam (IA)
+
+A IA **não** é trabalho novo. [sim/bot/Brain.ts](sim/bot/Brain.ts) já entrega, com
+cobertura de teste:
+
+- Modelo de utilidade com 5 ações (`wander`, `advance`, `takeCover`, `retreat`, `attack`)
+- Focus-fire de esquadrão (alvo ponderado por ferido/exposto/perto)
+- Busca de cobertura e peek spots
+- Esquiva reativa de projétil (`DODGE_RADIUS` 3.5)
+- Mira com lead por velocidade do alvo e erro escalado por distância
+- Separação de aliados
+- Três dificuldades
+
+O que precisa mudar nele para o modelo novo é pequeno e localizado:
+
+1. **Prioridade de alvo estrutural.** Hoje `nearestEnemy` só olha magos. Precisa considerar Torre/Núcleo, com peso por papel — o Tank prefere estrutura, o Dano prefere unidade que o ameaça.
+2. **Vetor de avanço.** Hoje o bot vagueia quando não há inimigo; precisa avançar em direção à estrutura inimiga.
+3. **Comportamento por papel.** `ADVANCE_STOP_DISTANCE` já existe (6.5) — o Tank usa um valor baixo, o Dano um alto, e o Suporte segue o aliado mais avançado em vez de procurar inimigo.
+
+Nenhum desses toca o modelo de utilidade nem as três dificuldades. É extensão, não reescrita.
+
+---
+
+## 12. Progressão e monetização
+
+A `api/` já existe (contas, `MatchLog`, ranking, agregação de stats) e no modelo
+novo ela fica **mais** central, não menos.
+
+- **Progressão é de acesso, não de poder.** Jogar desbloqueia cartas novas para o pool. Uma carta desbloqueada nunca é mais forte que uma inicial — é uma opção diferente.
+- **Cartas não sobem de nível.** Esta é a divergência deliberada do Clash Royale e é uma decisão de produto: um jogador novo e um veterano jogam com números idênticos. O ranking mede jogador, não coleção.
+- **Monetização (fora do escopo v1): apenas cosmético.** Skin de mago, efeito de conjuração, emote. Nada que altere um número da §9.
+- **Ranking:** ELO por vitória, já suportado pelo que existe em `api/src/routes/ranking.ts`.
+
+---
+
+## 13. Mapeamento técnico — o que existe, o que muda, o que é novo
+
+> Esta seção é o contrato com o código. Ela existe para impedir que alguém leia
+> "pivot" e conclua "recomeçar".
+
+### Sobrevive intacto (a maior parte do custo já foi paga)
+
+`sim/World.ts` · `sim/Arena.ts` · `sim/elements.ts` · `sim/entities.ts` ·
+`sim/Vec2.ts` · `sim/rng.ts` · `sim/defaultMap.ts` · `sim/bot/Brain.ts` ·
+o servidor Node inteiro (`server/src/**`: Hub, Room, RoomManager, Session, App, main) ·
+o pipeline de render do cliente (`SnapshotSync`, `ArenaRenderer`, `PlayerRenderer`,
+`ParticleRenderer`, `PuddleRenderer`, `HUD`, `Minimap`) · a `api/` inteira.
+
+**Em particular, `sim/elements.ts` não muda.** Os 7 elementos são o catálogo de
+ataque das unidades da §9. Os números de dano, knockback, arco e poça já estão
+afinados e cobertos por teste.
+
+### Muda — é pouco e é cirúrgico
+
+| Hoje | Vira |
+| --- | --- |
+| `InputMsg` (`move`/`aim`/`charging`/`release`) em [sim/protocol.ts:29](sim/protocol.ts#L29) | `CastMsg` — `{ cardId, position }`. É a única remoção real do pivot: 7 linhas |
+| Captura WASD + mouse em `src/net/OnlineMatch.ts` | Mão de 4 cartas + barra de mana + clique no chão para plantar |
+| Câmera seguindo o mago local | Câmera fixa mostrando a arena inteira |
+| `World.addMage(id, team, element, isBot)` posiciona por slot de spawn | Ganha variante que aceita posição (a invocação) |
+| `lives` + `respawn` + `checkRoundEnd` por vidas | Estruturas + timer de 3 min |
+| `teamSize` no `create_room` | Fica; 1v1 é `teamSize: 1` |
+
+### Novo — o custo real do pivot
+
+1. **Entidade `Structure`** (Núcleo, Torre) em `sim/entities.ts` + tratamento em `World.step` e no snapshot. Alvo estático que atira.
+2. **Sistema de mana** — servidor autoritativo, por jogador. Simples, mas é o coração do balance.
+3. **Baralho / mão / ciclo** — estado por jogador na `Session`, e a UI correspondente.
+4. **Sistema de status effects genérico.** `sim/entities.ts` hoje tem `stunTimer`, `slowFactor`/`slowTimer`, `immunityTimer` — precedente, não sistema. Buffs, maldições, DoT, escudo e dispel pedem um modelo com stacking e duração.
+5. **Catálogo de cartas** — a §9 virando dado, no mesmo formato de `elements.ts`.
+6. **Mapa de estruturas** — JSON novo em `public/maps/`.
+7. **Balance IA-vs-IA** — o item mais subestimado. Ver §14.
+
+### Ordem sugerida de implementação
+
+1. `Structure` na sim + condição de vitória por estrutura (destrava tudo o mais)
+2. Sistema de mana no servidor + `CastMsg` no protocolo
+3. Invocação: `addMageAt(position)` + validação de zona de invocação
+4. Catálogo de cartas como dado, começando só com unidades
+5. Ajustes do `Brain` da §11 (alvo estrutural, avanço, papel)
+6. UI: mão, mana, preview da próxima carta
+7. Status effects genéricos + os 4 feitiços
+8. Harness de simulação em massa (§14) — e só então falar em balance
+
+---
+
+## 14. Balance IA-vs-IA — o risco técnico restante
+
+O `Brain` foi afinado contra um humano que erra e desvia. **Espelho de IA boa tende
+a empatar ou virar coinflip**, e num jogo onde o jogador não controla a unidade,
+isso apareceria como "minhas decisões não importam" — o mesmo sintoma do risco de
+agência, por outra causa.
+
+E foi exatamente o que a primeira medição encontrou. O harness existe
+(`sim/agency.test.ts`), e o que ele revelou até agora:
+
+1. **Empate era o resultado padrão.** Com estruturas a 1400/900, `hard` vs
+   `easy` empatava em **6/6** partidas no timeout da morte súbita. Ninguém
+   conseguia derrubar torre contra defesa. Corrigido baixando estrutura para
+   900/400 e o dano de torre de 14 para 10.
+2. **A dificuldade estava invertida.** `hard` perdia **0/6** para `easy`, porque
+   guardava 3 de mana de reserva e acabava invocando *menos*. Os dois lados são
+   limitados por mana, não por velocidade de decisão — então cadência quase não
+   separa nada (30 casts contra 27 numa partida inteira). A dificuldade foi
+   movida para eixos que a economia não anula: **responder a ameaça** e
+   **escolher a carta certa para a situação**.
+3. **Estado atual: hard 2, easy 1, 3 empates.** Melhor que invertido, longe de
+   resolvido. Empate ainda é o resultado mais comum entre dois comandantes.
+
+Próximos passos do balance (§13, passo 8):
+
+- Rodar milhares de partidas carta-contra-carta, não seis, e reportar taxa de vitória e mana trocada.
+- **Critério de saúde: nenhuma carta acima de ~55% de vitória contra o pool**, e nenhum par carta-contra-carta em 100/0.
+- **Critério novo, que a medição tornou óbvio: taxa de empate precisa cair muito.** Um jogo em que dois jogadores bons empatam metade das vezes não é jogável.
+- Rodar em CI com seed fixa, tratando desvio como regressão.
+
+---
+
+## 15. Non-goals (v1)
+
+- Controle direto ou ordens táticas a uma unidade invocada
+- Mira manual, WASD, câmera que segue unidade
+- Modo assíncrono / luta contra snapshot de roster (ver §16.1)
+- 2v2, torneios, clãs
+- Progressão de poder, gacha, baús
+- Lanes com creeps automáticos de MOBA
+
+---
+
+## 16. Perguntas em aberto
+
+1. **Assíncrono depois?** Real-time foi escolhido e é o que está sendo construído. Assíncrono continua possível *sem retrabalho*: a sim é determinística e headless, então "lutar contra o baralho gravado de outro jogador" é rodar o mesmo `World` sem socket. Decisão adiada de propósito, não esquecida.
+2. **Duas Torres ou uma?** A §5 propõe duas + imunidade do Núcleo. Duas dão forma de flanco à partida; uma é mais simples de balancear. Confirmar antes de desenhar o mapa.
+3. **Treze cartas bastam para o v1?** Baralho de 8 num pool de 13 deixa pouca variedade de composição — e a regra de construção da §7 (mín. 1 de cada papel, máx. 3 feitiços) aperta ainda mais. Pode ser o certo para testar, e o errado para reter jogador.
+4. **O Suporte é legível?** É o papel com maior risco de o jogador não perceber o efeito. Pode exigir feedback visual mais forte que os outros dois.
+5. **Practice mode.** Continua congelado em `src/systems/**` com o modelo antigo, e não migra neste pivot. Ele agora descreve um jogo que não existe mais — decidir se vira tutorial do modelo novo ou se sai.
+
+---
+
+## 17. Estado do repo relevante a este GDD
+
+- `sim/**` e `server/src/**` estão na working tree, **não commitados**, e são a fundação deste design. Não deletar.
+- A suíte é uma só: `npm run typecheck && npm run lint && npm test && npm run build` (208 testes verdes na última verificação).
+- Containers Docker estão desatualizados; rebuildar antes de testar via `:8080`.
+- `AGENTS.md` marca `sim/**` como zona de coordenação obrigatória — este GDD toca essa zona inteira.

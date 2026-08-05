@@ -1,3 +1,12 @@
+> # ⚠️ DOCUMENTO HISTÓRICO — NÃO EDITAR
+>
+> Planejou o online do produto **anterior** (brawl de controle direto, salas NxN,
+> input a ~60 Hz). O transporte, o lobby e a sim autoritativa que ele descreve
+> **continuam válidos e em uso** — o que caducou é o modelo de jogo em cima deles.
+>
+> Documento vigente: **`GDD.md`**. Em particular, a §13 dele mapeia o que deste
+> plano sobrevive (tudo, menos `InputMsg`).
+
 # Mage Craft — Online Multiplayer Plan (server-authoritative, NxN team rooms)
 
 > An architecture + effort estimate for making Mage Craft playable **online**,

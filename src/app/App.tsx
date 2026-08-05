@@ -777,7 +777,7 @@ function RoomBrowserScreen(props: {
           <h2 class={styles.panelTitle}>Open halls</h2>
           <p class={styles.panelHint}>
             {props.online
-              ? 'Live rooms from the Go server. Join a live match as spectator.'
+              ? 'Live rooms from the game server. Join a live match as spectator.'
               : 'Server offline — showing local demos. Start mageserver on :8080.'}
           </p>
           {props.netError ? <p class={styles.panelHint}>{props.netError}</p> : null}
@@ -1033,7 +1033,7 @@ function RoomLobbyScreen(props: {
       </div>
       <p class={styles.panelHint} style={{ marginTop: 10 }}>
         {room.online
-          ? 'Online: Start runs the Go server match. Late joiners spectate until rematch.'
+          ? 'Online: Start runs the authoritative server match. Late joiners spectate until rematch.'
           : 'Local fallback — Start opens solo practice.'}
       </p>
     </div>

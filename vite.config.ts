@@ -16,7 +16,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    // `sim/` is the simulation shared by client and server; `server/` is the
+    // Node game server. Both are covered by the same run as the client.
+    include: ['src/**/*.test.ts', 'sim/**/*.test.ts', 'server/**/*.test.ts'],
     globals: true,
   },
 });

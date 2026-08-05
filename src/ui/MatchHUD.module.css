@@ -1,0 +1,284 @@
+.top {
+  align-items: flex-start;
+  display: flex;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  gap: 12px;
+  justify-content: center;
+  left: 50%;
+  position: absolute;
+  top: 10px;
+  transform: translateX(-50%);
+  width: min(760px, calc(100% - 24px));
+}
+
+/* The frosted panel every readout sits on, matching HUD.module.css. */
+.side,
+.clockBox,
+.nextBox,
+.manaBox {
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.82);
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 16px;
+  box-shadow: 0 6px 16px rgba(28, 50, 74, 0.18);
+  color: #263343;
+}
+
+.side {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 7px 12px;
+}
+
+.sideRight {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.sideLabel {
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.coreMeter {
+  background: rgba(37, 56, 76, 0.16);
+  border-radius: 999px;
+  height: 15px;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+}
+
+.coreFill {
+  border-radius: inherit;
+  height: 100%;
+  transition: width 120ms linear;
+  width: 0;
+}
+
+.coreText {
+  color: #14212e;
+  font-size: 10px;
+  font-weight: 900;
+  inset: 0;
+  line-height: 15px;
+  position: absolute;
+  text-align: center;
+}
+
+.towers {
+  color: #3d566f;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 2px;
+}
+
+.clockBox {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  padding: 6px 14px;
+}
+
+.clock {
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.phase {
+  color: #6b7f94;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.phaseUrgent {
+  color: #d8452f;
+}
+
+/* ---- bottom command bar ------------------------------------------------- */
+
+.bar {
+  align-items: center;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  gap: 6px;
+  left: 50%;
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.bar[hidden] {
+  display: none;
+}
+
+.hint {
+  background: rgba(20, 33, 46, 0.62);
+  border-radius: 999px;
+  color: #f2f7fc;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 12px;
+}
+
+.barRow {
+  align-items: stretch;
+  display: flex;
+  gap: 10px;
+}
+
+.nextBox {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  justify-content: center;
+  padding: 8px 10px;
+  width: 96px;
+}
+
+.nextLabel {
+  color: #6b7f94;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.nextName {
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.hand {
+  display: flex;
+  gap: 8px;
+}
+
+.card {
+  align-items: flex-start;
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.9);
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  border-radius: 14px;
+  box-shadow: 0 6px 16px rgba(28, 50, 74, 0.22);
+  color: #263343;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 2px;
+  padding: 8px 10px 6px;
+  position: relative;
+  text-align: left;
+  transition: transform 90ms ease, box-shadow 90ms ease, border-color 90ms ease;
+  width: 104px;
+}
+
+.card:hover:not(:disabled) {
+  transform: translateY(-3px);
+}
+
+.card[hidden] {
+  display: none;
+}
+
+.cardSelected {
+  border-color: #c68a12;
+  box-shadow: 0 0 0 3px rgba(198, 138, 18, 0.35), 0 8px 18px rgba(28, 50, 74, 0.26);
+  transform: translateY(-4px);
+}
+
+.cardBroke {
+  cursor: not-allowed;
+  filter: grayscale(0.65);
+  opacity: 0.55;
+}
+
+.cardCost {
+  background: #3d7bb8;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 20px;
+  text-align: center;
+  width: 20px;
+}
+
+.cardName {
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.cardRole {
+  color: #6b7f94;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.cardKey {
+  color: #9bb0c4;
+  font-size: 10px;
+  font-weight: 900;
+  position: absolute;
+  right: 8px;
+  top: 6px;
+}
+
+.manaBox {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: center;
+  padding: 8px 10px;
+  width: 74px;
+}
+
+.manaMeter {
+  background: rgba(37, 56, 76, 0.16);
+  border-radius: 999px;
+  height: 12px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.manaFill {
+  background: linear-gradient(90deg, #4aa3ff, #9b6bff);
+  border-radius: inherit;
+  height: 100%;
+  transition: width 120ms linear;
+  width: 0;
+}
+
+.manaText {
+  font-size: 12px;
+  font-weight: 900;
+}
+
+@media (max-width: 620px) {
+  .top {
+    gap: 6px;
+    top: 8px;
+  }
+
+  .card {
+    padding: 6px 8px;
+    width: 84px;
+  }
+
+  .nextBox {
+    display: none;
+  }
+}

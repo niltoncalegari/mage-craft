@@ -109,6 +109,25 @@ export interface Puddle {
   remaining: number;
 }
 
+export type StructureKind = 'core' | 'tower';
+
+/**
+ * A Core or a Tower — what a siege match is fought over (GDD §5). Online-only,
+ * like {@link Puddle}: mirrored from the server snapshot, never simulated here.
+ */
+export interface Structure {
+  readonly id: EntityId;
+  team: Team;
+  kind: StructureKind;
+  position: Vector2;
+  radius: number;
+  health: number;
+  maxHealth: number;
+  alive: boolean;
+  /** A Core is immune while its own Towers still stand (GDD §5). */
+  invulnerable: boolean;
+}
+
 /**
  * A static arena obstacle. `collision` blocks movement/projectiles; `cover`
  * (when present) also blocks line of sight (design §14, §17).
