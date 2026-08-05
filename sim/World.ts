@@ -44,6 +44,7 @@ import {
 } from './config';
 import { defaultArena } from './defaultMap';
 import { elementDefFor, type ElementDef, type ElementId } from './elements';
+import { PathGrid } from './PathGrid';
 import {
   emptyInput,
   opponentOf,
@@ -58,7 +59,7 @@ import {
 } from './entities';
 import { type Role } from './roles';
 import { spellFor, type SpellCard } from './spells';
-import { Vec2 } from './Vec2';
+import { clamp, Vec2 } from './Vec2';
 
 /** Why a `castSpell()` call was rejected — surfaced to the client for UI feedback. */
 export type CastRejection = 'unknown_card' | 'not_enough_mana' | 'out_of_bounds' | 'match_over';
@@ -83,6 +84,9 @@ export class World {
   private readonly teamCounts = new Map<Team, number>();
   private readonly mana = new Map<Team, number>();
   private readonly manaAccum = new Map<Team, number>();
+
+  private cachedPathGrid: PathGrid | null = null;
+  private cachedPathBlockers = -1;
 
   /** Pass an arena to play on a specific map; omit for the default one. */
   constructor(readonly arena: Arena = defaultArena()) {
@@ -185,7 +189,7 @@ export class World {
         rosterId: entry.id,
         moveSpeed: entry.moveSpeed,
         maxHealth: entry.health,
-        position: this.arena.spawnFor(team, idx),
+        position: this.findClearSpawn(team, idx),
         isBot: true,
       });
     });
@@ -228,7 +232,7 @@ export class World {
       rosterId: null,
       moveSpeed: MOVE_SPEED,
       maxHealth: MAX_HEALTH,
-      position: this.arena.spawnFor(team, idx),
+      position: this.findClearSpawn(team, idx),
       isBot,
     });
   }
@@ -389,6 +393,9 @@ export class World {
     for (const m of this.mages.values()) this.updateMage(m, dt);
     this.applySupportHealing(dt);
     this.separateMages();
+    // Last word on where a body may stand: spacing pushes are allowed to shove
+    // a mage into a wall, this is what takes it back out.
+    this.resolvePenetrations();
     this.updateStructures(dt);
     this.updateProjectiles(dt);
     this.updatePuddles(dt);
@@ -553,26 +560,156 @@ export class World {
    */
   private resolveMove(from: Vec2, step: Vec2): Vec2 {
     const combined = this.arena.clamp(from.add(step), MAGE_RADIUS);
-    if (!this.blockedAt(combined)) return combined;
+    if (!this.isBlocked(combined)) return combined;
 
     if (step.x !== 0) {
       const alongX = this.arena.clamp(new Vec2(from.x + step.x, from.y), MAGE_RADIUS);
-      if (!this.blockedAt(alongX)) return alongX;
+      if (!this.isBlocked(alongX)) return alongX;
     }
     if (step.y !== 0) {
       const alongY = this.arena.clamp(new Vec2(from.x, from.y + step.y), MAGE_RADIUS);
-      if (!this.blockedAt(alongY)) return alongY;
+      if (!this.isBlocked(alongY)) return alongY;
     }
     return from;
   }
 
-  /** Obstacles plus live structures — a Tower is a solid body, not decoration. */
-  private blockedAt(p: Vec2): boolean {
-    if (this.arena.blocksMovementAt(p, MAGE_RADIUS)) return true;
+  /**
+   * Obstacles plus live structures — a Tower is a solid body, not decoration.
+   *
+   * Public because the bot AI and the path planner must ask *this* question and
+   * not `arena.blocksMovementAt`: a Brain that only knew about obstacles walked
+   * its squad into the enemy Core and the physics pinned it there.
+   */
+  isBlocked(p: Vec2, radius = MAGE_RADIUS): boolean {
+    if (this.arena.blocksMovementAt(p, radius)) return true;
     for (const s of this.structures.values()) {
-      if (s.alive && s.position.distanceTo(p) < s.radius + MAGE_RADIUS) return true;
+      if (s.alive && s.position.distanceTo(p) < s.radius + radius) return true;
     }
     return false;
+  }
+
+  /**
+   * Whether a body walking the straight line from `from` to `to` would hit
+   * anything — the sim's `MovementSystem.isMovementPathBlocked`.
+   *
+   * This is the question the AI has to ask before committing to a direction. A
+   * point probe one step ahead (what the bot used to do) only notices a wall
+   * when it is already against it, which is exactly how a squad ends up
+   * grinding along a Tower instead of walking around it.
+   *
+   * Sampled rather than solved analytically, like `Arena.hasLineOfSight`: the
+   * predicate is already inflated by a body radius, so the narrowest blocking
+   * band on any map is far wider than the step below.
+   */
+  isBlockedSegment(from: Vec2, to: Vec2): boolean {
+    const delta = to.sub(from);
+    const dist = delta.length();
+    if (dist < 1e-9) return this.isBlocked(from);
+
+    const steps = Math.min(SEGMENT_SAMPLE_LIMIT, Math.ceil(dist / SEGMENT_SAMPLE_STEP));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      if (this.isBlocked(new Vec2(from.x + delta.x * t, from.y + delta.y * t))) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The shared A* grid, built lazily off `isBlocked` and rebuilt when the set of
+   * solid structures changes — a fallen Tower opens a route that was closed a
+   * tick earlier. Keyed on the live count rather than a dirty flag so that
+   * killing a structure by hand (tests, admin tooling) invalidates it too.
+   */
+  pathGrid(): PathGrid {
+    let blockers = 0;
+    for (const s of this.structures.values()) if (s.alive) blockers++;
+
+    if (!this.cachedPathGrid || blockers !== this.cachedPathBlockers) {
+      // Planned with a margin over the body radius. A cell whose *centre* is
+      // just barely clear can still have a sliver of blocker across the line to
+      // the next centre, and a mage told to walk that line pushes into the
+      // sliver forever. The margin buys back the error the grid introduces.
+      this.cachedPathGrid = new PathGrid(this.arena, (p) =>
+        this.isBlocked(p, MAGE_RADIUS + PATH_CLEARANCE),
+      );
+      this.cachedPathBlockers = blockers;
+    }
+    return this.cachedPathGrid;
+  }
+
+  /**
+   * Rejecting a blocked move is not enough on its own: a mage can end up
+   * *inside* a blocker anyway — spawned on top of a Tower, shoved in by
+   * knockback or by ally separation — and `resolveMove` would then refuse every
+   * direction, freezing it there for the rest of the match. This is the escape
+   * hatch practice mode has always had (MovementSystem's obstacle pushout).
+   */
+  private resolvePenetrations(): void {
+    for (const id of sortedMageIds(this)) {
+      const m = this.mages.get(id);
+      if (m?.alive) m.position = this.freePositionNear(m.position);
+    }
+  }
+
+  /** `p` itself when it is clear, otherwise the closest point that is. */
+  private freePositionNear(p: Vec2): Vec2 {
+    let out = p;
+    // Several passes because pushing out of one blocker can push into the next
+    // (the gap between a Tower and a fence is narrower than a mage).
+    for (let i = 0; i < PUSHOUT_PASSES; i++) {
+      const push = this.deepestPushout(out);
+      if (!push) return out;
+      out = this.arena.clamp(out.add(push), MAGE_RADIUS);
+    }
+
+    if (!this.isBlocked(out)) return out;
+    // Wedged with no local way out (a corner between a structure and the wall);
+    // fall back to the planner's nearest walkable cell.
+    const free = this.pathGrid().nearestFree(out);
+    return free ? this.arena.clamp(free, MAGE_RADIUS) : out;
+  }
+
+  /**
+   * The push that clears the blocker `p` is buried deepest in, or null when it
+   * overlaps nothing. Deepest-first keeps the correction stable: resolving the
+   * shallowest overlap can slide a mage further into the one that matters.
+   */
+  private deepestPushout(p: Vec2): Vec2 | null {
+    let best: Vec2 | null = null;
+    let bestLengthSq = 0;
+
+    const consider = (push: Vec2 | null): void => {
+      if (!push) return;
+      const l = push.lengthSq();
+      if (l > bestLengthSq) {
+        bestLengthSq = l;
+        best = push;
+      }
+    };
+
+    for (const o of this.arena.obstacles) {
+      if (!o.blocksMovement) continue;
+      consider(
+        o.isRect
+          ? rectPushout(p, MAGE_RADIUS, o.position, o.halfW, o.halfH)
+          : circlePushout(p, MAGE_RADIUS, o.position, o.radius),
+      );
+    }
+    for (const id of sortedIds(this.structures.keys())) {
+      const s = this.structures.get(id);
+      if (!s?.alive) continue;
+      consider(circlePushout(p, MAGE_RADIUS, s.position, s.radius));
+    }
+    return best;
+  }
+
+  /**
+   * The team's `idx`-th spawn, moved off any structure standing on it. The map
+   * only knows about obstacles, so a spawn point can be perfectly legal on disk
+   * and still sit inside a Core.
+   */
+  findClearSpawn(team: Team, idx: number): Vec2 {
+    return this.freePositionNear(this.arena.spawnFor(team, idx));
   }
 
   /* ---- Supports (GDD §9) --------------------------------------------------- */
@@ -918,7 +1055,9 @@ export class World {
   }
 
   private respawn(m: Mage): void {
-    m.position = this.arena.spawnFor(m.team, 0);
+    // Its own slot, not slot 0: a whole squad wiped at once used to come back
+    // stacked on one point, where spacing then shoved them into the back wall.
+    m.position = this.findClearSpawn(m.team, this.squadSlotOf(m));
     m.velocity = Vec2.zero;
     m.health = m.maxHealth;
     m.alive = true;
@@ -983,6 +1122,18 @@ export class World {
     }
   }
 
+  /** A mage's position among its team, in id order — its spawn slot. */
+  private squadSlotOf(m: Mage): number {
+    let slot = 0;
+    for (const id of sortedMageIds(this)) {
+      const other = this.mages.get(id);
+      if (!other || other.team !== m.team) continue;
+      if (other === m) return slot;
+      slot++;
+    }
+    return 0;
+  }
+
   private coreHealth(team: Team): number {
     let total = 0;
     for (const s of this.structures.values()) {
@@ -995,6 +1146,74 @@ export class World {
     this.roundOver = true;
     this.winner = winner;
   }
+}
+
+/** How many times `freePositionNear` re-checks after pushing out of a blocker. */
+const PUSHOUT_PASSES = 4;
+/**
+ * Margin the path planner keeps beyond the body radius, so a planned route has
+ * room to actually be walked (see `pathGrid`). Half a cell.
+ */
+const PATH_CLEARANCE = 0.2;
+/** Spacing of `isBlockedSegment`'s samples, and the ceiling on how many it takes. */
+const SEGMENT_SAMPLE_STEP = MAGE_RADIUS;
+const SEGMENT_SAMPLE_LIMIT = 96;
+/**
+ * Overshoot on every pushout. Touching exactly counts as overlapping for
+ * `Arena.blocksMovementAt`, so landing on the surface would leave the mage
+ * "blocked" and the pushout would fight itself forever.
+ */
+const PUSHOUT_SKIN = 1e-3;
+
+/**
+ * The shortest push that takes a circle out of another circle, or null when
+ * they are already apart. Mirrors the client's computeCircleCirclePushout.
+ */
+function circlePushout(p: Vec2, radius: number, centre: Vec2, otherRadius: number): Vec2 | null {
+  const delta = p.sub(centre);
+  const min = radius + otherRadius;
+  const distSq = delta.lengthSq();
+  if (distSq >= min * min) return null;
+  // Exactly concentric: no direction is implied, so pick one deterministically.
+  if (distSq <= 1e-12) return new Vec2(min + PUSHOUT_SKIN, 0);
+
+  const dist = Math.sqrt(distSq);
+  return delta.scale((min - dist + PUSHOUT_SKIN) / dist);
+}
+
+/** The same for an axis-aligned rectangle (client: computeCircleRectPushout). */
+function rectPushout(
+  p: Vec2,
+  radius: number,
+  centre: Vec2,
+  halfW: number,
+  halfH: number,
+): Vec2 | null {
+  const closestX = clamp(p.x, centre.x - halfW, centre.x + halfW);
+  const closestY = clamp(p.y, centre.y - halfH, centre.y + halfH);
+  const dx = p.x - closestX;
+  const dy = p.y - closestY;
+  const distSq = dx * dx + dy * dy;
+
+  if (distSq > 1e-12) {
+    if (distSq >= radius * radius) return null;
+    const dist = Math.sqrt(distSq);
+    const push = radius - dist + PUSHOUT_SKIN;
+    return new Vec2((dx / dist) * push, (dy / dist) * push);
+  }
+
+  // Centre inside the rectangle — leave through the nearest face.
+  const left = p.x - (centre.x - halfW);
+  const right = centre.x + halfW - p.x;
+  const bottom = p.y - (centre.y - halfH);
+  const top = centre.y + halfH - p.y;
+  const min = Math.min(left, right, bottom, top);
+  const out = radius + min + PUSHOUT_SKIN;
+
+  if (min === left) return new Vec2(-out, 0);
+  if (min === right) return new Vec2(out, 0);
+  if (min === bottom) return new Vec2(0, -out);
+  return new Vec2(0, out);
 }
 
 function sortedIds(ids: Iterable<string>): string[] {

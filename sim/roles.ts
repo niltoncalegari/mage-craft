@@ -13,7 +13,12 @@ export type Role = 'tank' | 'damage' | 'support';
 export interface RoleBehavior {
   /** Supports never throw; they win by multiplying whoever stands with them. */
   readonly attacks: boolean;
-  /** How close the unit closes on its target before holding position. */
+  /**
+   * How close the unit closes on its target before holding position. Measured
+   * from a structure's *surface* when sieging, so it must stay above
+   * `MAGE_RADIUS` — a smaller value asks the bot to stand inside the thing it
+   * is hitting, and the physics then pins it there.
+   */
   readonly advanceStopDistance: number;
   /** Tanks walk past skirmishes and go for the structure — that's their job. */
   readonly prefersStructures: boolean;
@@ -28,7 +33,9 @@ export interface RoleBehavior {
 export const ROLE_BEHAVIOR: Readonly<Record<Role, RoleBehavior>> = {
   tank: {
     attacks: true,
-    advanceStopDistance: 2.0,
+    // 2.0 was below CORE_RADIUS + MAGE_RADIUS (2.1): a tank's own stopping
+    // point sat inside the Core, so it walked in and stuck.
+    advanceStopDistance: 2.8,
     prefersStructures: true,
     escorts: false,
     seeksCover: false,

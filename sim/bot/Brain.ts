@@ -33,6 +33,11 @@ export const AIM_LEAD_TIME = 0.18;
 export const AIM_ERROR_NEAR = 0.1;
 export const AIM_ERROR_FAR = 0.46;
 export const ADVANCE_STOP_DISTANCE = 6.5;
+/**
+ * How far a mage will walk to pick a fight while there is a structure to push.
+ * No AISystem counterpart — practice mode has no objective to walk away from.
+ */
+export const PURSUE_RANGE = ENGAGE_RANGE * 2;
 export const MOVE_STEP = 4.0;
 export const RETREAT_DISTANCE = 5.0;
 export const DODGE_DURATION = 0.22;
@@ -42,6 +47,20 @@ export const DODGE_RADIUS = 3.5;
 export const DECISION_INTERVAL = 0.25;
 /** config.ts AI.retreatHealthFraction */
 export const RETREAT_HEALTH_FRACTION = 0.3;
+
+/** How far a destination may drift before a cached path is re-planned. */
+const PATH_REPLAN_DISTANCE = 1.5;
+/** MovementSystem's WAYPOINT_THRESHOLD: a waypoint this close is behind you. */
+const WAYPOINT_REACHED = MAGE_RADIUS * 0.75;
+/** MovementSystem's ARRIVAL_THRESHOLD: this close to the destination is there. */
+const ARRIVAL_THRESHOLD = MAGE_RADIUS * 0.2;
+/** AISystem's STRAFE_DISTANCE — how far a sidestep commits to. */
+const STRAFE_DISTANCE = 3;
+/**
+ * How much of `advanceStopDistance` a bot will let a target close before it
+ * gives ground. The band around the role's preferred range that it holds.
+ */
+const KITE_BAND = 0.25;
 
 const EPSILON = 1e-9;
 
@@ -113,6 +132,18 @@ interface BotState {
    * every tick (the client holds a dodge move target the same way).
    */
   dodgeDir: Vec2;
+  /**
+   * The route currently being walked around a blocker, and how far along it the
+   * bot is. Cached so a squad does not run A* per bot per tick; dropped as soon
+   * as the destination moves, the action changes or the line ahead comes clear.
+   */
+  path: Vec2[] | null;
+  pathIndex: number;
+  pathGoal: Vec2 | null;
+  /** Where the bot stood when the route was planned — routes go stale as it moves. */
+  pathFrom: Vec2 | null;
+  /** Where an idle bot decided to go, held until it gets there. */
+  wanderTarget: Vec2 | null;
 }
 
 interface Perception {
@@ -154,6 +185,11 @@ export class Brain {
         dodgeTimer: 0,
         last: { action: 'wander', targetId: '' },
         dodgeDir: Vec2.zero,
+        path: null,
+        pathIndex: 0,
+        pathGoal: null,
+        pathFrom: null,
+        wanderTarget: null,
       };
       this.states.set(id, s);
     }
@@ -200,7 +236,11 @@ export class Brain {
 
     st.decisionTimer -= dt;
     if (st.decisionTimer <= 0) {
-      st.last = this.chooseDecision(bot, p, tune);
+      const next = this.chooseDecision(bot, p, tune);
+      // A route planned to reach cover is worthless once the bot has decided to
+      // charge the tower instead.
+      if (next.action !== st.last.action) this.clearPath(st);
+      st.last = next;
       st.decisionTimer = DECISION_INTERVAL * tune.decisionIntervalScale;
     }
 
@@ -231,7 +271,17 @@ export class Brain {
         nearestDistSq = distSq;
         nearest = m;
       }
-      if (!exposed && w.arena.hasLineOfSight(m.position, bot.position)) exposed = true;
+      // "Exposed" means someone close enough to punish you can see you. The
+      // client can skip the range test — its whole arena is inside throwing
+      // distance — but here an enemy defending its own Core, 30 units away,
+      // would otherwise pin a squad in cover for the whole match.
+      if (
+        !exposed &&
+        distSq <= PURSUE_RANGE * PURSUE_RANGE &&
+        w.arena.hasLineOfSight(m.position, bot.position)
+      ) {
+        exposed = true;
+      }
       if (m.id === focusId) {
         focusTarget = m;
         focusDistSq = distSq;
@@ -350,7 +400,12 @@ export class Brain {
 
     let advance = 0;
     if (hasTarget) {
-      if (!inRange) advance = 0.62;
+      // `perceive` picks the nearest enemy anywhere on the map, which on a
+      // practice arena is fine and on a siege map is not: chasing someone
+      // defending their own Core, half an arena away, is abandoning the game.
+      // Past PURSUE_RANGE the objective outscores the chase (0.35 vs 0.2).
+      const worthChasing = !p.objective || p.distance <= PURSUE_RANGE;
+      if (!inRange) advance = worthChasing ? 0.62 : 0.2;
       else if (p.hasLos) advance = 0.18;
       else advance = 0.55;
     }
@@ -414,6 +469,13 @@ export class Brain {
       return this.siege(w, bot, p.objective, p.objectiveDistance);
     }
 
+    // A support has no attack, so "walk at the enemy" is never its plan: it
+    // falls in behind whoever is pushing (GDD §8). Cover and retreat still
+    // apply — a support that is being shot at should still get out of the way.
+    if (!ROLE_BEHAVIOR[bot.role].attacks && (d.action === 'advance' || d.action === 'attack')) {
+      return { move: this.escort(w, bot), aim: null };
+    }
+
     let target = p.target;
     if (d.targetId) {
       const t = w.mage(d.targetId);
@@ -433,18 +495,24 @@ export class Brain {
         const distance = bot.position.distanceTo(target.position);
         if (bot.throwCooldown <= 0 && distance <= ENGAGE_RANGE) {
           if (w.arena.hasLineOfSight(bot.position, target.position)) {
-            return { move: Vec2.zero, aim: this.attackAim(target, distance, tune) };
+            return {
+              move: this.footwork(w, bot, target, distance),
+              aim: this.attackAim(target, distance, tune),
+            };
           }
           const peek = this.findPeekSpot(w, bot, target);
-          if (peek) return { move: dirTo(bot.position, peek), aim: null };
+          if (peek) return { move: this.steerTo(w, bot, peek), aim: null };
         }
         const cover = this.findCoverSpot(w, bot, target);
-        if (cover) return { move: dirTo(bot.position, cover), aim: null };
-        return { move: strafe(bot, target), aim: null };
+        if (cover) return { move: this.steerTo(w, bot, cover), aim: null };
+        return { move: this.sidestep(w, bot, target), aim: null };
       }
 
       case 'attack':
-        return { move: Vec2.zero, aim: this.attackAim(target, p.distance, tune) };
+        return {
+          move: this.footwork(w, bot, target, p.distance),
+          aim: this.attackAim(target, p.distance, tune),
+        };
 
       case 'advance':
         return { move: this.advance(w, bot, target), aim: null };
@@ -476,12 +544,24 @@ export class Brain {
       return { move: Vec2.zero, aim: objective.position };
     }
 
-    const toward = dirTo(bot.position, objective.position);
-    if (toward.lengthSq() === 0) return { move: Vec2.zero, aim: null };
+    // Arrived: `distance` is measured to the structure's surface, and the role's
+    // stop distance clears a body radius, so this is as close as it should get.
+    if (distance <= role.advanceStopDistance) return { move: Vec2.zero, aim: null };
 
-    const step = Math.min(MOVE_STEP, Math.max(0.5, distance - role.advanceStopDistance));
-    const dest = bot.position.add(toward.scale(step)).add(allySeparation(w, bot));
-    return { move: this.steerTo(w, bot, dest), aim: null };
+    /*
+     * The goal is the structure itself, not a stand-off point beside it.
+     *
+     * A stand-off point derived from `bot.position` moves whenever the bot
+     * does, so a mage forced off the straight line — around a fence, past its
+     * own Tower — is chasing a goal that swings around the structure as it
+     * goes, and it orbits instead of arriving. Anchoring on the structure keeps
+     * the goal still; the stop check above is what keeps the mage out of it,
+     * and the planner snaps a blocked goal to the nearest free cell anyway.
+     */
+    return {
+      move: this.steerTo(w, bot, objective.position.add(allySeparation(w, bot))),
+      aim: null,
+    };
   }
 
   /** Supports have no attack, so they trail the ally pushing hardest (GDD §8). */
@@ -491,11 +571,42 @@ export class Brain {
 
     const gap = bot.position.distanceTo(ally.position);
     const keep = ROLE_BEHAVIOR[bot.role].advanceStopDistance;
-    if (gap <= keep) return allySeparation(w, bot);
-    return this.steerTo(w, bot, ally.position);
+    // Close enough: hold station, but let spacing nudge it — through the
+    // planner, so the nudge can't be into a wall.
+    if (gap <= keep) return this.steerTo(w, bot, bot.position.add(allySeparation(w, bot)));
+    return this.steerTo(w, bot, ally.position.add(allySeparation(w, bot)));
   }
 
   /* ---- actions ---------------------------------------------------------- */
+
+  /**
+   * What a mage does with its feet while it is shooting.
+   *
+   * The client throws in a single call, so its AI can afford to plant itself
+   * for the one tick that takes (AISystem.attack drops the move target). Here a
+   * throw is a ~1.2s charge hold, and standing still for all of it is most of
+   * the match — that is the "stops and shoots, no plan" the online bots read
+   * as. So a shooting mage works its role's preferred range instead: back off
+   * when crowded, close when it has drifted out, circle otherwise.
+   */
+  private footwork(w: World, bot: Mage, target: Mage, distance: number): Vec2 {
+    const keep = ROLE_BEHAVIOR[bot.role].advanceStopDistance;
+    const away = bot.position.sub(target.position).normalized();
+    if (away.lengthSq() === 0) return Vec2.zero;
+
+    if (distance < keep * (1 - KITE_BAND)) {
+      return this.steerTo(w, bot, bot.position.add(away.scale(RETREAT_DISTANCE)));
+    }
+    if (distance > keep * (1 + KITE_BAND)) {
+      return this.steerTo(w, bot, target.position.add(away.scale(keep)));
+    }
+    return this.sidestep(w, bot, target);
+  }
+
+  /** A committed sideways step around a target, planned like any other move. */
+  private sidestep(w: World, bot: Mage, target: Mage): Vec2 {
+    return this.steerTo(w, bot, bot.position.add(strafe(bot, target).scale(STRAFE_DISTANCE)));
+  }
 
   /** The point to charge at, or null when the bot declines to throw this tick. */
   private attackAim(target: Mage, distance: number, tune: Tuning): Vec2 | null {
@@ -543,58 +654,144 @@ export class Brain {
 
   private retreat(w: World, bot: Mage, target: Mage): Vec2 {
     const cover = this.findCoverSpot(w, bot, target);
-    if (cover) return dirTo(bot.position, cover);
+    if (cover) return this.steerTo(w, bot, cover);
 
     let away = bot.position.sub(target.position).normalized();
     if (away.lengthSq() === 0) away = new Vec2(1, 0);
     return this.steerTo(w, bot, bot.position.add(away.scale(RETREAT_DISTANCE)));
   }
 
+  /**
+   * Close the gap but stop short, so the bot fights at range rather than
+   * walking into its target's face. How short is the role's business: a tank
+   * closes to 2.8, an archer holds at 6.5 (GDD §8).
+   *
+   * The goal is the target, not AISystem's "MOVE_STEP units further along the
+   * line" — that idiom is safe on the practice maps, where nothing bigger than
+   * a rock is ever in the way, but on the siege map a point four units ahead
+   * lands inside a Tower half the time, and a goal the planner has to snap out
+   * of a blocker is a bot grinding on a wall. Stopping is `footwork`'s job.
+   */
   private advance(w: World, bot: Mage, target: Mage): Vec2 {
-    const toTarget = target.position.sub(bot.position).normalized();
-    if (toTarget.lengthSq() === 0) return this.wander(w, bot);
-
-    // Close the gap but stop short, so the bot fights at range rather than
-    // walking into its target's face. How short is the role's business: a tank
-    // closes to 2.0, an archer holds at 6.5 (GDD §8).
+    const distance = bot.position.distanceTo(target.position);
     const stopAt = ROLE_BEHAVIOR[bot.role].advanceStopDistance;
-    let step = Math.min(
-      MOVE_STEP,
-      Math.max(0, bot.position.distanceTo(target.position) - stopAt),
-    );
-    if (step <= 0) step = MOVE_STEP * 0.5;
+    if (distance <= stopAt) return this.footwork(w, bot, target, distance);
 
-    const dest = bot.position.add(toTarget.scale(step)).add(allySeparation(w, bot));
-    return this.steerTo(w, bot, dest);
-  }
-
-  private wander(w: World, bot: Mage): Vec2 {
-    // Drift toward the middle of the arena when idle, with a random bias, so
-    // bots without a target don't hug a wall.
-    if (bot.position.length() > SPACING) return this.steerTo(w, bot, Vec2.zero);
-    const angle = this.rng.float() * 2 * Math.PI;
-    return new Vec2(Math.cos(angle), Math.sin(angle));
+    return this.steerTo(w, bot, target.position.add(allySeparation(w, bot)));
   }
 
   /**
-   * A unit direction toward `dest`, nudged sideways when the straight line is
-   * blocked. The server has no path planner (the client's MovementSystem does),
-   * so this keeps bots from grinding into obstacles.
+   * Drift toward the middle when idle, then pick somewhere to be — and *hold*
+   * that destination until it is reached (AISystem.wander keeps its move target
+   * the same way). Re-rolling a direction every tick, which is what this used
+   * to do, averages out to standing still and twitching.
    */
-  private steerTo(w: World, bot: Mage, dest: Vec2): Vec2 {
+  private wander(w: World, bot: Mage): Vec2 {
+    const st = this.state(bot.id);
+    if (!st.wanderTarget || bot.position.distanceTo(st.wanderTarget) <= SPACING) {
+      st.wanderTarget =
+        bot.position.length() < SPACING
+          ? new Vec2(
+              (this.rng.float() * 2 - 1) * w.arena.width * 0.25,
+              (this.rng.float() * 2 - 1) * w.arena.height * 0.25,
+            )
+          : Vec2.zero;
+    }
+    return this.steerTo(w, bot, st.wanderTarget);
+  }
+
+  /**
+   * A unit direction toward `dest`: straight there while the way ahead is
+   * clear, otherwise around the blocker on an A* route — the same planning
+   * practice mode's MovementSystem has always done, on the same grid the
+   * physics uses (`World.isBlocked`, obstacles *and* live structures).
+   *
+   * The ±45°/±90° sidestep survives as the last resort for when no route
+   * exists at all, so a bot still shuffles instead of standing still.
+   */
+  private steerTo(w: World, bot: Mage, rawDest: Vec2): Vec2 {
+    const st = this.state(bot.id);
+    // Every destination is clamped into the arena first (AISystem.setMoveTarget
+    // does the same): steering at a point outside the map is steering into the
+    // boundary, where the mage pushes forever and never arrives.
+    const dest = w.arena.clamp(rawDest, MAGE_RADIUS);
     const dir = dirTo(bot.position, dest);
     if (dir.lengthSq() === 0) return Vec2.zero;
+    // Arrived (MovementSystem.ARRIVAL_THRESHOLD). Without this a bot keeps
+    // walking at full tilt at a point it is already standing on.
+    if (bot.position.distanceTo(dest) <= ARRIVAL_THRESHOLD) return Vec2.zero;
 
-    const probe = bot.position.add(dir.scale(MAGE_RADIUS * 2));
-    if (!w.arena.blocksMovementAt(probe, MAGE_RADIUS)) return dir;
+    // The whole segment, not a probe one step ahead: a bot has to know it needs
+    // to go around *before* it is nose-first against the wall.
+    if (!w.isBlockedSegment(bot.position, dest)) {
+      this.clearPath(st);
+      return dir;
+    }
+
+    const waypoint = this.nextWaypoint(w, bot, st, dest);
+    if (waypoint) {
+      // The tail of the route is as close to a walled-off destination as the
+      // map allows (`findPath` snaps a goal inside a blocker). Standing on it
+      // is arriving; pressing on from there is grinding into the blocker.
+      const atRouteEnd = st.path !== null && st.pathIndex === st.path.length - 1;
+      if (atRouteEnd && bot.position.distanceTo(waypoint) <= WAYPOINT_REACHED) return Vec2.zero;
+
+      const toward = dirTo(bot.position, waypoint);
+      if (toward.lengthSq() > 0) return toward;
+    }
 
     for (const angle of [Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2]) {
       const alt = dir.rotate(angle);
-      if (!w.arena.blocksMovementAt(bot.position.add(alt.scale(MAGE_RADIUS * 2)), MAGE_RADIUS)) {
-        return alt;
-      }
+      if (!w.isBlocked(bot.position.add(alt.scale(MAGE_RADIUS * 2)))) return alt;
     }
     return dir;
+  }
+
+  /**
+   * The next point on the cached route to `dest`, re-planning when the goal has
+   * moved. Null means the planner found nothing at all.
+   *
+   * Reached waypoints are skipped but the last one never is (MovementSystem's
+   * rule): the tail of the route *is* the destination, and dropping it would
+   * hand the bot back to the straight line it could not walk.
+   */
+  private nextWaypoint(w: World, bot: Mage, st: BotState, dest: Vec2): Vec2 | null {
+    // Re-plan when the goal moves *or* when the bot has walked far enough that
+    // the route no longer starts where it is standing. Without the second test
+    // a bot with a fixed goal — a Tower never moves — plans once from its spawn
+    // and then follows that one stale route to its end and stops there.
+    const stale =
+      !st.path ||
+      !st.pathGoal ||
+      !st.pathFrom ||
+      st.pathGoal.distanceTo(dest) > PATH_REPLAN_DISTANCE ||
+      st.pathFrom.distanceTo(bot.position) > PATH_REPLAN_DISTANCE;
+
+    if (stale) {
+      const path = w.pathGrid().findPath(bot.position, dest);
+      st.path = path && path.length > 0 ? path : null;
+      st.pathIndex = 0;
+      st.pathGoal = dest;
+      st.pathFrom = bot.position;
+    }
+
+    const path = st.path;
+    if (!path) return null;
+
+    while (
+      st.pathIndex < path.length - 1 &&
+      bot.position.distanceTo(path[st.pathIndex]) <= WAYPOINT_REACHED
+    ) {
+      st.pathIndex++;
+    }
+    return path[st.pathIndex];
+  }
+
+  private clearPath(st: BotState): void {
+    st.path = null;
+    st.pathIndex = 0;
+    st.pathGoal = null;
+    st.pathFrom = null;
   }
 
   /* ---- cover ------------------------------------------------------------ */
@@ -617,9 +814,9 @@ export class Brain {
       const offset = Math.max(o.radius, o.halfW, o.halfH) + MAGE_RADIUS + 0.25;
       const spot = o.position.add(away.scale(offset));
 
-      if (!w.arena.contains(spot, MAGE_RADIUS) || w.arena.blocksMovementAt(spot, MAGE_RADIUS)) {
-        continue;
-      }
+      // Structures count as solid here too — cover behind a rock that happens
+      // to sit against a Tower is not somewhere a mage can actually stand.
+      if (!w.arena.contains(spot, MAGE_RADIUS) || w.isBlocked(spot)) continue;
       if (w.arena.hasLineOfSight(threat.position, spot)) continue;
 
       const d = bot.position.distanceTo(spot);
@@ -641,9 +838,7 @@ export class Brain {
 
     for (let step = 0.75; step <= 2.25; step += 0.75) {
       const spot = bot.position.add(dir.scale(step));
-      if (!w.arena.contains(spot, MAGE_RADIUS) || w.arena.blocksMovementAt(spot, MAGE_RADIUS)) {
-        continue;
-      }
+      if (!w.arena.contains(spot, MAGE_RADIUS) || w.isBlocked(spot)) continue;
       if (w.arena.hasLineOfSight(spot, target.position)) return spot;
     }
     return null;
@@ -729,8 +924,7 @@ function mostAdvancedAlly(w: World, bot: Mage): Mage | null {
 
 function scoreDodgeSide(w: World, bot: Mage, threat: Mage | null, side: Vec2): number {
   const dest = bot.position.add(side.scale(DODGE_DISTANCE));
-  let score =
-    !w.arena.contains(dest, MAGE_RADIUS) || w.arena.blocksMovementAt(dest, MAGE_RADIUS) ? -10 : 10;
+  let score = !w.arena.contains(dest, MAGE_RADIUS) || w.isBlocked(dest) ? -10 : 10;
   if (threat) score += dest.distanceTo(threat.position);
   return score;
 }
