@@ -96,14 +96,25 @@ export class Commander {
     return spellId ? { cardId: spellId, position } : null;
   }
 
-  /** The enemy unit furthest into our own half — what a curse should answer. */
+  /**
+   * The enemy unit furthest into our own half — what a curse should answer.
+   *
+   * Null unless one is genuinely *in* our ground. Without that floor this
+   * returned the enemy nearest the midline no matter where it stood, so a
+   * commander that "responds to threats" was permanently responding to one:
+   * it dropped every curse it could afford on the enemy's own front line,
+   * banked no mana, and never once buffed its own push. Harmless while both
+   * squads milled around midfield and never pushed; the moment they did, it
+   * made the threat-answering commander the *worse* player.
+   */
   private biggestThreat(w: World, team: Team): Mage | null {
     const forward = team === TEAM_A ? 1 : -1;
     let best: Mage | null = null;
-    let deepest = -Infinity;
+    let deepest = 0;
     for (const m of w.mages.values()) {
       if (!m.alive || m.team === team) continue;
-      // Depth into our territory: positive once it is past the midline.
+      // Depth into our territory: positive once it is past the midline, which
+      // is exactly when it becomes our problem rather than our opportunity.
       const depth = -m.position.x * forward;
       if (depth > deepest) {
         deepest = depth;

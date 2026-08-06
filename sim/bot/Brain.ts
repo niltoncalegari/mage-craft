@@ -1,11 +1,18 @@
 /**
- * The authoritative server's bot AI — a port of the client's
- * `src/systems/AISystem.ts` utility-scored squad AI.
+ * The authoritative server's bot AI — a utility-scored squad AI grown out of
+ * the client's `src/systems/AISystem.ts`.
  *
- * Same action set (retreat / takeCover / attack / advance / wander plus
- * reactive dodging), same scoring weights, same tie-break precedence, same
- * easy/normal/hard tuning, same cover/peek/line-of-sight behaviour. Practice
- * mode and online matches should feel like the same opponent.
+ * The reactive half is still the client's, unchanged: cover, peek, line of
+ * sight, projectile dodging, aim lead and error, and the easy/normal/hard
+ * tuning. Practice mode and online matches feel like the same opponent.
+ *
+ * What the siege game added on top is a *plan* (`Squad.ts`). AISystem scored
+ * every action against one question — "is there someone to shoot?" — because on
+ * a practice map that was the whole game. Here killing a mage wins nothing: it
+ * respawns in `RESPAWN_DELAY` seconds and only structures decide a match (GDD
+ * §4). So shooting is scored by what it *protects*, sieging is the default, and
+ * two things the old model could not express at all — enemy Tower fire, and
+ * what the rest of the squad is doing — now drive most of the decisions.
  */
 
 import { MAGE_RADIUS, SPACING } from '../config';
@@ -22,6 +29,7 @@ import {
 import { ROLE_BEHAVIOR } from '../roles';
 import type { Rng } from '../rng';
 import type { World } from '../World';
+import { coveringTower, isOurGround, SquadPlanner, type SquadPlan } from './Squad';
 
 /** Mirrors the client's easy/normal/hard AI tuning (AISystem's AI_TUNING). */
 export type Difficulty = 'easy' | 'normal' | 'hard';
@@ -62,14 +70,79 @@ const STRAFE_DISTANCE = 3;
  */
 const KITE_BAND = 0.25;
 
+/**
+ * What shooting a mage is worth on its own — nothing much. A kill costs the
+ * enemy `RESPAWN_DELAY` seconds of presence and wins zero structures, so the
+ * flat 0.95 AISystem gave `attack` (where killing *was* the game) is what made
+ * two squads meet in midfield and trade shots until the clock ran out. The
+ * bonuses below are where the value actually comes from.
+ */
+const ATTACK_BASE = 0.45;
+/** Added when the target is worth shooting: contesting our objective, or in our ground. */
+const ATTACK_CONTESTS_BONUS = 0.3;
+/** Added in proportion to how hurt the target already is — finishing one is worth more. */
+const ATTACK_FINISH_BONUS = 0.3;
+/** Subtracted when we are trading under their Tower, which is a trade we lose. */
+const ATTACK_UNDER_TOWER_PENALTY = 0.45;
+
+/**
+ * The urge to leave Tower fire we are getting nothing for. Above a healthy
+ * mage's best `attack` score and below a critical `retreat`, so it wins the
+ * argument against staying to fight but never against actually dying.
+ */
+const TOWER_ESCAPE_URGE = 0.86;
+/** How far past a Tower's range a bot that is backing out of it aims to stand. */
+const TOWER_STANDOFF = 0.75;
+
+/**
+ * How far *outside* a Tower's reach a non-anchor stands while shooting it.
+ *
+ * A Tower measures range from its centre (`World.towerTarget`) while a siege
+ * measures distance to the structure's surface, so there is a band — as wide as
+ * the structure's radius — from which a mage can hit a Tower that cannot hit
+ * back. Working that band instead of walking up to the wall is most of the
+ * difference between a squad that trades with a Tower and one that dismantles
+ * it for free.
+ */
+const SAFE_FIRING_MARGIN = 0.5;
+
+/** How far a squadmate stays behind the anchor, so the Tower keeps shooting the anchor. */
+const ANCHOR_LEAD = 1.5;
+
+/** Slack around the siege standoff, so holding a band does not read as jitter. */
+const SIEGE_DEADBAND = 0.3;
+
+/**
+ * Exits from a Tower's arc, tried in order: straight out first, then ever more
+ * tangential. See `escapeTower`.
+ */
+const ESCAPE_ANGLES = [
+  0,
+  Math.PI / 4,
+  -Math.PI / 4,
+  Math.PI / 2,
+  -Math.PI / 2,
+  (Math.PI * 3) / 4,
+  (-Math.PI * 3) / 4,
+];
+
 const EPSILON = 1e-9;
 
 /**
- * `siege` is the pivot's addition (GDD §11): with no enemy worth fighting, a
- * unit pushes the enemy structure instead of milling around. Everything else is
- * the original AISystem action set, untouched.
+ * `siege`, `defend` and `regroup` are the siege game's additions to AISystem's
+ * five. `siege` pushes the plan's structure, `defend` answers an enemy standing
+ * in our ground, and `regroup` falls back under our own Tower rather than
+ * feeding into a squad that outnumbers us — `Squad.ts` decides which applies.
  */
-type Action = 'wander' | 'advance' | 'takeCover' | 'retreat' | 'attack' | 'siege';
+type Action =
+  | 'wander'
+  | 'advance'
+  | 'takeCover'
+  | 'retreat'
+  | 'attack'
+  | 'siege'
+  | 'defend'
+  | 'regroup';
 
 interface Tuning {
   aimErrorScale: number;
@@ -144,6 +217,27 @@ interface BotState {
   pathFrom: Vec2 | null;
   /** Where an idle bot decided to go, held until it gets there. */
   wanderTarget: Vec2 | null;
+  /** What the charge currently being held was started at; see `AimPoint`. */
+  chargeTarget: AimPoint | null;
+}
+
+/**
+ * What a throw is aimed *at*, not merely where.
+ *
+ * A charge takes a second and a half to fill, and the client's AI could ignore
+ * that entirely — it threw in a single call. Here the aim has to survive a
+ * hundred ticks, so it has to be re-derived every one of them: a mage still
+ * needs to lead a target that is running, and a mage charging at a Tower needs
+ * to still be pointed at the Tower. Carrying only the point is what let a siege
+ * charge silently re-target the nearest mage half an arena away and throw its
+ * shot into the dirt.
+ */
+interface AimPoint {
+  point: Vec2;
+  /** Set when the charge is meant for a mage — re-led on every tick it is held. */
+  mageId?: string;
+  /** Set when the charge is meant for a structure — it does not move, so nor does the aim. */
+  structureId?: string;
 }
 
 interface Perception {
@@ -152,9 +246,24 @@ interface Perception {
   hasLos: boolean;
   /** Whether any living enemy can see this bot. */
   exposed: boolean;
-  /** The enemy structure this unit is pushing toward, if any is reachable. */
+  /** The structure the *squad* is pushing — one per team, not one per mage. */
   objective: Structure | null;
   objectiveDistance: number;
+  /**
+   * Whether `target` is worth spending a throw on: it is standing on the
+   * structure we came to break, or it is loose in our own ground. Anything else
+   * is a mage we can walk past — it wins nothing and it comes back anyway.
+   */
+  targetContests: boolean;
+  /** The enemy Tower whose fire this bot is currently standing in, if any. */
+  underTower: Structure | null;
+  /**
+   * Whether being under that Tower is the *point* — this mage is the squad's
+   * anchor, deliberately soaking the objective's fire. Everyone else treats the
+   * same position as a mistake to walk out of.
+   */
+  divingObjective: boolean;
+  plan: SquadPlan;
 }
 
 /**
@@ -175,6 +284,13 @@ export class Brain {
   /** Exposed for tests asserting that decisions persist between ticks. */
   readonly states = new Map<string, BotState>();
 
+  /**
+   * The team-level intent every per-mage decision is scored against. One
+   * planner drives both squads — it reads the world, it does not belong to a
+   * side (see `Squad.ts`).
+   */
+  readonly planner = new SquadPlanner();
+
   constructor(private readonly rng: Rng) {}
 
   private state(id: string): BotState {
@@ -190,6 +306,7 @@ export class Brain {
         pathGoal: null,
         pathFrom: null,
         wanderTarget: null,
+        chargeTarget: null,
       };
       this.states.set(id, s);
     }
@@ -198,6 +315,10 @@ export class Brain {
 
   /** Drives every listed bot one tick, writing the result into the world's input. */
   step(w: World, bots: ReadonlyMap<string, Difficulty>, dt: number): void {
+    // The plan first: every decision below is scored against what the squad is
+    // trying to do, so it has to be current before anyone decides anything.
+    this.planner.step(w, dt);
+
     const focus = this.chooseFocusTarget(w, bots);
     for (const [id, difficulty] of bots) {
       const mage = w.mage(id);
@@ -247,7 +368,10 @@ export class Brain {
     const { move, aim } = this.execute(w, bot, st.last, p, tune);
     input.move = move;
     if (!charging && aim) {
-      input.aim = aim;
+      // Commit: from here until the throw lands, this is what the charge is
+      // for, and `continueOrReleaseCharge` keeps it pointed there.
+      st.chargeTarget = aim;
+      input.aim = aim.point;
       input.charging = true;
     }
     return input;
@@ -300,10 +424,22 @@ export class Brain {
       nearestDistSq = focusDistSq;
     }
 
-    const objective = nearestObjective(w, bot);
+    const plan = this.planner.planFor(bot.team);
+    // The squad's structure, not this mage's nearest one. Four mages each
+    // walking at whichever Tower happens to be closest is four half-pushes.
+    const objective = plan.objective;
     const objectiveDistance = objective
       ? bot.position.distanceTo(objective.position) - objective.radius
       : Infinity;
+
+    const underTower = coveringTower(w, bot.team, bot.position);
+    // Only a role whose job is absorbing accepts standing in Tower fire, and
+    // only in front of the structure the squad actually came for.
+    const divingObjective =
+      underTower !== null &&
+      objective !== null &&
+      underTower.id === objective.id &&
+      ROLE_BEHAVIOR[bot.role].prefersStructures;
 
     if (!nearest) {
       return {
@@ -313,6 +449,10 @@ export class Brain {
         exposed,
         objective,
         objectiveDistance,
+        targetContests: false,
+        underTower,
+        divingObjective,
+        plan,
       };
     }
 
@@ -325,6 +465,10 @@ export class Brain {
       exposed,
       objective,
       objectiveDistance,
+      targetContests: contests(w, bot.team, nearest, objective),
+      underTower,
+      divingObjective,
+      plan,
     };
   }
 
@@ -387,6 +531,13 @@ export class Brain {
         : 0;
 
     let retreat = p.exposed ? healthRisk * 1.1 : healthRisk * 0.45;
+    /*
+     * Standing in Tower fire we are getting nothing for is the single largest
+     * uncontested source of damage in a match: ~9 damage a second, aimed for
+     * free, at whichever of ours is closest. Any mage that is not the squad's
+     * anchor treats it as a position to leave, not a fight to win.
+     */
+    if (p.underTower && !p.divingObjective) retreat = Math.max(retreat, TOWER_ESCAPE_URGE);
 
     let takeCover: number;
     if (!hasTarget) takeCover = 0;
@@ -395,8 +546,26 @@ export class Brain {
     else if (cooldownReady) takeCover = 0.48;
     else takeCover = 0.72;
 
-    // Supports never throw, so attacking is not on their menu at all (GDD §8).
-    const attack = role.attacks && p.hasLos && inRange && cooldownReady ? 0.95 : 0;
+    /*
+     * Supports never throw, so attacking is not on their menu at all (GDD §8).
+     *
+     * For everyone else this is no longer a flat "someone is in range, shoot
+     * them". Killing a mage wins nothing by itself — it is back in six seconds
+     * and structures are the only score (GDD §4) — so a throw is worth spending
+     * when it protects the push or clears our own ground, and worth rather less
+     * when it is a healthy stranger crossing midfield.
+     */
+    let attack = 0;
+    if (role.attacks && p.target && p.hasLos && inRange && cooldownReady) {
+      const hurt =
+        p.target.maxHealth > 0 ? 1 - clamp(p.target.health / p.target.maxHealth, 0, 1) : 0;
+      attack = ATTACK_BASE + hurt * ATTACK_FINISH_BONUS;
+      if (p.targetContests) attack += ATTACK_CONTESTS_BONUS;
+      // Trading shots under their Tower means trading with the mage *and* the
+      // Tower. That is a losing exchange no matter how the duel is going.
+      if (p.underTower && !p.divingObjective) attack -= ATTACK_UNDER_TOWER_PENALTY;
+      attack = Math.max(0, attack);
+    }
 
     let advance = 0;
     if (hasTarget) {
@@ -411,19 +580,35 @@ export class Brain {
     }
 
     /*
-     * Siege is what stops a unit idling when nothing is shooting at it. A tank
-     * outscores its own advance urge — walking past a skirmish to hit the tower
-     * is the tank's job — while a damage dealer only sieges once the lane in
-     * front of it is clear.
+     * Siege is the default, and that is the point. The old model only reached
+     * for it when nothing else was going on, so on a map where the two squads
+     * meet in the middle it essentially never ran and no structure ever fell.
+     * Now it is what a mage does unless something is actively worth stopping
+     * for — a tank walks past a skirmish outright, a damage dealer stops only
+     * for something in its face.
      */
     let siege = 0;
     if (p.objective) {
-      if (!hasTarget) siege = 0.8;
-      else if (role.prefersStructures) siege = 0.7;
-      else if (!inRange) siege = 0.35;
+      if (!hasTarget) siege = 0.9;
+      else if (role.prefersStructures) siege = 0.85;
+      else if (!inRange) siege = 0.7;
+      else siege = 0.6;
+      // Pushing is not what the squad is doing right now; the plan says come
+      // home or wait. Halving keeps it on the menu as the fallback rather than
+      // deleting it, so a mage with nothing else to do still drifts forward.
+      if (p.plan.posture !== 'push') siege *= 0.5;
     }
 
-    // Wander is now a genuine last resort: with an objective on the map there is
+    /*
+     * The two plan-driven actions. `Squad.ts` has already decided *whether*
+     * the squad should be defending or falling back and applied the hysteresis
+     * that stops the two sides flip-flopping; all that is left here is to
+     * outrank a push.
+     */
+    const defend = p.plan.posture === 'defend' && p.plan.threat ? 0.9 : 0;
+    const regroup = p.plan.posture === 'regroup' ? 0.8 : 0;
+
+    // Wander is a genuine last resort: with an objective on the map there is
     // always something better to do than drift toward the middle.
     const wander = hasTarget ? 0.05 : p.objective ? 0.02 : 0.6;
 
@@ -432,17 +617,26 @@ export class Brain {
       retreat = 0;
     }
 
-    // Same precedence as AISystem.bestAction: wander < siege < advance <
-    // takeCover < retreat < attack on ties.
+    // AISystem's precedence, with the plan-driven actions slotted between the
+    // opportunistic ones and the self-preserving ones: wander < siege <
+    // regroup < advance < defend < takeCover < retreat < attack on ties.
     let best: Action = 'wander';
     let score = wander;
     if (siege > score) {
       best = 'siege';
       score = siege;
     }
+    if (regroup > score) {
+      best = 'regroup';
+      score = regroup;
+    }
     if (advance > score) {
       best = 'advance';
       score = advance;
+    }
+    if (defend > score) {
+      best = 'defend';
+      score = defend;
     }
     if (takeCover > score) {
       best = 'takeCover';
@@ -454,7 +648,8 @@ export class Brain {
     }
     if (attack > score) best = 'attack';
 
-    return { action: best, targetId: best === 'siege' ? '' : (p.target?.id ?? '') };
+    const structural = best === 'siege' || best === 'regroup';
+    return { action: best, targetId: structural ? '' : (p.target?.id ?? '') };
   }
 
   /** Turns a decision into a movement direction and (optionally) an aim point to charge at. */
@@ -464,17 +659,38 @@ export class Brain {
     d: Decision,
     p: Perception,
     tune: Tuning,
-  ): { move: Vec2; aim: Vec2 | null } {
-    if (d.action === 'siege' && p.objective) {
-      return this.siege(w, bot, p.objective, p.objectiveDistance);
+  ): { move: Vec2; aim: AimPoint | null } {
+    /*
+     * Leaving Tower fire comes before everything, including finding an enemy to
+     * run from. `retreat` below needs a target mage to move away from, and the
+     * common case here has none — a mage that walked into a Tower's arc chasing
+     * something that has since died or fled would otherwise stand in it.
+     */
+    if (d.action === 'retreat' && p.underTower && !p.divingObjective) {
+      return { move: this.escapeTower(w, bot, p.underTower), aim: null };
     }
 
-    // A support has no attack, so "walk at the enemy" is never its plan: it
-    // falls in behind whoever is pushing (GDD §8). Cover and retreat still
-    // apply — a support that is being shot at should still get out of the way.
-    if (!ROLE_BEHAVIOR[bot.role].attacks && (d.action === 'advance' || d.action === 'attack')) {
-      return { move: this.escort(w, bot), aim: null };
+    if (d.action === 'siege' && p.objective) {
+      return this.siege(w, bot, p.objective, p.objectiveDistance, p.plan);
     }
+
+    /*
+     * A support has no attack, so "walk at the enemy" is never its plan: it
+     * falls in behind whoever is pushing (GDD §8). This has to come *before*
+     * `defend`, which would otherwise hand a Cleric an aim point and have it
+     * charge a throw it is not supposed to own. Cover and retreat still apply —
+     * a support being shot at should still get out of the way, and `regroup`
+     * (which checks the role itself) is right for it either way.
+     */
+    if (
+      !ROLE_BEHAVIOR[bot.role].attacks &&
+      (d.action === 'advance' || d.action === 'attack' || d.action === 'defend')
+    ) {
+      return { move: this.escort(w, bot, p.plan), aim: null };
+    }
+
+    if (d.action === 'regroup') return this.regroup(w, bot, p, tune);
+    if (d.action === 'defend' && p.plan.threat) return this.defend(w, bot, p, tune);
 
     let target = p.target;
     if (d.targetId) {
@@ -483,7 +699,7 @@ export class Brain {
     }
     if (!target) {
       // Nothing left to fight here — push the objective instead of drifting.
-      if (p.objective) return this.siege(w, bot, p.objective, p.objectiveDistance);
+      if (p.objective) return this.siege(w, bot, p.objective, p.objectiveDistance, p.plan);
       return { move: this.wander(w, bot), aim: null };
     }
 
@@ -532,42 +748,107 @@ export class Brain {
     bot: Mage,
     objective: Structure,
     distance: number,
-  ): { move: Vec2; aim: Vec2 | null } {
+    plan: SquadPlan,
+  ): { move: Vec2; aim: AimPoint | null } {
     const role = ROLE_BEHAVIOR[bot.role];
-    if (!role.attacks) return { move: this.escort(w, bot), aim: null };
+    if (!role.attacks) return { move: this.escort(w, bot, plan), aim: null };
+
+    const standoff = this.siegeStandoff(w, bot, objective, plan);
+    const move = this.holdSiegeDistance(w, bot, objective, distance, standoff);
 
     if (
       distance <= ENGAGE_RANGE &&
       bot.throwCooldown <= 0 &&
       w.arena.hasLineOfSight(bot.position, objective.position)
     ) {
-      return { move: Vec2.zero, aim: objective.position };
+      return { move, aim: { point: objective.position, structureId: objective.id } };
     }
-
-    // Arrived: `distance` is measured to the structure's surface, and the role's
-    // stop distance clears a body radius, so this is as close as it should get.
-    if (distance <= role.advanceStopDistance) return { move: Vec2.zero, aim: null };
-
-    /*
-     * The goal is the structure itself, not a stand-off point beside it.
-     *
-     * A stand-off point derived from `bot.position` moves whenever the bot
-     * does, so a mage forced off the straight line — around a fence, past its
-     * own Tower — is chasing a goal that swings around the structure as it
-     * goes, and it orbits instead of arriving. Anchoring on the structure keeps
-     * the goal still; the stop check above is what keeps the mage out of it,
-     * and the planner snaps a blocked goal to the nearest free cell anyway.
-     */
-    return {
-      move: this.steerTo(w, bot, objective.position.add(allySeparation(w, bot))),
-      aim: null,
-    };
+    return { move, aim: null };
   }
 
-  /** Supports have no attack, so they trail the ally pushing hardest (GDD §8). */
-  private escort(w: World, bot: Mage): Vec2 {
-    const ally = mostAdvancedAlly(w, bot);
-    if (!ally) return this.wander(w, bot);
+  /**
+   * The goal is the structure itself, not a stand-off point beside it.
+   *
+   * A stand-off point derived from `bot.position` moves whenever the bot does,
+   * so a mage forced off the straight line — around a fence, past its own Tower
+   * — is chasing a goal that swings around the structure as it goes, and it
+   * orbits instead of arriving. Anchoring on the structure keeps the goal
+   * still; `holdSiegeDistance` is what keeps the mage out of it, and the planner
+   * snaps a blocked goal to the nearest free cell anyway.
+   */
+  private approachStructure(w: World, bot: Mage, objective: Structure): Vec2 {
+    return this.steerTo(w, bot, objective.position.add(allySeparation(w, bot)));
+  }
+
+  /**
+   * Works the standoff as a band to hold, not a line to stop at.
+   *
+   * A mage that simply halts on the first tick it is close enough keeps
+   * whatever overshoot, knockback or ally shove put it there — and one step too
+   * far is the whole difference between shooting a Tower for free and standing
+   * in its fire for the rest of the siege. So being *too close* is corrected,
+   * not just being too far.
+   */
+  private holdSiegeDistance(
+    w: World,
+    bot: Mage,
+    objective: Structure,
+    distance: number,
+    standoff: number,
+  ): Vec2 {
+    if (distance > standoff + SIEGE_DEADBAND) return this.approachStructure(w, bot, objective);
+    if (distance >= standoff - SIEGE_DEADBAND) return Vec2.zero;
+
+    let away = bot.position.sub(objective.position);
+    const len = away.length();
+    away = len <= EPSILON ? new Vec2(1, 0) : away.scale(1 / len);
+    return this.steerTo(w, bot, objective.position.add(away.scale(objective.radius + standoff)));
+  }
+
+  /**
+   * How close this mage gets to the structure it is breaking.
+   *
+   * The anchor — a role built to absorb — walks in and takes the volley on
+   * purpose, because a Tower shoots whatever is nearest that it can see
+   * (`World.towerTarget`) and *someone* is going to be that. Everyone else
+   * works the band just outside the Tower's reach, where they can hit it and it
+   * cannot hit them, and never gets closer than the anchor. Two consequences
+   * fall out of that one rule: a squad with a live tank pushes at the cost of
+   * the tank alone, and a squad without one dismantles the Tower from outside
+   * its range instead of trading four mages for it.
+   */
+  private siegeStandoff(w: World, bot: Mage, objective: Structure, plan: SquadPlan): number {
+    const role = ROLE_BEHAVIOR[bot.role];
+    if (bot.id === plan.anchorId) return role.advanceStopDistance;
+
+    // A Core has no range, so there is no band to work and nothing to hide
+    // from — by the time it is targetable both its Towers are already down.
+    const safe =
+      objective.range > 0 ? objective.range - objective.radius + SAFE_FIRING_MARGIN : role.advanceStopDistance;
+
+    const anchor = w.mage(plan.anchorId);
+    const behindAnchor =
+      anchor && anchor.alive
+        ? anchor.position.distanceTo(objective.position) - objective.radius + ANCHOR_LEAD
+        : 0;
+
+    // Never further out than we can still throw from — waiting behind a slow
+    // anchor that is still crossing the map would otherwise mean not shooting
+    // at all for most of the push.
+    return clamp(Math.max(role.advanceStopDistance, safe, behindAnchor), 0, ENGAGE_RANGE - 0.25);
+  }
+
+  /**
+   * Supports have no attack, so they trail whoever the plan is built around
+   * (GDD §8) — the anchor while the squad pushes, and otherwise the ally
+   * furthest forward. Following the plan's mage rather than the most advanced
+   * one keeps a healer with the squad instead of chasing a lone straggler who
+   * happens to have wandered deepest.
+   */
+  private escort(w: World, bot: Mage, plan: SquadPlan): Vec2 {
+    const anchor = w.mage(plan.anchorId);
+    const ally = anchor && anchor.alive && anchor.id !== bot.id ? anchor : mostAdvancedAlly(w, bot);
+    if (!ally) return this.steerTo(w, bot, plan.rally.add(allySeparation(w, bot)));
 
     const gap = bot.position.distanceTo(ally.position);
     const keep = ROLE_BEHAVIOR[bot.role].advanceStopDistance;
@@ -575,6 +856,81 @@ export class Brain {
     // planner, so the nudge can't be into a wall.
     if (gap <= keep) return this.steerTo(w, bot, bot.position.add(allySeparation(w, bot)));
     return this.steerTo(w, bot, ally.position.add(allySeparation(w, bot)));
+  }
+
+  /**
+   * Answer an enemy standing in our own ground. Our Towers are shooting it
+   * already, so meeting it here is the one fight the AI takes on purpose: we
+   * have the range support and it does not.
+   */
+  private defend(
+    w: World,
+    bot: Mage,
+    p: Perception,
+    tune: Tuning,
+  ): { move: Vec2; aim: AimPoint | null } {
+    const threat = p.plan.threat;
+    if (!threat) return { move: this.steerTo(w, bot, p.plan.rally), aim: null };
+
+    const distance = bot.position.distanceTo(threat.position);
+    if (
+      distance <= ENGAGE_RANGE &&
+      bot.throwCooldown <= 0 &&
+      w.arena.hasLineOfSight(bot.position, threat.position)
+    ) {
+      return {
+        move: this.footwork(w, bot, threat, distance),
+        aim: this.attackAim(threat, distance, tune),
+      };
+    }
+    return { move: this.steerTo(w, bot, threat.position.add(allySeparation(w, bot))), aim: null };
+  }
+
+  /**
+   * Fall back to the rally point — but not with our hands down. The rally sits
+   * inside our own Tower's cover, so anything that follows us there is being
+   * shot at by the Tower and is worth shooting at too.
+   */
+  private regroup(
+    w: World,
+    bot: Mage,
+    p: Perception,
+    tune: Tuning,
+  ): { move: Vec2; aim: AimPoint | null } {
+    const move = this.steerTo(w, bot, p.plan.rally.add(allySeparation(w, bot)));
+    if (
+      ROLE_BEHAVIOR[bot.role].attacks &&
+      p.target &&
+      p.hasLos &&
+      p.distance <= ENGAGE_RANGE &&
+      bot.throwCooldown <= 0
+    ) {
+      return { move, aim: this.attackAim(p.target, p.distance, tune) };
+    }
+    return { move, aim: null };
+  }
+
+  /**
+   * The way out of a Tower's arc.
+   *
+   * Straight away from it is shortest, but a mage backed against the map edge
+   * or a rock cannot go straight out — and one that keeps trying grinds on the
+   * boundary and takes the whole volley while it does. So the exits are tried
+   * from straight-out round to tangential: leaving a circle with a wall behind
+   * you means going *around* it, not through it.
+   */
+  private escapeTower(w: World, bot: Mage, tower: Structure): Vec2 {
+    let away = bot.position.sub(tower.position);
+    const len = away.length();
+    away = len <= EPSILON ? new Vec2(1, 0) : away.scale(1 / len);
+
+    const radius = tower.range + TOWER_STANDOFF;
+    for (const angle of ESCAPE_ANGLES) {
+      const spot = tower.position.add(away.rotate(angle).scale(radius));
+      if (!w.arena.contains(spot, MAGE_RADIUS) || w.isBlocked(spot)) continue;
+      return this.steerTo(w, bot, spot);
+    }
+    return this.steerTo(w, bot, tower.position.add(away.scale(radius)));
   }
 
   /* ---- actions ---------------------------------------------------------- */
@@ -598,9 +954,30 @@ export class Brain {
       return this.steerTo(w, bot, bot.position.add(away.scale(RETREAT_DISTANCE)));
     }
     if (distance > keep * (1 + KITE_BAND)) {
-      return this.steerTo(w, bot, target.position.add(away.scale(keep)));
+      return this.steerTo(w, bot, this.clearOfTowers(w, bot, target.position.add(away.scale(keep))));
     }
     return this.sidestep(w, bot, target);
+  }
+
+  /**
+   * Pulls a destination back out of enemy Tower fire.
+   *
+   * Closing on a mage that is standing under its own Tower means fighting the
+   * mage and the Tower at once, for a kill that is worth nothing on the
+   * scoreboard — it is the worst trade available, and it was the one the AI
+   * took most often. Only a deliberate siege goes past this line; everything
+   * else stops at the edge and makes the enemy come out.
+   */
+  private clearOfTowers(w: World, bot: Mage, dest: Vec2): Vec2 {
+    const tower = coveringTower(w, bot.team, dest);
+    if (!tower) return dest;
+
+    const out = dest.sub(tower.position);
+    const len = out.length();
+    // Standing on the Tower itself gives no direction to back off along; hold
+    // where we are and let `retreat` (which outscores this) do the leaving.
+    if (len <= EPSILON) return bot.position;
+    return tower.position.add(out.scale((tower.range + TOWER_STANDOFF) / len));
   }
 
   /** A committed sideways step around a target, planned like any other move. */
@@ -609,47 +986,71 @@ export class Brain {
   }
 
   /** The point to charge at, or null when the bot declines to throw this tick. */
-  private attackAim(target: Mage, distance: number, tune: Tuning): Vec2 | null {
+  private attackAim(target: Mage, distance: number, tune: Tuning): AimPoint | null {
     if (tune.throwWillingness < 1 && this.rng.float() >= tune.throwWillingness) return null;
 
     // Aim error grows with distance, exactly as in AISystem.attack.
     const charge01 = clamp(inverseLerp(MIN_THROW_RANGE, ENGAGE_RANGE, distance) * 0.9 + 0.1, 0.18, 1);
     const err = lerp(AIM_ERROR_NEAR, AIM_ERROR_FAR, charge01) * tune.aimErrorScale;
-    return new Vec2(
-      target.position.x + target.velocity.x * AIM_LEAD_TIME + this.rng.float() * 2 * err - err,
-      target.position.y + target.velocity.y * AIM_LEAD_TIME + this.rng.float() * 2 * err - err,
-    );
+    return {
+      mageId: target.id,
+      point: new Vec2(
+        target.position.x + target.velocity.x * AIM_LEAD_TIME + this.rng.float() * 2 * err - err,
+        target.position.y + target.velocity.y * AIM_LEAD_TIME + this.rng.float() * 2 * err - err,
+      ),
+    };
   }
 
+  /**
+   * Keeps a charge already in flight pointed at whatever it was started at, and
+   * lets it go once it is full enough for this difficulty.
+   *
+   * "Whatever it was started at" is the whole job. A siege charge takes over a
+   * second to fill and this runs on every tick of it, so re-deriving the aim
+   * from the nearest enemy — which is what it used to do — quietly turned every
+   * shot a squad aimed at a Tower into a shot flung at a mage that might be
+   * halfway across the map. Structures were taking almost no mage fire at all.
+   */
   private continueOrReleaseCharge(w: World, bot: Mage, tune: Tuning): MageInput {
-    const target = nearestEnemy(w, bot);
-    if (!target) {
-      // No enemy unit, but a charge already spent should still land on the
-      // structure rather than being thrown away at nothing.
-      const objective = nearestObjective(w, bot);
-      if (objective) {
-        const releasingAtStructure = bot.charge >= tune.releaseChargeMin;
-        return {
-          move: Vec2.zero,
-          aim: objective.position,
-          charging: !releasingAtStructure,
-          release: releasingAtStructure,
-        };
-      }
-      // Nothing worth aiming at — let go rather than holding forever.
-      return {
-        move: Vec2.zero,
-        aim: bot.position.add(bot.facing),
-        charging: false,
-        release: true,
-      };
+    const st = this.state(bot.id);
+    const point = this.heldAim(w, bot, st, tune);
+    const releasing = bot.charge >= tune.releaseChargeMin;
+    return { move: Vec2.zero, aim: point, charging: !releasing, release: releasing };
+  }
+
+  /** Where the held charge points this tick — a structure stands still, a mage has to be re-led. */
+  private heldAim(w: World, bot: Mage, st: BotState, tune: Tuning): Vec2 {
+    const held = st.chargeTarget;
+
+    if (held?.structureId) {
+      const s = w.structures.get(held.structureId);
+      if (s && s.alive) return s.position;
     }
 
-    const distance = bot.position.distanceTo(target.position);
-    // throwWillingness 1 means attackAim never declines, so this is non-null.
-    const aim = this.attackAim(target, distance, { ...tune, throwWillingness: 1 })!;
-    const releasing = bot.charge >= tune.releaseChargeMin;
-    return { move: Vec2.zero, aim, charging: !releasing, release: releasing };
+    if (held?.mageId) {
+      const m = w.mage(held.mageId);
+      // throwWillingness 1 means attackAim never declines, so this is non-null.
+      if (m && m.alive) {
+        return this.attackAim(m, bot.position.distanceTo(m.position), {
+          ...tune,
+          throwWillingness: 1,
+        })!.point;
+      }
+    }
+
+    // What it was aimed at is gone. Spend the charge on the next best thing
+    // rather than holding it or throwing it at the floor.
+    const enemy = nearestEnemy(w, bot);
+    if (enemy) {
+      return this.attackAim(enemy, bot.position.distanceTo(enemy.position), {
+        ...tune,
+        throwWillingness: 1,
+      })!.point;
+    }
+
+    const objective = this.planner.planFor(bot.team).objective;
+    if (objective) return objective.position;
+    return bot.position.add(bot.facing);
   }
 
   private retreat(w: World, bot: Mage, target: Mage): Vec2 {
@@ -677,7 +1078,9 @@ export class Brain {
     const stopAt = ROLE_BEHAVIOR[bot.role].advanceStopDistance;
     if (distance <= stopAt) return this.footwork(w, bot, target, distance);
 
-    return this.steerTo(w, bot, target.position.add(allySeparation(w, bot)));
+    // Chasing stops at the edge of their Tower's arc — see `clearOfTowers`.
+    const goal = this.clearOfTowers(w, bot, target.position.add(allySeparation(w, bot)));
+    return this.steerTo(w, bot, goal);
   }
 
   /**
@@ -886,21 +1289,14 @@ export class Brain {
 }
 
 /**
- * The enemy structure this unit should be pushing. Towers come before the Core
- * because the Core is invulnerable until they fall, and `targetableStructures`
- * already filters out anything still immune.
+ * Whether a target is worth stopping the push for: it is close enough to the
+ * structure we came to break to be defending it, or it is loose in our own
+ * ground. Anything else is a mage crossing midfield — shooting it wins nothing
+ * it does not get back on respawn (GDD §4).
  */
-function nearestObjective(w: World, bot: Mage): Structure | null {
-  let best: Structure | null = null;
-  let bestDist = Infinity;
-  for (const s of w.targetableStructuresFor(bot.team)) {
-    const d = bot.position.distanceTo(s.position);
-    if (d < bestDist) {
-      bestDist = d;
-      best = s;
-    }
-  }
-  return best;
+function contests(w: World, team: Team, target: Mage, objective: Structure | null): boolean {
+  if (objective && target.position.distanceTo(objective.position) <= ENGAGE_RANGE * 1.2) return true;
+  return isOurGround(w, team, target.position);
 }
 
 /** The living ally furthest into enemy territory — who a support falls in behind. */

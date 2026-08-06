@@ -8,24 +8,16 @@ interface WebAudioWindow extends Window {
   webkitAudioContext?: AudioContextConstructor;
 }
 
-interface AmbientNodes {
-  source: AudioBufferSourceNode;
-  filter: BiquadFilterNode;
-  gain: GainNode;
-}
-
 /**
- * Synthesizes all game audio with Web Audio: short procedural SFX plus a quiet
- * ambient wind bed. It degrades to no-ops when Web Audio is unavailable.
+ * Synthesizes short procedural game SFX with Web Audio.
+ * Degrades to no-ops when Web Audio is unavailable.
  */
 export class AudioManager {
   private readonly unsubscribes: Unsubscribe[] = [];
   private context: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
-  private ambient: AmbientNodes | null = null;
   private muted = false;
-  private ambientDucked = false;
   private disposed = false;
 
   constructor(events: EventBus) {
@@ -35,8 +27,6 @@ export class AudioManager {
       events.on('PlayerHit', ({ damage }) => this.playHitSplat(damage)),
       events.on('PlayerDefeated', () => this.playDefeated()),
       events.on('RoundEnded', ({ winner }) => this.playRoundEnded(winner)),
-      events.on('RoundStarted', () => this.startAmbient()),
-      events.on('GamePaused', ({ paused }) => this.setAmbientDucked(paused)),
     );
   }
 
@@ -60,7 +50,6 @@ export class AudioManager {
     this.disposed = true;
     for (const unsubscribe of this.unsubscribes) unsubscribe();
     this.unsubscribes.length = 0;
-    this.stopAmbient();
 
     const context = this.context;
     this.context = null;
@@ -195,56 +184,6 @@ export class AudioManager {
     oscillator.start(startTime);
     oscillator.stop(startTime + duration);
     this.cleanupSource(oscillator, [gain], startTime + duration + 0.04);
-  }
-
-  private startAmbient(): void {
-    const context = this.ensureContext();
-    if (!context || this.ambient) {
-      this.updateAmbientGain();
-      return;
-    }
-
-    const source = this.createNoiseSource(context);
-    const filter = context.createBiquadFilter();
-    const gain = context.createGain();
-
-    source.loop = true;
-    filter.type = 'bandpass';
-    filter.frequency.value = 360;
-    filter.Q.value = 0.45;
-    gain.gain.value = 0;
-
-    source.connect(filter).connect(gain).connect(this.requireMasterGain());
-    source.start();
-    this.ambient = { source, filter, gain };
-    this.updateAmbientGain();
-  }
-
-  private setAmbientDucked(ducked: boolean): void {
-    this.ambientDucked = ducked;
-    this.updateAmbientGain();
-  }
-
-  private updateAmbientGain(): void {
-    const context = this.context;
-    const ambient = this.ambient;
-    if (!context || !ambient) return;
-    const volume = this.ambientDucked ? 0.012 : 0.032;
-    ambient.gain.gain.setTargetAtTime(volume, context.currentTime, 0.25);
-  }
-
-  private stopAmbient(): void {
-    const ambient = this.ambient;
-    this.ambient = null;
-    if (!ambient) return;
-    try {
-      ambient.source.stop();
-    } catch {
-      // Already stopped or never fully started.
-    }
-    ambient.source.disconnect();
-    ambient.filter.disconnect();
-    ambient.gain.disconnect();
   }
 
   private ensureContext(): AudioContext | null {

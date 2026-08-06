@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Arena, type Obstacle } from '../Arena';
 import { defaultSquad } from '../cards';
 import { CORE_RADIUS, MAGE_RADIUS, SIM_DT } from '../config';
-import { TEAM_A, TEAM_B, type MageInput, type Projectile } from '../entities';
+import { TEAM_A, TEAM_B, type MageInput, type Projectile, type Structure } from '../entities';
 import { Rng } from '../rng';
 import { ROLE_BEHAVIOR } from '../roles';
 import { Vec2 } from '../Vec2';
@@ -21,6 +21,14 @@ function combatWorld(): World {
 
 function rng(): Rng {
   return new Rng(1);
+}
+
+/** The enemy Tower a mage at `from` is closest to. */
+function closestTowerTo(w: World, from: Vec2): Structure {
+  const towers = w.structuresOf(TEAM_B).filter((s) => s.kind === 'tower');
+  return towers.reduce((best, s) =>
+    from.distanceTo(s.position) < from.distanceTo(best.position) ? s : best,
+  );
 }
 
 /** One tick of the brain; returns the input it wrote. */
@@ -457,10 +465,15 @@ describe('Brain — siege', () => {
     // Ten seconds later it has marched into throwing range of a Tower. (By
     // then the enemy is close too, and fighting it is the right call — what
     // must not happen is the walk there never starting.)
-    const reach = Math.min(
-      ...w.structuresOf(TEAM_B).map((s) => bot.position.distanceTo(s.position)),
-    );
+    //
+    // Range is measured to the structure's *surface*, which is what `siege`
+    // compares against — and the gap between that and the Tower's own range,
+    // which it measures from its centre, is the band a non-anchor deliberately
+    // holds: close enough to hit, far enough not to be hit back.
+    const tower = closestTowerTo(w, bot.position);
+    const reach = bot.position.distanceTo(tower.position) - tower.radius;
     expect(reach).toBeLessThan(ENGAGE_RANGE);
+    expect(bot.position.distanceTo(tower.position)).toBeGreaterThan(tower.range);
   });
 
   it('walks a tank up to the Nexus, hits it, and never gets stuck in it', () => {
@@ -531,5 +544,222 @@ describe('Brain — per-bot state', () => {
     const second = brain.states.get('bot1')?.decisionTimer ?? 0;
 
     expect(second).toBeLessThan(first);
+  });
+});
+
+/**
+ * The behaviours the squad plan buys (`Squad.ts`), and the reason it exists: an
+ * AI-vs-AI harness over 12 seeds used to finish 12 draws with *zero* structures
+ * destroyed, because both squads met in midfield, traded shots until the clock
+ * ran out, and fed the enemy Towers ~13,000 free damage doing it.
+ */
+describe('Brain — strategy', () => {
+  /** A siege world with exactly one targetable Tower, so the plan is unambiguous. */
+  function oneObjectiveWorld(): { w: World; objective: Structure } {
+    const w = new World();
+    const towers = w.structuresOf(TEAM_B).filter((s) => s.kind === 'tower');
+    // The Core stays invulnerable while the other Tower stands, so this leaves
+    // exactly one thing on the board worth walking at.
+    towers[0].alive = false;
+    return { w, objective: towers[1] };
+  }
+
+  function runBrain(w: World, ticks: number, ids: string[]): Brain {
+    const brain = new Brain(rng());
+    const bots = new Map<string, Difficulty>(ids.map((id) => [id, 'normal']));
+    for (let i = 0; i < ticks; i++) {
+      brain.step(w, bots, SIM_DT);
+      w.step(SIM_DT);
+    }
+    return brain;
+  }
+
+  it('walks past a healthy stranger in midfield instead of stopping to duel it', () => {
+    const { w } = oneObjectiveWorld();
+    const bot = w.summon(TEAM_A, 'stone_golem', Vec2.zero);
+    // Right in its face, but far from anything either side is trying to hold:
+    // killing it wins nothing it does not get back on respawn (GDD §4).
+    w.summon(TEAM_B, 'pyromancer', new Vec2(2, 0));
+
+    const brain = runBrain(w, 1, [bot.id]);
+
+    expect(brain.states.get(bot.id)?.last.action).toBe('siege');
+  });
+
+  it('stops and fights an enemy defending the structure it came to break', () => {
+    const { w, objective } = oneObjectiveWorld();
+    // Just outside the Tower's reach, where a damage dealer belongs…
+    const bot = w.summon(TEAM_A, 'pyromancer', objective.position.add(new Vec2(-9.6, 0)));
+    // …and a defender between it and the Tower.
+    w.summon(TEAM_B, 'pyromancer', objective.position.add(new Vec2(-5, 0)));
+
+    const brain = runBrain(w, 1, [bot.id]);
+
+    expect(brain.states.get(bot.id)?.last.action).toBe('attack');
+  });
+
+  /*
+   * A Tower hits for TOWER_DAMAGE every TOWER_ATTACK_INTERVAL, for free, at
+   * whatever of ours is closest. Trading under it means trading with the mage
+   * *and* the Tower — the worst exchange on the board, and the one the AI used
+   * to take most often.
+   */
+  it('backs out of Tower fire rather than trade under it', () => {
+    const { w, objective } = oneObjectiveWorld();
+    const bot = w.summon(TEAM_A, 'pyromancer', objective.position.add(new Vec2(-4, 0)));
+    w.summon(TEAM_B, 'pyromancer', objective.position.add(new Vec2(-6, 0)));
+
+    const brain = new Brain(rng());
+    const bots = new Map<string, Difficulty>([[bot.id, 'normal']]);
+    brain.step(w, bots, SIM_DT);
+    expect(brain.states.get(bot.id)?.last.action).toBe('retreat');
+
+    for (let i = 0; i < 60 * 4; i++) {
+      brain.step(w, bots, SIM_DT);
+      w.step(SIM_DT);
+    }
+    expect(bot.position.distanceTo(objective.position)).toBeGreaterThan(objective.range);
+  });
+
+  /*
+   * A Tower measures range from its centre while a siege measures distance to
+   * its surface, so there is a band a mage can shoot it from and not be shot
+   * back. A squad with nobody built to soak works that band instead of trading
+   * bodies for the structure.
+   */
+  it('breaks a Tower from outside its reach when no one is built to soak it', () => {
+    const { w, objective } = oneObjectiveWorld();
+    const bot = w.summon(TEAM_A, 'pyromancer', new Vec2(-14, objective.position.y));
+
+    runBrain(w, 60 * 30, [bot.id]);
+
+    expect(objective.health).toBeLessThan(objective.maxHealth);
+    expect(bot.health).toBe(bot.maxHealth);
+  });
+
+  it('sends the tank in to take the Tower fire and keeps the squishy behind it', () => {
+    const { w, objective } = oneObjectiveWorld();
+    const tank = w.summon(TEAM_A, 'stone_golem', new Vec2(-14, objective.position.y));
+    const squishy = w.summon(TEAM_A, 'pyromancer', new Vec2(-14, objective.position.y + 2));
+
+    const brain = new Brain(rng());
+    const bots = new Map<string, Difficulty>([
+      [tank.id, 'normal'],
+      [squishy.id, 'normal'],
+    ]);
+    // Only while the Tower stands: once it falls the squad moves on to the Core
+    // and walks straight past the rubble, which says nothing about the siege.
+    let tankGap = Infinity;
+    let squishyGap = Infinity;
+    let squishyHealth = squishy.maxHealth;
+    for (let i = 0; i < 60 * 40 && objective.alive; i++) {
+      brain.step(w, bots, SIM_DT);
+      w.step(SIM_DT);
+      tankGap = tank.position.distanceTo(objective.position);
+      squishyGap = squishy.position.distanceTo(objective.position);
+      squishyHealth = squishy.health;
+    }
+
+    expect(objective.alive).toBe(false);
+    // The Tower shoots whatever is nearest it can see (World.towerTarget), so
+    // "who stands closest" *is* "who takes the damage".
+    expect(tankGap).toBeLessThan(squishyGap);
+    expect(tank.health).toBeLessThan(tank.maxHealth);
+    // The squishy worked the band outside the Tower's reach the whole time.
+    expect(squishyGap).toBeGreaterThan(objective.range);
+    expect(squishyHealth).toBe(squishy.maxHealth);
+  });
+
+  /*
+   * A charge takes over a second to fill and the aim is re-derived on every one
+   * of those ticks. Re-deriving it from "nearest enemy" turned every shot aimed
+   * at a Tower into a shot flung at a mage that might be half a map away, so
+   * structures took almost no mage fire at all.
+   */
+  it('keeps a charge aimed at the structure it was started at', () => {
+    const { w, objective } = oneObjectiveWorld();
+    const bot = w.summon(TEAM_A, 'pyromancer', objective.position.add(new Vec2(-9.6, 0)));
+    // Behind us and well out of throwing range — but still the nearest enemy.
+    const distraction = w.summon(TEAM_B, 'pyromancer', objective.position.add(new Vec2(-9.6, 14)));
+
+    const brain = new Brain(rng());
+    const bots = new Map<string, Difficulty>([[bot.id, 'normal']]);
+    let sawCharge = false;
+    for (let i = 0; i < 60 * 3; i++) {
+      brain.step(w, bots, SIM_DT);
+      w.step(SIM_DT);
+      if (!bot.charging) continue;
+      sawCharge = true;
+      expect(bot.input.aim.distanceTo(objective.position)).toBeLessThan(
+        bot.input.aim.distanceTo(distraction.position),
+      );
+    }
+
+    expect(sawCharge).toBe(true);
+    expect(objective.health).toBeLessThan(objective.maxHealth);
+  });
+
+  /*
+   * The bait: a defender parked under its own Tower. Taking it means fighting
+   * the mage and the Tower at once for a kill worth nothing, which is the trade
+   * the AI used to take by default. Rounding the structure to reach the firing
+   * band still clips the arc for a moment — what must not happen is settling
+   * inside it and trading there.
+   */
+  it('does not settle inside the objective Tower to duel the mage guarding it', () => {
+    const { w, objective } = oneObjectiveWorld();
+    const bot = w.summon(TEAM_A, 'pyromancer', new Vec2(-14, objective.position.y));
+    w.summon(TEAM_B, 'pyromancer', objective.position.add(new Vec2(-3, 0)));
+
+    const brain = new Brain(rng());
+    const bots = new Map<string, Difficulty>([[bot.id, 'normal']]);
+    let inside = 0;
+    let ticks = 0;
+    // A dead Tower shoots nobody, so walking over it afterwards proves nothing.
+    for (let i = 0; i < 60 * 25 && objective.alive; i++) {
+      brain.step(w, bots, SIM_DT);
+      w.step(SIM_DT);
+      ticks++;
+      if (bot.position.distanceTo(objective.position) <= objective.range) inside++;
+    }
+
+    expect(inside / ticks).toBeLessThan(0.2);
+    expect(bot.position.distanceTo(objective.position)).toBeGreaterThan(objective.range);
+    expect(bot.alive).toBe(true);
+    expect(objective.health).toBeLessThan(objective.maxHealth);
+  });
+});
+
+describe('Brain — roles inside the plan', () => {
+  // Supports win fights by multiplying whoever stands with them (GDD §8), so
+  // no plan of any posture may ever hand one an aim point to charge.
+  it('never asks a support to throw, whatever the squad is doing', () => {
+    const w = new World();
+    w.initSquad(TEAM_A, defaultSquad());
+    w.initSquad(TEAM_B, defaultSquad());
+    // Park the enemy squad on our Towers so team A is defending, not pushing.
+    const home = w.structuresOf(TEAM_A).find((s) => s.kind === 'tower')!;
+    for (const m of w.mages.values()) {
+      if (m.team === TEAM_B) m.position = home.position.add(new Vec2(2, 0));
+    }
+    home.health = home.maxHealth * 0.2;
+
+    const supports = [...w.mages.values()].filter(
+      (m) => m.team === TEAM_A && !ROLE_BEHAVIOR[m.role].attacks,
+    );
+    expect(supports.length).toBeGreaterThan(0);
+
+    const brain = new Brain(rng());
+    const bots = new Map<string, Difficulty>();
+    for (const m of w.mages.values()) if (m.team === TEAM_A) bots.set(m.id, 'normal');
+
+    for (let i = 0; i < 60 * 20; i++) {
+      brain.step(w, bots, SIM_DT);
+      w.step(SIM_DT);
+      for (const s of supports) {
+        expect(s.input.charging, `${s.id} was told to charge a throw`).toBe(false);
+        expect(s.charging, `${s.id} is charging a throw`).toBe(false);
+      }
+    }
   });
 });
