@@ -31,6 +31,7 @@ import {
   RESPAWN_IMMUNITY,
   SPACING,
   SPAWN_MARGIN,
+  SPELL_CAST_FX_DURATION,
   STRUCTURE_TOP_HEIGHT,
   SUDDEN_DEATH_DURATION,
   SUDDEN_DEATH_MANA_MULTIPLIER,
@@ -57,7 +58,7 @@ import {
   type Team,
 } from './entities';
 import { type Role } from './roles';
-import { spellFor, type SpellCard } from './spells';
+import { spellFor, type SpellCard, type SpellId } from './spells';
 import { Vec2 } from './Vec2';
 
 /** Why a `castSpell()` call was rejected — surfaced to the client for UI feedback. */
@@ -65,11 +66,29 @@ export type CastRejection = 'unknown_card' | 'not_enough_mana' | 'out_of_bounds'
 
 export type CastResult = { ok: true } | { ok: false; reason: CastRejection };
 
+/**
+ * A cast that just happened, kept around only long enough for clients to see
+ * it (GDD §17). Three of the four spells apply instantly to the mages in
+ * range — without this the wire would carry no trace at all that a Bênção or
+ * a Maldição ever landed, and only Praga (which leaves a puddle behind) would
+ * ever be visible.
+ */
+export interface SpellCastFx {
+  readonly id: string;
+  readonly spellId: SpellId;
+  readonly team: Team;
+  readonly position: Vec2;
+  readonly radius: number;
+  elapsed: number;
+}
+
 export class World {
   readonly mages = new Map<string, Mage>();
   readonly projectiles = new Map<string, Projectile>();
   readonly puddles = new Map<string, Puddle>();
   readonly structures = new Map<string, Structure>();
+  /** Purely cosmetic; see {@link SpellCastFx}. Never read by combat. */
+  readonly spellCasts = new Map<string, SpellCastFx>();
 
   roundOver = false;
   winner: Team | null = null;
@@ -80,6 +99,12 @@ export class World {
   suddenDeath = false;
 
   private nextId = 0;
+  /**
+   * Kept apart from `nextId` on purpose: a cosmetic marker must never shift the
+   * id a puddle or a projectile would have got, or adding VFX would change what
+   * a replay of the same inputs produces.
+   */
+  private nextCastFxId = 0;
   private readonly teamCounts = new Map<Team, number>();
   private readonly mana = new Map<Team, number>();
   private readonly manaAccum = new Map<Team, number>();
@@ -300,7 +325,28 @@ export class World {
 
     this.spendMana(team, spell.cost);
     this.applySpellEffect(team, spell, position);
+    this.recordCastFx(team, spell, position);
     return { ok: true };
+  }
+
+  /** Leaves a short-lived, gameplay-free trace of the cast for clients (GDD §17). */
+  private recordCastFx(team: Team, spell: SpellCard, position: Vec2): void {
+    const id = `cast-${++this.nextCastFxId}`;
+    this.spellCasts.set(id, {
+      id,
+      spellId: spell.id,
+      team,
+      position,
+      radius: spell.radius,
+      elapsed: 0,
+    });
+  }
+
+  private updateCastFx(dt: number): void {
+    for (const [id, fx] of this.spellCasts) {
+      fx.elapsed += dt;
+      if (fx.elapsed >= SPELL_CAST_FX_DURATION) this.spellCasts.delete(id);
+    }
   }
 
   private applySpellEffect(team: Team, spell: SpellCard, position: Vec2): void {
@@ -392,6 +438,7 @@ export class World {
     this.updateStructures(dt);
     this.updateProjectiles(dt);
     this.updatePuddles(dt);
+    this.updateCastFx(dt);
     this.checkMatchEnd();
 
     // `release` is an edge-triggered "the client let go this tick" signal; drop

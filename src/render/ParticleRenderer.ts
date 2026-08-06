@@ -8,12 +8,15 @@ import type { ElementId } from '../game/elements';
 import type { Player, Puddle, Snowball } from '../game/types';
 import type { World } from '../game/World';
 import { toThree } from './coords';
+import { LightningBolt } from './LightningBolt';
 
 const SNOWBALL_POOL_SIZE = 64;
 const PARTICLE_POOL_SIZE = 900;
 const FOOTPRINT_POOL_SIZE = 64;
 const SPARKLE_POOL_SIZE = 72;
-const RING_POOL_SIZE = 20;
+const RING_POOL_SIZE = 32;
+const ZONE_POOL_SIZE = 8;
+const DOME_POOL_SIZE = 4;
 const PLAYER_FX_STATE_SIZE = 32;
 const PARTICLE_DT = 1 / 60;
 const PARTICLE_GRAVITY = 7.5;
@@ -32,10 +35,38 @@ const WHITE = 0xffffff;
 const SMOKE_COLOR = 0x33302c;
 const FOOTPRINT_COLOR = 0x86a5b8;
 const RING_LIFT = 0.05;
-const BUBBLE_MIN_INTERVAL = 0.05;
-const BUBBLE_MAX_INTERVAL = 0.13;
+const ZONE_LIFT = 0.04;
+/** Peak opacity of a cast's ground disc. Additive, so it goes glary fast. */
+const ZONE_OPACITY = 0.32;
+const DOME_OPACITY = 0.22;
+/**
+ * Bubbles per second per square world unit of puddle. A rate rather than a
+ * fixed interval because Praga's zone (radius 3.5) covers five times the area
+ * of a poison flask's (1.5) — one bubble every 90ms looks like a boil in the
+ * small one and like nothing at all in the big one.
+ */
+const BUBBLE_RATE_PER_AREA = 1.6;
+const BUBBLE_MAX_RATE = 26;
 const BUBBLE_COLOR = 0x80b918;
 const BUBBLE_POP_COLOR = 0xa6ff5c;
+const MIST_COLOR = 0x3f7d20;
+/** Fraction of bubbles that come up as a slow, wide drifting mist puff instead. */
+const MIST_CHANCE = 0.22;
+
+/**
+ * Lightning's arc, in world units — see {@link LightningBolt}. The glow is a
+ * second, wider pass over the *same* zig-zag: a lone hairline arc washes out
+ * against the bright arena floor at match zoom.
+ */
+const BOLT = {
+  length: 2.2,
+  width: 0.085,
+  glowWidth: 0.2,
+  glowOpacity: 0.38,
+  spread: 0.34,
+  /** The spark at the tip, as a fraction of the projectile's radius. */
+  headScale: 0.6,
+} as const;
 
 /**
  * Per-element look (GDD §17: "efeito ativo tem que ser visível"). One entry
@@ -45,6 +76,12 @@ const BUBBLE_POP_COLOR = 0xa6ff5c;
  * ball recolored.
  */
 interface ElementVfx {
+  /**
+   * What the projectile *is*. Most elements are a conjured ball; lightning is
+   * a discharge and gets a jagged arc instead (see {@link LightningBolt}) —
+   * a recolored sphere never read as a bolt.
+   */
+  shape: 'orb' | 'bolt';
   /** Projectile body color + emissive glow. */
   core: number;
   glow: number;
@@ -69,6 +106,7 @@ interface ElementVfx {
 
 /** Legacy offline snowball (no element): pixel-identical to the pre-VFX-pass look. */
 const DEFAULT_VFX: ElementVfx = {
+  shape: 'orb',
   core: WHITE,
   glow: WHITE,
   trailColor: WHITE,
@@ -86,6 +124,7 @@ const DEFAULT_VFX: ElementVfx = {
 
 const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
   fire: {
+    shape: 'orb',
     core: 0xffb238,
     glow: 0xff5a1f,
     trailColor: 0xff7a1a,
@@ -101,6 +140,7 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     smoke: true,
   },
   ice: {
+    shape: 'orb',
     core: 0xd8f7ff,
     glow: 0x4cc9f0,
     trailColor: 0x8fe3ff,
@@ -116,6 +156,7 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     smoke: false,
   },
   lightning: {
+    shape: 'bolt',
     core: 0xffffff,
     glow: 0xffe066,
     trailColor: 0xfff275,
@@ -131,6 +172,7 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     smoke: false,
   },
   poison: {
+    shape: 'orb',
     core: 0xcdf27a,
     glow: 0x80b918,
     trailColor: 0x9bd63d,
@@ -146,6 +188,7 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     smoke: false,
   },
   stone: {
+    shape: 'orb',
     core: 0xc7cdd6,
     glow: 0x8d99ae,
     trailColor: 0x9aa4b2,
@@ -161,6 +204,7 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     smoke: true,
   },
   arcane: {
+    shape: 'orb',
     core: 0xe6d1ff,
     glow: 0x9b5de5,
     trailColor: 0xc9a6f5,
@@ -176,6 +220,7 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     smoke: false,
   },
   wind: {
+    shape: 'orb',
     core: 0xf3fbfb,
     glow: 0xa8dadc,
     trailColor: 0xd7f1f2,
@@ -196,8 +241,78 @@ function vfxFor(element: ElementId | undefined): ElementVfx {
   return element ? ELEMENT_VFX[element] : DEFAULT_VFX;
 }
 
+/**
+ * Per-spell look for the four cards in the deck (GDD §9). Only Praga left
+ * anything on screen before this — it spawns a puddle, so it got a renderer
+ * for free — while a Bênção, a Maldição or an Escudo landed completely
+ * silently. The shared grammar is: a ground zone marking the radius it
+ * covered, a shockwave ring, and motes that *rise* for a blessing or *fall*
+ * for a curse, so which half of the deck was played reads without knowing the
+ * colors.
+ */
+interface SpellVfx {
+  /** Shockwave ring + the brighter accents. */
+  ring: number;
+  /** Flat ground disc marking the affected radius. */
+  zone: number;
+  motes: readonly number[];
+  moteCount: number;
+  /** +1 for a buff (motes lift), -1 for a curse (motes press down). */
+  direction: 1 | -1;
+  /** Escudo Arcano only: a translucent dome snapping over the area it protected. */
+  dome: boolean;
+}
+
+const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
+  blessing: {
+    ring: 0xffe9a8,
+    zone: 0xffb703,
+    motes: [0xfff3c4, 0xffd166, 0xffb703],
+    moteCount: 26,
+    direction: 1,
+    dome: false,
+  },
+  slow_curse: {
+    ring: 0xcaf0f8,
+    zone: 0x4361ee,
+    motes: [0xcaf0f8, 0x8ecae6, 0x4895ef],
+    moteCount: 22,
+    direction: -1,
+    dome: false,
+  },
+  arcane_shield: {
+    ring: 0xe0fbfc,
+    zone: 0x4cc9f0,
+    motes: [0xe0fbfc, 0x7dd3fc, 0x9b5de5],
+    moteCount: 20,
+    direction: 1,
+    dome: true,
+  },
+  plague: {
+    ring: 0xb6e84a,
+    zone: 0x4f772d,
+    motes: [0xb6e84a, 0x80b918, 0x2f6b1a],
+    moteCount: 26,
+    direction: 1,
+    dome: false,
+  },
+};
+
+/** An unknown card still gets a cast beat rather than nothing at all. */
+const DEFAULT_SPELL_VFX: SpellVfx = {
+  ring: 0xe6d1ff,
+  zone: 0x9b5de5,
+  motes: [0xe6d1ff, 0x9b5de5, 0x6a2fb0],
+  moteCount: 18,
+  direction: 1,
+  dome: false,
+};
+
 interface SnowballSlot {
   readonly mesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+  /** Built on demand: only lightning needs these, and most matches never field it. */
+  bolt: LightningBolt | null;
+  boltGlow: LightningBolt | null;
   snowballId: number;
   lastTrailTick: number;
 }
@@ -247,6 +362,24 @@ interface RingSlot {
   active: boolean;
 }
 
+/** Filled ground disc marking the area a spell just covered. */
+interface ZoneSlot {
+  readonly mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  life: number;
+  maxLife: number;
+  radius: number;
+  active: boolean;
+}
+
+/** Hemisphere that snaps up over a cast and fades — Escudo Arcano's beat. */
+interface DomeSlot {
+  readonly mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  life: number;
+  maxLife: number;
+  radius: number;
+  active: boolean;
+}
+
 interface PlayerFxState {
   playerId: number;
   footprintTimer: number;
@@ -259,9 +392,10 @@ interface PlayerFxState {
 
 /**
  * Observes snowball simulation data and combat events, rendering pooled flying
- * projectiles (with a per-element glow and a particle tail shed in flight),
- * snow trails, hit puffs, impact bursts/shockwaves and poison-puddle bubbles
- * — without mutating world state.
+ * projectiles (a per-element glowing orb, or a jagged arc for lightning, each
+ * shedding a particle tail in flight), snow trails, hit puffs, impact
+ * bursts/shockwaves, spell-cast zones and poison-puddle bubbles — without
+ * mutating world state.
  */
 export class ParticleRenderer implements GameRenderer {
   private readonly group = new THREE.Group();
@@ -271,6 +405,8 @@ export class ParticleRenderer implements GameRenderer {
   private readonly footprintSlots: FootprintSlot[] = [];
   private readonly sparkleSlots: SparkleSlot[] = [];
   private readonly ringSlots: RingSlot[] = [];
+  private readonly zoneSlots: ZoneSlot[] = [];
+  private readonly domeSlots: DomeSlot[] = [];
   private readonly playerFxStates: PlayerFxState[] = [];
   private readonly puddleBubbleTimers = new Map<EntityId, number>();
   private readonly defaultBallMaterial: THREE.MeshStandardMaterial;
@@ -279,6 +415,7 @@ export class ParticleRenderer implements GameRenderer {
   private readonly offSnowballThrown: () => void;
   private readonly offBuffPickedUp: () => void;
   private readonly offPlayerRespawned: () => void;
+  private readonly offSpellCast: () => void;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -315,11 +452,14 @@ export class ParticleRenderer implements GameRenderer {
 
     for (let i = 0; i < SNOWBALL_POOL_SIZE; i++) {
       const mesh = new THREE.Mesh(snowballGeometry, this.defaultBallMaterial);
+      // A conjured ball is a solid body like anything else on the field, so it
+      // drops a shadow (GDD §17) — which is also the only depth cue for how
+      // high an arcing spell currently is.
       mesh.castShadow = true;
       mesh.visible = false;
       this.group.add(mesh);
 
-      this.snowballSlots.push({ mesh, snowballId: -1, lastTrailTick: -1 });
+      this.snowballSlots.push({ mesh, bolt: null, boltGlow: null, snowballId: -1, lastTrailTick: -1 });
     }
 
     for (let i = 0; i < PARTICLE_POOL_SIZE; i++) {
@@ -400,6 +540,46 @@ export class ParticleRenderer implements GameRenderer {
       this.ringSlots.push({ mesh, life: 0, maxLife: 1, maxScale: 1, active: false });
     }
 
+    const zoneGeometry = assets.geometry('particle-renderer-zone-disc', () => {
+      const geometry = new THREE.CircleGeometry(1, 40);
+      geometry.rotateX(-Math.PI / 2);
+      return geometry;
+    });
+    for (let i = 0; i < ZONE_POOL_SIZE; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color: WHITE,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      });
+      const mesh = new THREE.Mesh(zoneGeometry, material);
+      mesh.visible = false;
+      this.group.add(mesh);
+      this.zoneSlots.push({ mesh, life: 0, maxLife: 1, radius: 1, active: false });
+    }
+
+    const domeGeometry = assets.geometry(
+      'particle-renderer-dome',
+      // Upper half only: the lower half would be underground.
+      () => new THREE.SphereGeometry(1, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    );
+    for (let i = 0; i < DOME_POOL_SIZE; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color: WHITE,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      });
+      const mesh = new THREE.Mesh(domeGeometry, material);
+      mesh.visible = false;
+      this.group.add(mesh);
+      this.domeSlots.push({ mesh, life: 0, maxLife: 1, radius: 1, active: false });
+    }
+
     for (let i = 0; i < PLAYER_FX_STATE_SIZE; i++) {
       this.playerFxStates.push({
         playerId: -1,
@@ -462,6 +642,9 @@ export class ParticleRenderer implements GameRenderer {
       this.spawnSnowPuff(event.x, event.y, 9);
       this.spawnRing(event.x, event.y, BUFF_COLORS.immunity, 2.0, 0.4);
     });
+    this.offSpellCast = events.on('SpellCast', (event) => {
+      this.spawnSpellCast(event.spellId, event.x, event.y, event.radius, event.friendly);
+    });
   }
 
   sync(alpha: number): void {
@@ -478,6 +661,7 @@ export class ParticleRenderer implements GameRenderer {
     for (let i = visibleSnowballs; i < SNOWBALL_POOL_SIZE; i++) {
       const slot = this.snowballSlots[i];
       slot.mesh.visible = false;
+      this.hideBolt(slot);
       slot.snowballId = -1;
       slot.lastTrailTick = -1;
     }
@@ -487,6 +671,8 @@ export class ParticleRenderer implements GameRenderer {
     this.updateFootprints();
     this.updateSparkles();
     this.updateRings();
+    this.updateZones();
+    this.updateDomes();
     this.updatePuddleBubbles();
   }
 
@@ -496,8 +682,19 @@ export class ParticleRenderer implements GameRenderer {
     this.offSnowballThrown();
     this.offBuffPickedUp();
     this.offPlayerRespawned();
+    this.offSpellCast();
     this.scene.remove(this.group);
 
+    for (const slot of this.snowballSlots) {
+      slot.bolt?.dispose();
+      slot.boltGlow?.dispose();
+    }
+    for (const zone of this.zoneSlots) {
+      zone.mesh.material.dispose();
+    }
+    for (const dome of this.domeSlots) {
+      dome.mesh.material.dispose();
+    }
     for (const particle of this.particleSlots) {
       particle.mesh.material.dispose();
     }
@@ -522,10 +719,16 @@ export class ParticleRenderer implements GameRenderer {
 
     const cfg = vfxFor(snowball.element);
     toThree(this.tmp, snowball.position.x, snowball.position.y, snowball.height);
-    const scale = Math.max(snowball.radius, SNOWBALL.radius * 0.5) * cfg.visualScale;
-    slot.mesh.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
-    slot.mesh.scale.setScalar(scale);
-    slot.mesh.visible = true;
+
+    if (cfg.shape === 'bolt') {
+      this.updateBolt(slot, snowball, cfg);
+    } else {
+      const scale = Math.max(snowball.radius, SNOWBALL.radius * 0.5) * cfg.visualScale;
+      slot.mesh.castShadow = true;
+      slot.mesh.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
+      slot.mesh.scale.setScalar(scale);
+      slot.mesh.visible = true;
+    }
 
     const trailTick = Math.floor(snowball.age * cfg.trailRate);
     if (snowball.height > SNOWBALL.radius * 0.5 && trailTick > slot.lastTrailTick) {
@@ -534,9 +737,51 @@ export class ParticleRenderer implements GameRenderer {
     }
   }
 
+  /**
+   * Redraws the arc behind a lightning projectile. The simulation still tracks
+   * a point; only the drawing is a bolt, so nothing about the hit changes.
+   */
+  private updateBolt(slot: SnowballSlot, snowball: Snowball, cfg: ElementVfx): void {
+    // The tip keeps the ball mesh, shrunk to a spark: the arc trails *behind*
+    // the point the simulation tracks, so without it there is nothing marking
+    // where the projectile actually is. No shadow — a discharge does not
+    // block the sun the way a conjured stone does.
+    slot.mesh.castShadow = false;
+    slot.mesh.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
+    slot.mesh.scale.setScalar(snowball.radius * BOLT.headScale);
+    slot.mesh.visible = true;
+
+    slot.bolt ??= this.createBolt(cfg.core, 1);
+    slot.boltGlow ??= this.createBolt(cfg.glow, BOLT.glowOpacity);
+
+    const speed = Math.hypot(snowball.velocity.x, snowball.velocity.y);
+    // A bolt sitting still has no axis to draw along; fall back to +x so a
+    // stalled projectile still shows something rather than collapsing.
+    const dirX = speed > 1e-4 ? snowball.velocity.x / speed : 1;
+    const dirZ = speed > 1e-4 ? snowball.velocity.y / speed : 0;
+
+    slot.bolt.update(this.tmp, dirX, dirZ, BOLT.length, BOLT.width, BOLT.spread);
+    slot.boltGlow.updateFrom(slot.bolt.path, dirX, dirZ, BOLT.glowWidth);
+    slot.bolt.mesh.visible = true;
+    slot.boltGlow.mesh.visible = true;
+  }
+
+  private createBolt(color: number, opacity: number): LightningBolt {
+    const bolt = new LightningBolt(color, opacity);
+    this.group.add(bolt.mesh);
+    return bolt;
+  }
+
   /** Swaps the pooled projectile's material for the element now occupying this slot. */
   private applySlotElement(slot: SnowballSlot, element: ElementId | undefined): void {
     slot.mesh.material = element ? this.ballMaterialFor(element) : this.defaultBallMaterial;
+    // A slot that just stopped being a bolt must not leave the old arc on screen.
+    if (vfxFor(element).shape !== 'bolt') this.hideBolt(slot);
+  }
+
+  private hideBolt(slot: SnowballSlot): void {
+    if (slot.bolt) slot.bolt.mesh.visible = false;
+    if (slot.boltGlow) slot.boltGlow.mesh.visible = false;
   }
 
   private ballMaterialFor(element: ElementId): THREE.MeshStandardMaterial {
@@ -909,19 +1154,23 @@ export class ParticleRenderer implements GameRenderer {
     }
   }
 
-  /** Green bubbles rising out of every live poison puddle (GDD §9 Praga/Alquimista). */
+  /**
+   * Green bubbles boiling out of every live poison puddle (GDD §9
+   * Praga/Alquimista), at a rate proportional to the puddle's area so a big
+   * Praga zone boils across its whole surface instead of at one spot.
+   */
   private updatePuddleBubbles(): void {
     const seen = new Set<EntityId>();
     for (const puddle of this.world.puddles) {
       seen.add(puddle.id);
-      let timer = this.puddleBubbleTimers.get(puddle.id);
-      if (timer === undefined) {
-        timer = Math.random() * BUBBLE_MAX_INTERVAL;
-      }
+      const interval = this.bubbleInterval(puddle);
+      let timer = this.puddleBubbleTimers.get(puddle.id) ?? Math.random() * interval;
       timer -= PARTICLE_DT;
-      if (timer <= 0) {
+      // A single tick can owe several bubbles on a wide puddle, so drain the
+      // timer in a loop rather than dropping the surplus.
+      while (timer <= 0) {
         this.spawnPuddleBubble(puddle);
-        timer = BUBBLE_MIN_INTERVAL + Math.random() * (BUBBLE_MAX_INTERVAL - BUBBLE_MIN_INTERVAL);
+        timer += interval * (0.6 + Math.random() * 0.8);
       }
       this.puddleBubbleTimers.set(puddle.id, timer);
     }
@@ -931,25 +1180,173 @@ export class ParticleRenderer implements GameRenderer {
     }
   }
 
+  private bubbleInterval(puddle: Puddle): number {
+    const rate = Math.min(BUBBLE_MAX_RATE, BUBBLE_RATE_PER_AREA * Math.PI * puddle.radius * puddle.radius);
+    return 1 / Math.max(4, rate);
+  }
+
   private spawnPuddleBubble(puddle: Puddle): void {
     const angle = Math.random() * Math.PI * 2;
-    const dist = Math.random() * puddle.radius * 0.85;
+    // sqrt keeps the spawn uniform over the disc; a flat random clumps at the centre.
+    const dist = Math.sqrt(Math.random()) * puddle.radius * 0.92;
     const x = puddle.position.x + Math.cos(angle) * dist;
     const y = puddle.position.y + Math.sin(angle) * dist;
     toThree(this.tmp, x, y, 0.03);
+
+    // A minority come up as slow, fat, dark puffs — the fumes over the boil,
+    // which is what stops the puddle from reading as a flat green sticker.
+    if (Math.random() < MIST_CHANCE) {
+      this.spawnParticle(
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        (Math.random() - 0.5) * 0.22,
+        0.28 + Math.random() * 0.22,
+        (Math.random() - 0.5) * 0.22,
+        0.16 + Math.random() * 0.12,
+        0.9 + Math.random() * 0.5,
+        MIST_COLOR,
+        0.06,
+      );
+      return;
+    }
+
     const color = Math.random() < 0.35 ? BUBBLE_POP_COLOR : BUBBLE_COLOR;
     this.spawnParticle(
       this.tmp.x,
       this.tmp.y,
       this.tmp.z,
       (Math.random() - 0.5) * 0.1,
-      0.4 + Math.random() * 0.35,
+      0.5 + Math.random() * 0.45,
       (Math.random() - 0.5) * 0.1,
-      0.045 + Math.random() * 0.05,
+      0.05 + Math.random() * 0.06,
       0.35 + Math.random() * 0.25,
       color,
       0.3,
     );
+  }
+
+  /* ---- Spell casts (GDD §9) ------------------------------------------------ */
+
+  /**
+   * The one beat that tells both players a card was spent and where it landed.
+   * Everything here is driven off {@link SPELL_VFX}, so retuning a spell's look
+   * is a table edit.
+   */
+  private spawnSpellCast(spellId: string, x: number, y: number, radius: number, friendly: boolean): void {
+    const cfg = SPELL_VFX[spellId] ?? DEFAULT_SPELL_VFX;
+
+    this.spawnZone(x, y, radius, cfg.zone, 0.85);
+    this.spawnRing(x, y, cfg.ring, radius, 0.5);
+    this.spawnRing(x, y, cfg.zone, radius * 0.62, 0.32);
+    // Your own cast gets a white core flash: on a busy field the colour alone
+    // does not tell you whether the spell that just went off was yours. Kept
+    // small — these all blend additively, and a wide white disc on top of the
+    // zone blows the whole area out to a featureless glare.
+    if (friendly) this.spawnRing(x, y, WHITE, radius * 0.26, 0.18);
+    if (cfg.dome) this.spawnDome(x, y, radius, cfg.ring);
+    this.spawnSpellMotes(x, y, radius, cfg);
+  }
+
+  /** Motes filling the affected disc: they lift for a buff and rain down for a curse. */
+  private spawnSpellMotes(x: number, y: number, radius: number, cfg: SpellVfx): void {
+    const rising = cfg.direction > 0;
+    for (let i = 0; i < cfg.moteCount; i++) {
+      const angle = (i / cfg.moteCount) * Math.PI * 2 + Math.random() * 0.5;
+      const dist = Math.sqrt(Math.random()) * radius;
+      toThree(
+        this.tmp,
+        x + Math.cos(angle) * dist,
+        y + Math.sin(angle) * dist,
+        rising ? 0.08 : 2.8 + Math.random() * 0.7,
+      );
+      this.spawnParticle(
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        (Math.random() - 0.5) * 0.4,
+        rising ? 1.7 + Math.random() * 1.2 : -2.4 - Math.random() * 0.9,
+        (Math.random() - 0.5) * 0.4,
+        0.09 + Math.random() * 0.07,
+        0.6 + Math.random() * 0.35,
+        cfg.motes[i % cfg.motes.length],
+        rising ? 0.12 : 0.45,
+      );
+    }
+  }
+
+  private spawnZone(x: number, y: number, radius: number, color: number, life: number): void {
+    for (const zone of this.zoneSlots) {
+      if (zone.active) continue;
+      toThree(this.tmp, x, y, ZONE_LIFT);
+      zone.life = life;
+      zone.maxLife = life;
+      zone.radius = radius;
+      zone.active = true;
+      zone.mesh.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
+      zone.mesh.scale.setScalar(radius * 0.6);
+      zone.mesh.material.color.setHex(color);
+      zone.mesh.material.opacity = ZONE_OPACITY;
+      zone.mesh.visible = true;
+      return;
+    }
+  }
+
+  private updateZones(): void {
+    for (const zone of this.zoneSlots) {
+      if (!zone.active) continue;
+
+      zone.life -= PARTICLE_DT;
+      if (zone.life <= 0) {
+        zone.active = false;
+        zone.mesh.visible = false;
+        zone.mesh.material.opacity = 0;
+        continue;
+      }
+
+      const t = 1 - zone.life / zone.maxLife;
+      const eased = 1 - (1 - t) * (1 - t);
+      zone.mesh.scale.setScalar(zone.radius * (0.6 + eased * 0.4));
+      zone.mesh.material.opacity = ZONE_OPACITY * (1 - t);
+    }
+  }
+
+  private spawnDome(x: number, y: number, radius: number, color: number): void {
+    for (const dome of this.domeSlots) {
+      if (dome.active) continue;
+      toThree(this.tmp, x, y, 0.02);
+      dome.life = 0.7;
+      dome.maxLife = 0.7;
+      dome.radius = radius;
+      dome.active = true;
+      dome.mesh.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
+      dome.mesh.material.color.setHex(color);
+      dome.mesh.material.opacity = DOME_OPACITY;
+      dome.mesh.visible = true;
+      return;
+    }
+  }
+
+  private updateDomes(): void {
+    for (const dome of this.domeSlots) {
+      if (!dome.active) continue;
+
+      dome.life -= PARTICLE_DT;
+      if (dome.life <= 0) {
+        dome.active = false;
+        dome.mesh.visible = false;
+        dome.mesh.material.opacity = 0;
+        continue;
+      }
+
+      const t = 1 - dome.life / dome.maxLife;
+      const eased = 1 - (1 - t) * (1 - t) * (1 - t);
+      const r = dome.radius * (0.35 + eased * 0.65);
+      // Flattened: a full hemisphere over a 4-unit radius would tower over the
+      // mages it is protecting and hide the fight underneath it.
+      dome.mesh.scale.set(r, r * 0.55, r);
+      dome.mesh.material.opacity = DOME_OPACITY * (1 - t);
+    }
   }
 
   private fxStateForPlayer(player: Player): PlayerFxState | null {

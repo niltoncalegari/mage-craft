@@ -1,4 +1,273 @@
-# Handover — 2026-08-04 (Cursor — a UI da partida existe: um humano joga pelo browser) — READ THIS FIRST
+# Handover — 2026-08-06 (Claude — VFX parte 2: raio vira arco, projéteis com altura/sombra, VFX das 4 cartas, cristal visível) — READ THIS FIRST
+
+## O que esta sessão fez
+
+Pedido do usuário: "melhorar os poderes e VFX deles, magia de raio deve ser
+parecido com raio e nao como uma bola, as magias que sao redondas devem
+possuir sombra como qualquer outro objeto no jogo, as magias das cartas ainda
+estao sem efeitos apenas o plague possui efeito, as torres nao possuem o
+crystal no topo ainda."
+
+`typecheck && lint && test && build` verdes — **281/281 testes** (8 novos).
+**Desta vez foi verificado visualmente**: partida online real rodada no
+browser via Playwright, com screenshots. Ver "Como verificar" no fim.
+
+### A causa raiz das 3 primeiras queixas era a mesma: `height` não existia no fio
+
+`ProjectileSnapshotDTO` mandava posição e velocidade, mas **não a altura**.
+`SnapshotSync` passava `0` pro `launchSnowball`, então todo projétil online era
+desenhado *no chão*, meio enterrado. Isso explica três sintomas de uma vez:
+
+1. **Sem sombra** — a bola já tinha `castShadow = true` desde a sessão passada;
+   ela só não projetava nada porque estava colada no chão.
+2. **Sem cauda** — `spawnTrail` é guardado por `snowball.height > raio/2`, que
+   com altura 0 nunca passava. Toda a cauda de partículas da sessão anterior
+   **nunca apareceu em partida online**.
+3. **Sem arco** — projétil de pedra e de fogo voavam retos, sem a parábola que
+   a sim de fato simula.
+
+Além disso `age` nunca avançava online (não existe `ProjectileSystem` no
+cliente), e a cauda é emitida por `age * trailRate` — segundo motivo pro rastro
+não sair. E o projétil só se movia nos ~20Hz do snapshot, aos trancos.
+
+Correção: `height` e `radius` no snapshot (`sim/protocol.ts`, `Session.ts`,
+`App.ts`), e `SnapshotSync.advanceProjectiles()` — dead reckoning por
+velocidade + envelhecimento a cada frame, com a altura suavizada em vez de
+saltar a cada snapshot.
+
+### Raio agora é um arco, não uma bola
+
+`src/render/LightningBolt.ts` (novo): duas fitas cruzadas (uma deitada, uma em
+pé) em espaço de mundo, com o zig-zag re-sorteado a cada frame — é isso que dá
+o crepitar. Os pontos alternam de lado a cada passo (um random walk puro vira
+uma fita lisa, não um raio). O `ElementVfx` ganhou `shape: 'orb' | 'bolt'`; só
+`lightning` é `'bolt'`. A ponta continua sendo a esfera do pool, encolhida
+(`BOLT.headScale`), porque o arco fica *atrás* do ponto que a simulação
+rastreia — sem a faísca não haveria nada marcando onde o projétil está. O arco
+tem uma segunda passada mais larga e opaca por cima do **mesmo** caminho
+(`LightningBolt.updateFrom`) fazendo o brilho. Bolt não projeta sombra.
+
+Tamanho: a primeira versão ficou grande demais (o usuário pediu "um pouco
+menor"); hoje está em `BOLT = { length: 2.2, width: 0.085, glowWidth: 0.2 }`.
+**É esse objeto no topo do `ParticleRenderer.ts` que se mexe pra ajustar.**
+
+### As 4 cartas finalmente têm efeito
+
+Só Praga aparecia porque só ela deixa uma poça (entidade que já ia no
+snapshot). Bênção, Maldição e Escudo aplicam efeito **instantâneo** nos magos
+em raio — o fio não carregava traço nenhum de que tinham sido lançadas.
+
+- `sim/World.ts`: `spellCasts` — marcador cosmético por cast, expira em
+  `SPELL_CAST_FX_DURATION` (1s). Usa `nextCastFxId` **próprio**: se usasse o
+  `nextId` compartilhado, adicionar VFX mudaria os ids de poças/projéteis e
+  portanto o replay de uma mesma sequência de inputs.
+- Vai no snapshot como `spells: SpellCastDTO[]`; o servidor repete o mesmo
+  cast em vários snapshots (a 20Hz um evento de 1 frame se perde), e o
+  **cliente** é quem transforma isso em evento único, deduplicando por id
+  (`SnapshotSync.syncSpellCasts` + `seenCasts`).
+- Novo evento de cliente `SpellCast` (POV-relativo: `friendly`), consumido pelo
+  `ParticleRenderer`. Tabela `SPELL_VFX` no topo do arquivo — a gramática é
+  zona no chão + anel de choque + partículas que **sobem** (bênção) ou
+  **descem** (maldição), então qual metade do deck foi jogada se lê sem saber
+  as cores. Escudo ganha ainda uma cúpula (`domeSlots`).
+- Estados por mago: `hasted`/`slowed` novos no `MageSnapshotDTO` (`shielded` já
+  existia). `PlayerRenderer` desenha anéis tracejados girando — rápido pra
+  frente na pressa, devagar pra trás na lentidão — mais a bolha do escudo.
+  Materiais são **compartilhados** entre magos, então só transformações são
+  animadas ali; animar opacidade animaria a de todo mundo.
+
+### Cristal das torres
+
+Já existia desde a sessão passada — mas em `TOWER_HEIGHT + 0.55`, ou seja,
+enfiado dentro da própria coroa, lendo como telhado. Subiu pra `+1.15`,
+cresceu, ganhou núcleo claro com emissivo da cor do time e um halo aditivo
+(`haloMaterial`) que é o que dá silhueta no zoom de partida. Núcleo (Core)
+ganhou o mesmo halo por consistência.
+
+### Ajustes de intensidade feitos *olhando* a tela
+
+Blending aditivo satura rápido: a primeira versão do cast estourava a área
+inteira em branco. `ZONE_OPACITY 0.32`, `DOME_OPACITY 0.22`, flash branco do
+"cast é seu" reduzido pra `radius * 0.26`, borda da poça `0.38`. Bolhas da
+poça agora saem por **área** (`BUBBLE_RATE_PER_AREA`), não em intervalo fixo —
+a zona de Praga (raio 3.5) tem 5x a área de uma poça de veneno (1.5) e fervia
+igual, o que em cima da grande não se via.
+
+## Cuidado / não feito
+
+- **Cliente novo + servidor velho quebra.** `height`/`radius`/`spells` são
+  campos **obrigatórios** no DTO. Os dois lados sobem juntos (`docker compose
+  build`), mas se algum dia forem versionados separado isso precisa virar
+  opcional com default.
+- **Nada de áudio.** Continua o mesmo som genérico pra qualquer impacto; nenhum
+  elemento tem som próprio (GDD §17 pede áudio procedural por evento).
+- **Sem screen shake / hit-stop.**
+- `PlayerHit` ainda não sabe o elemento de quem bateu — o burst de acerto usa a
+  cor do time, não do feitiço.
+- O sim offline (`src/game/**`) continua sem elementos: tudo isto é online.
+
+## Como verificar (o que esta sessão de fato rodou)
+
+```powershell
+npm run dev:server   # :8080
+npm run dev          # :5173
+```
+Depois um script Playwright que entra no Hall, faz fila, joga a partida contra
+o bot, joga carta e tira screenshot (o `scripts/siege.mjs` do repo faz o
+caminho todo; esta sessão usou uma variante em scratchpad que ainda dá zoom com
+a roda do mouse e só dispara o screenshot quando há projétil no meio do campo).
+Confirmado em imagem: sombra elíptica sob bola de pedra/fogo em voo, arco de
+raio, zonas de Bênção/Maldição/Escudo/Praga, anéis de pressa nos magos, cristal
+das torres visível de longe.
+
+---
+
+# Handover — 2026-08-05 (Claude — passo de VFX: feitiços por elemento, cauda de partículas, poça de veneno borbulhando, cristal nas torres)
+
+## O que esta sessão fez
+
+Passo de VFX puramente client-side, escopo cosmético (`src/render/**`, sem
+tocar `sim/`, `server/`, protocolo de gameplay). Pedido do usuário: "melhorar
+as spell, efeitos de explosão, faísca, praga no chão deve borbulhar com
+partículas verdes, tiro de magos de fogo deve ser uma bola de fogo com
+partículas ao ser lançado, com tail e também explosão, ataque de gelo também
+deve ter VFX, mais juice em geral, e lembrar de adicionar cristal em cima das
+torres."
+
+`npm run typecheck && npm run lint && npm test && npm run build` — verdes.
+**273/273 testes** (nenhum teste novo — é trabalho de render, sem lógica de
+sim para cobrir). **Não verificado visualmente num browser real** — precisaria
+de servidor + matchmaking rodando para ver uma partida siege online de
+verdade, e esta sessão não subiu esse stack. Só passou por
+typecheck/lint/test/build. **Próxima sessão: jogar uma partida online e olhar
+os efeitos antes de assumir que estão bons.**
+
+### A peça que faltava: o elemento do projétil nunca chegava ao cliente
+
+`sim/protocol.ts`'s `ProjectileSnapshotDTO` **já mandava** `element` do
+servidor (`fire`/`ice`/`lightning`/`poison`/`stone`/`arcane`/`wind`), mas
+`SnapshotSync.syncProjectiles` descartava o campo e desenhava toda bola de
+fogo/gelo/raio como a mesma bola de neve branca do modo offline antigo. Esse
+foi o fio que destravou o resto — sem ele, dar estilo por elemento no
+`ParticleRenderer` não tinha em cima do que pendurar.
+
+De quebra, achei e corrigi um bug real no mesmo trecho: o impacto de projétil
+online (`SnapshotSync.ts`, `syncProjectiles`, loop de remoção) emitia
+`SnowballImpact` com **`x: 0, y: 0` sempre** — o código fazia
+`splice`+`release` do snowball e só *depois* lia a posição, que por essa
+altura já tinha sido zerada pelo `resetSnowball`. Toda explosão online estava
+acontecendo no centro do mapa, não onde o projétil de fato bateu. Agora a
+posição (e o elemento) são lidos do snowball **antes** de soltá-lo de volta
+pro pool.
+
+### Arquivos tocados (nenhum novo — tudo extensão do que já existia)
+
+| Arquivo | O que mudou |
+| --- | --- |
+| `src/game/types.ts` | `Snowball.element?: ElementId` |
+| `src/game/Snowball.ts` | `element` passa por `create`/`reset`/`launchSnowball` (parâmetro novo no fim, opcional — chamadas antigas continuam válidas) |
+| `src/core/events.ts` | `SnowballImpact.element?: ElementId` |
+| `src/systems/CollisionSystem.ts`, `ProjectileSystem.ts` | emitem `element: snowball.element` (offline continua `undefined` — zero mudança de comportamento lá) |
+| `src/net/SnapshotSync.ts` | passa `p.element` pro `launchSnowball`; corrige o bug de posição acima |
+| `src/render/ParticleRenderer.ts` | **o grosso do trabalho** — ver abaixo |
+| `src/render/StructureRenderer.ts` | cristal no topo das Torres |
+
+### `ParticleRenderer.ts` — o que tem lá agora
+
+- **Tabela `ELEMENT_VFX`** (topo do arquivo, `Record<ElementId, ElementVfx>`):
+  um bloco por elemento com cor do núcleo + brilho emissivo, cor/tamanho/taxa
+  da cauda, paleta de cores do impacto, se tem anel de onda de choque e se
+  solta fumaça. **É aqui que se ajusta o visual de cada elemento** — não
+  precisa mexer em lógica pra retocar cor/intensidade.
+- **Bola do projétil**: material `MeshStandardMaterial` emissivo por
+  elemento (cacheado via `AssetManager`, uma instância por elemento, não por
+  bola — 64 bolas no pool reaproveitam), trocado só quando o slot pooled
+  passa a representar um projétil diferente (mesmo padrão que já existia pro
+  reset do trail).
+- **Cauda = partículas, não malha.** Primeira versão desta sessão usou um
+  cone sólido com blending aditivo esticado atrás da bola; o usuário corrigiu
+  no meio da sessão ("o tail das magias devem ser em partículas") e a malha
+  foi removida. Hoje `spawnTrail` solta `TAIL_STREAK_COUNT` (3) partículas por
+  tick de voo, espalhadas lateralmente (jitter perpendicular à velocidade) e
+  com leve atraso, uma mais brilhante (cor do núcleo) e as outras mais fracas
+  (cor da cauda) — lê como um rastro de partículas, não como um cometa sólido.
+- **Impacto**: burst multi-cor (`spawnElementBurst`, cicla pela paleta do
+  elemento) + **anel de onda de choque** (`spawnRing`, pool novo de 20,
+  `RingGeometry` plano que expande e esmaece) nos elementos que fazem sentido
+  como explosão (fogo, gelo, raio, arcano, vento, pedra — veneno fica sem
+  anel, é splash, não explosão) + fumaça subindo em fogo/pedra
+  (`spawnSmoke`). Elemento indefinido (bola de neve offline) cai num branch
+  isolado que replica **exatamente** o comportamento antigo — zero
+  regressão visual no modo offline congelado.
+- **Poça de veneno borbulhando**: `updatePuddleBubbles()` roda a cada
+  `sync()`, itera `world.puddles`, e por poça mantém um timer
+  (`puddleBubbleTimers: Map<EntityId, number>`) que solta 1 bolha
+  verde/verde-clara por vez em posição aleatória dentro do raio, subindo e
+  sumindo rápido. Usa `Math.random()` (cosmético puro, não precisa ser
+  determinístico como a sim).
+- **Mais juice nos eventos que já existiam**: `PlayerHit` ganhou um anel
+  branco de flash rápido além do burst de cor do time; `BuffPickedUp` e
+  `PlayerRespawned` ganharam anel colorido. Tudo em cima do `spawnRing` novo,
+  reuso direto.
+- `PARTICLE_POOL_SIZE` subiu de 500 → 900 pra dar folga com a cauda mais
+  densa (3 partículas/tick em vez de 1) rodando em vários projéteis ao mesmo
+  tempo.
+
+### `StructureRenderer.ts` — cristal nas Torres
+
+Torre tinha só shaft + crown (cilindro colorido por time), sem cristal — só o
+Núcleo tinha. Adicionado um `OctahedronGeometry` no topo de cada Torre, na
+mesma linguagem visual do cristal do Núcleo, com material emissivo leve
+(`crystalMaterial`, cacheado por cor) e giro + flutuação sutil independente
+do resto da torre (`StructureView.crystal`, animado em `updateView` — o
+Núcleo continua girando o corpo inteiro como já fazia, não mexi nisso).
+`buildTower`/`buildCore` agora retornam `{ group, crystal }` em vez de só o
+`THREE.Group`.
+
+## Cuidado / não feito
+
+- **Raio do projétil por elemento é só cosmético, não físico.** `sim/elements.ts`
+  tem raio real por elemento (pedra 0.3, raio 0.2, etc.), mas
+  `ProjectileSnapshotDTO` não manda raio no fio, e `launchSnowball` sempre
+  usa `SNOWBALL.radius` fixo (0.22) pro raio de colisão. O que varia por
+  elemento no visual é só `ElementVfx.visualScale`, um multiplicador
+  cosmético em cima da escala renderizada — a hitbox real continua igual pra
+  todo mundo. Se o servidor um dia mandar raio de verdade no snapshot, é
+  `SnapshotSync.syncProjectiles` que precisa mudar, não o `ParticleRenderer`.
+- **Áudio não foi tocado.** GDD §17 fala de áudio procedural por evento;
+  hoje `AudioManager` tem os mesmos sons genéricos de sempre pra qualquer
+  impacto, elemento nenhum tem som próprio.
+- **Sem screen shake / hit-stop.** "Mais juice" foi resolvido só no eixo de
+  partículas/anéis, que é o que foi pedido explicitamente. Se quiser ir além
+  (câmera, hit-stop, áudio por elemento), é escopo novo.
+- **`PlayerHit` não sabe o elemento de quem bateu** — o evento só carrega
+  `attackerId`, não o elemento do projétil que causou o hit. O burst
+  continua com a cor do time do atacante (como já era), só ganhou o anel
+  branco de flash em cima. Dar pra esse hit a cor do elemento certo exigiria
+  ou carregar `element` no `PlayerHit` também, ou inferir de outro jeito —
+  não fiz por não ter sido pedido e por já resolver o essencial (bola,
+  cauda, explosão, poça, cristal) sem inflar mais o escopo.
+- **Não visto rodando.** Ver aviso no topo — precisa abrir uma partida siege
+  online de verdade (servidor + matchmaking) pra confirmar que o resultado
+  visual bate com o que foi pedido, principalmente a legibilidade da cauda de
+  partículas em movimento rápido (raio, que tem `trailRate: 44`, é o caso
+  mais exigente).
+
+## Próximos passos
+
+1. **Jogar uma partida online e olhar.** É o item mais importante — nada
+   nesta sessão foi visto em execução, só verificado por tipo/lint/teste/build.
+2. Se achar a cauda fraca ou forte demais num elemento específico, o ajuste
+   é só na tabela `ELEMENT_VFX` em `ParticleRenderer.ts` — não precisa mexer
+   em lógica.
+3. Áudio por elemento (GDD §17), se quiser continuar a linha de "juice".
+4. Screen shake / hit-stop, se quiser ir além de partículas.
+5. Se/quando o protocolo passar a mandar raio real por projétil, plugar em
+   `SnapshotSync.syncProjectiles` em vez do `SNOWBALL.radius` fixo.
+
+---
+
+# Handover — 2026-08-04 (Cursor — a UI da partida existe: um humano joga pelo browser)
 
 ## O que esta sessão fez
 

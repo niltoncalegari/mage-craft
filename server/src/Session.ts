@@ -32,6 +32,8 @@ export interface Snapshot {
   projectiles: ProjectileSnapshotState[];
   puddles: PuddleSnapshotState[];
   structures: StructureSnapshotState[];
+  /** Casts inside their VFX window (GDD §17) — cosmetic, never gameplay. */
+  spells: SpellCastSnapshotState[];
   elapsed: number;
   suddenDeath: boolean;
   /** Mana per team, indexed by team number — the App picks the receiver's. */
@@ -53,6 +55,10 @@ export interface MageSnapshotState {
   alive: boolean;
   /** True while Escudo Arcano still has damage to absorb (GDD §9) — for a client shield indicator. */
   shielded: boolean;
+  /** Bênção de Ímpeto running (GDD §9) — for the client's haste aura. */
+  hasted: boolean;
+  /** Slowed by an ice hit or Maldição da Lentidão (GDD §8.3, §9). */
+  slowed: boolean;
 }
 
 export interface StructureSnapshotState {
@@ -72,6 +78,17 @@ export interface ProjectileSnapshotState {
   element: ElementId;
   position: Vec2;
   velocity: Vec2;
+  /** Above the ground plane; the client draws (and shadows) the arc with it. */
+  height: number;
+  radius: number;
+}
+
+export interface SpellCastSnapshotState {
+  id: string;
+  spellId: string;
+  team: number;
+  position: Vec2;
+  radius: number;
 }
 
 export interface PuddleSnapshotState {
@@ -410,18 +427,29 @@ export class Session {
         rosterId: m.rosterId,
         alive: m.alive,
         shielded: m.shieldAmount > 0,
+        hasted: m.speedBuffTimer > 0,
+        slowed: m.slowTimer > 0,
       })),
       projectiles: [...world.projectiles.values()].map((p) => ({
         id: p.id,
         element: p.element,
         position: p.position,
         velocity: p.velocity,
+        height: p.height,
+        radius: p.radius,
       })),
       puddles: [...world.puddles.values()].map((pu) => ({
         id: pu.id,
         position: pu.position,
         radius: pu.radius,
         remaining: pu.duration - pu.elapsed,
+      })),
+      spells: [...world.spellCasts.values()].map((fx) => ({
+        id: fx.id,
+        spellId: fx.spellId,
+        team: fx.team,
+        position: fx.position,
+        radius: fx.radius,
       })),
     };
   }

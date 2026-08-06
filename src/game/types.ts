@@ -60,6 +60,10 @@ export interface Player extends Transform2D, Health {
   lives?: number;
   /** Escudo Arcano still has damage to absorb (GDD §9); only set online. */
   shielded?: boolean;
+  /** Bênção de Ímpeto is running (GDD §9); only set online. */
+  hasted?: boolean;
+  /** Slowed by ice or Maldição da Lentidão (GDD §8.3, §9); only set online. */
+  slowed?: boolean;
 }
 
 /**

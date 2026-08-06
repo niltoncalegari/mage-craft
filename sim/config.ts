@@ -128,6 +128,14 @@ export const PLAGUE_TICK_INTERVAL = 1;
 /** Per tick, at PLAGUE_TICK_INTERVAL — reads as "10 damage/s" in the GDD. */
 export const PLAGUE_TICK_DAMAGE = 10;
 
+/**
+ * How long a cast stays in the snapshot purely so clients can play its VFX
+ * (GDD §17). Nothing in combat reads it: a buff/curse lands the instant it is
+ * cast, but the wire has no event channel, so the cast has to linger in a few
+ * consecutive snapshots for a client to notice it at all at 20Hz.
+ */
+export const SPELL_CAST_FX_DURATION = 1;
+
 /** Height of each obstacle type's top, mirroring the client's OBSTACLE_HEIGHT. */
 export const OBSTACLE_TOP_HEIGHT = {
   tree: 2.4,

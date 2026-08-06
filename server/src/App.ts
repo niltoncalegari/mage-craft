@@ -489,6 +489,8 @@ export class App {
         element: m.element,
         role: m.role,
         shielded: m.shielded,
+        hasted: m.hasted,
+        slowed: m.slowed,
         ...(m.rosterId ? { rosterId: m.rosterId } : {}),
       })),
       projectiles: snap.projectiles.map((p) => ({
@@ -496,12 +498,21 @@ export class App {
         element: p.element,
         position: fromVec2(p.position),
         velocity: fromVec2(p.velocity),
+        height: p.height,
+        radius: p.radius,
       })),
       puddles: snap.puddles.map((pu) => ({
         id: pu.id,
         position: fromVec2(pu.position),
         radius: pu.radius,
         remaining: pu.remaining,
+      })),
+      spells: snap.spells.map((fx) => ({
+        id: fx.id,
+        spellId: fx.spellId,
+        team: fx.team,
+        position: fromVec2(fx.position),
+        radius: fx.radius,
       })),
     };
 

@@ -14,7 +14,14 @@ const GROUND_LIFT = 0.03;
 
 const TOWER_HEIGHT = 3.2;
 const CORE_HEIGHT = 3.8;
-const TOWER_CRYSTAL_Y = TOWER_HEIGHT + 0.55;
+/**
+ * Clear of the crown, not resting on it. The previous 0.55 buried the crystal
+ * in the crown it was supposed to float over, which read as part of the tower
+ * roof rather than as a crystal at all.
+ */
+const TOWER_CRYSTAL_Y = TOWER_HEIGHT + 1.15;
+/** Pale core so the octahedron reads as crystal; the team colour is the glow around it. */
+const CRYSTAL_CORE_COLOR = 0xf2f7ff;
 
 /** Ground-plane health bar, in world units. */
 const BAR_THICKNESS = 0.45;
@@ -192,15 +199,28 @@ export class StructureRenderer implements GameRenderer {
     group.add(crown);
 
     // Shares the Core's crystal-on-stone language (GDD §17) so a Tower and a
-    // Core read as the same kind of thing at a glance.
-    const crystal = new THREE.Mesh(
+    // Core read as the same kind of thing at a glance. Carried in its own
+    // group with the halo, so both spin and bob together.
+    const crystal = new THREE.Group();
+    const shard = new THREE.Mesh(
       this.assets.geometry('tower-crystal', () => new THREE.OctahedronGeometry(1, 0)),
       this.crystalMaterial(color),
     );
-    const crystalR = r * 0.55;
-    crystal.scale.set(crystalR, crystalR * 1.4, crystalR);
+    const crystalR = r * 0.85;
+    shard.scale.set(crystalR, crystalR * 1.7, crystalR);
+    shard.castShadow = true;
+    crystal.add(shard);
+
+    // Loose additive shell: without it the crystal is just a small pale solid
+    // at the top of a tall tower, and at match zoom it disappears into the crown.
+    const halo = new THREE.Mesh(
+      this.assets.geometry('tower-crystal-halo', () => new THREE.OctahedronGeometry(1, 0)),
+      this.haloMaterial(color),
+    );
+    halo.scale.set(crystalR * 1.75, crystalR * 2.5, crystalR * 1.75);
+    crystal.add(halo);
+
     crystal.position.y = TOWER_CRYSTAL_Y;
-    crystal.castShadow = true;
     group.add(crystal);
 
     return { group, crystal };
@@ -220,31 +240,57 @@ export class StructureRenderer implements GameRenderer {
     plinth.receiveShadow = true;
     group.add(plinth);
 
+    const crystalY = 1.1 + CORE_HEIGHT * 0.45;
     const crystal = new THREE.Mesh(
       this.assets.geometry('core-crystal', () => new THREE.OctahedronGeometry(1, 0)),
       this.crystalMaterial(color),
     );
     crystal.scale.set(r * 0.75, CORE_HEIGHT * 0.5, r * 0.75);
-    crystal.position.y = 1.1 + CORE_HEIGHT * 0.45;
+    crystal.position.y = crystalY;
     crystal.castShadow = true;
     group.add(crystal);
+
+    // Same halo the Towers wear, so both objectives glow in their team colour.
+    const halo = new THREE.Mesh(
+      this.assets.geometry('core-crystal-halo', () => new THREE.OctahedronGeometry(1, 0)),
+      this.haloMaterial(color),
+    );
+    halo.scale.set(r * 1.3, CORE_HEIGHT * 0.72, r * 1.3);
+    halo.position.y = crystalY;
+    group.add(halo);
 
     // The whole body (plinth + crystal) already spins as a unit — see updateView.
     return { group, crystal: null };
   }
 
-  /** Slight glow so the crystal reads as the "energy" part of a stone-and-crystal structure (GDD §17). */
+  /** Glow so the crystal reads as the "energy" part of a stone-and-crystal structure (GDD §17). */
   private crystalMaterial(color: number): THREE.MeshStandardMaterial {
     return this.assets.material(
       `structure-crystal:${color}`,
       () =>
         new THREE.MeshStandardMaterial({
-          color,
+          color: CRYSTAL_CORE_COLOR,
           emissive: color,
-          emissiveIntensity: 0.35,
-          roughness: 0.25,
+          emissiveIntensity: 1.1,
+          roughness: 0.15,
           metalness: 0.1,
           flatShading: true,
+        }),
+    );
+  }
+
+  /** The soft team-coloured aura around a crystal — its silhouette at match zoom. */
+  private haloMaterial(color: number): THREE.MeshBasicMaterial {
+    return this.assets.material(
+      `structure-crystal-halo:${color}`,
+      () =>
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.22,
+          depthWrite: false,
+          side: THREE.BackSide,
+          blending: THREE.AdditiveBlending,
         }),
     );
   }

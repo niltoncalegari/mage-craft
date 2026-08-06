@@ -14,6 +14,7 @@ import {
   PLAGUE_TICK_INTERVAL,
   SHIELD_AMOUNT,
   SIM_DT,
+  SPELL_CAST_FX_DURATION,
   SQUAD_SIZE,
   TOWER_RANGE,
 } from './config';
@@ -290,6 +291,29 @@ describe('spells (GDD §9)', () => {
     const w = new World();
     const core = coreOf(w, TEAM_B);
     expect(w.castSpell(TEAM_A, 'slow_curse', core.position)).toEqual({ ok: true });
+  });
+
+  it('leaves a cast marker clients can draw VFX from, and expires it', () => {
+    const w = new World();
+    const at = new Vec2(-10, 0);
+
+    w.castSpell(TEAM_A, 'blessing', at);
+
+    const fx = [...w.spellCasts.values()];
+    expect(fx).toHaveLength(1);
+    expect(fx[0]).toMatchObject({ spellId: 'blessing', team: TEAM_A, position: at });
+    // A buff applies instantly, so without this marker the wire would carry no
+    // trace at all of three of the four spells in the deck.
+    expect(fx[0].radius).toBe(spellFor('blessing')!.radius);
+
+    stepN(w, Math.ceil(SPELL_CAST_FX_DURATION / SIM_DT) + 2);
+    expect(w.spellCasts.size).toBe(0);
+  });
+
+  it('does not record a marker for a rejected cast', () => {
+    const w = new World();
+    w.castSpell(TEAM_A, 'fireball_of_doom', new Vec2(-10, 0));
+    expect(w.spellCasts.size).toBe(0);
   });
 });
 

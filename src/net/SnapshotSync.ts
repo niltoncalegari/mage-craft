@@ -12,12 +12,19 @@ import type {
   ProjectileSnapshotDTO,
   PuddleSnapshotDTO,
   SnapshotMsg,
+  SpellCastDTO,
   StructureSnapshotDTO,
 } from './protocol';
 
 /** How fast rendered position/rotation ease toward the latest snapshot, per second. */
 const POSITION_SMOOTHING_RATE = 18;
 const ROTATION_SMOOTHING_RATE = 12;
+/**
+ * Height eases rather than snapping: the arc a projectile flies is sampled at
+ * 20Hz, and a spell crossing the arena in half a second would otherwise
+ * visibly stair-step up and down.
+ */
+const HEIGHT_SMOOTHING_RATE = 22;
 /** Speed (world units/sec) above which a mage is considered "moving" for animation purposes. */
 const MOVE_SPEED_THRESHOLD = 0.15;
 
@@ -47,6 +54,18 @@ const EMPTY_MATCH_STATE: MatchState = {
   next: null,
 };
 
+/**
+ * A projectile in flight. It is dead-reckoned between snapshots (see
+ * {@link SnapshotSync.tick}) rather than teleported 20 times a second: a
+ * fireball travels a full world unit between two snapshots, which reads as a
+ * stutter, and its particle tail needs a continuously advancing `age` to shed
+ * anything at all.
+ */
+interface ProjectileTrack {
+  entityId: EntityId;
+  targetHeight: number;
+}
+
 interface MageTrack {
   entityId: EntityId;
   targetX: number;
@@ -74,9 +93,11 @@ interface MageTrack {
  */
 export class SnapshotSync {
   private readonly mageTracks = new Map<string, MageTrack>();
-  private readonly projectileIds = new Map<string, EntityId>();
+  private readonly projectileTracks = new Map<string, ProjectileTrack>();
   private readonly puddleIds = new Map<string, EntityId>();
   private readonly structureIds = new Map<string, EntityId>();
+  /** Cast ids already turned into a `SpellCast` event; a cast lingers in several snapshots. */
+  private readonly seenCasts = new Set<string>();
   private myTeamNumber: number | null;
   private localEntity: EntityId | null = null;
   private lastTick: number | null = null;
@@ -135,6 +156,7 @@ export class SnapshotSync {
     this.syncProjectiles(snap.projectiles);
     this.syncPuddles(snap.puddles);
     this.syncStructures(snap.structures);
+    this.syncSpellCasts(snap.spells ?? []);
   }
 
   /** Per-rAF-frame smoothing toward the latest authoritative snapshot. */
@@ -148,6 +170,26 @@ export class SnapshotSync {
       player.position.y += (track.targetY - player.position.y) * t;
       player.rotation = rotateTowards(player.rotation, track.targetRotation, ROTATION_SMOOTHING_RATE * dt);
       player.animationTime += dt;
+    }
+
+    this.advanceProjectiles(dt);
+  }
+
+  /**
+   * Carries projectiles forward along their own velocity between snapshots and
+   * ages them. Nothing else advances them online — there is no local
+   * ProjectileSystem — so without this a spell both stutters and, because the
+   * particle tail is spawned off `age`, sheds no trail whatsoever.
+   */
+  private advanceProjectiles(dt: number): void {
+    const heightT = 1 - Math.exp(-HEIGHT_SMOOTHING_RATE * dt);
+    for (const track of this.projectileTracks.values()) {
+      const snowball = this.world.snowballs.find((s) => s.id === track.entityId);
+      if (!snowball) continue;
+      snowball.position.x += snowball.velocity.x * dt;
+      snowball.position.y += snowball.velocity.y * dt;
+      snowball.height += (track.targetHeight - snowball.height) * heightT;
+      snowball.age += dt;
     }
   }
 
@@ -199,6 +241,8 @@ export class SnapshotSync {
     player.team = this.teamOf(m.team);
     player.health = m.health;
     player.shielded = m.shielded;
+    player.hasted = m.hasted;
+    player.slowed = m.slowed;
     player.alive = m.health > 0;
     if (dtSim > 0) {
       player.velocity.set((m.position.x - track.prevX) / dtSim, (m.position.y - track.prevY) / dtSim);
@@ -252,11 +296,13 @@ export class SnapshotSync {
     const seen = new Set<string>();
     for (const p of projectiles) {
       seen.add(p.id);
-      const entityId = this.projectileIds.get(p.id);
-      const existing = entityId !== undefined ? this.world.snowballs.find((s) => s.id === entityId) : undefined;
-      if (existing) {
+      const track = this.projectileTracks.get(p.id);
+      const existing = track ? this.world.snowballs.find((s) => s.id === track.entityId) : undefined;
+      if (existing && track) {
         existing.position.set(p.position.x, p.position.y);
         existing.velocity.set(p.velocity.x, p.velocity.y);
+        existing.radius = p.radius;
+        track.targetHeight = p.height;
         continue;
       }
 
@@ -272,19 +318,20 @@ export class SnapshotSync {
         Team.Player,
         p.position.x,
         p.position.y,
-        0,
+        p.height,
         dir,
         speed,
         0,
         element,
       );
-      this.projectileIds.set(p.id, snowball.id);
+      snowball.radius = p.radius;
+      this.projectileTracks.set(p.id, { entityId: snowball.id, targetHeight: p.height });
       this.events.emit('SnowballThrown', { snowballId: snowball.id, ownerId: snowball.id, team: Team.Player });
     }
 
-    for (const [wireId, entityId] of this.projectileIds) {
+    for (const [wireId, track] of this.projectileTracks) {
       if (seen.has(wireId)) continue;
-      const idx = this.world.snowballs.findIndex((s) => s.id === entityId);
+      const idx = this.world.snowballs.findIndex((s) => s.id === track.entityId);
       // The wire has no discrete impact message — a projectile just stops
       // appearing in the snapshot — so its last known position/element has to
       // be read off the snowball before it's released back to the pool.
@@ -298,8 +345,40 @@ export class SnapshotSync {
         impactElement = snowball.element;
         this.world.snowballPool.release(snowball);
       }
-      this.projectileIds.delete(wireId);
-      this.events.emit('SnowballImpact', { snowballId: entityId, x, y, hitPlayerId: null, element: impactElement });
+      this.projectileTracks.delete(wireId);
+      this.events.emit('SnowballImpact', {
+        snowballId: track.entityId,
+        x,
+        y,
+        hitPlayerId: null,
+        element: impactElement,
+      });
+    }
+  }
+
+  /**
+   * Fires one `SpellCast` per cast id. The server keeps a cast in the snapshot
+   * for a second (see SPELL_CAST_FX_DURATION) so a client cannot miss it
+   * between two 20Hz frames, which means the same cast arrives many times —
+   * `seenCasts` is what makes it a one-shot event.
+   */
+  private syncSpellCasts(spells: SpellCastDTO[]): void {
+    const seen = new Set<string>();
+    for (const fx of spells) {
+      seen.add(fx.id);
+      if (this.seenCasts.has(fx.id)) continue;
+      this.seenCasts.add(fx.id);
+      this.events.emit('SpellCast', {
+        spellId: fx.spellId,
+        x: fx.position.x,
+        y: fx.position.y,
+        radius: fx.radius,
+        friendly: this.isMyTeam(fx.team),
+      });
+    }
+
+    for (const id of this.seenCasts) {
+      if (!seen.has(id)) this.seenCasts.delete(id);
     }
   }
 

@@ -116,6 +116,10 @@ export type MageSnapshotDTO = {
   rosterId?: string;
   /** True while Escudo Arcano still has damage to absorb (GDD §9), for a minimal client indicator. */
   shielded: boolean;
+  /** Bênção de Ímpeto is running on this mage (GDD §9) — drives its aura VFX. */
+  hasted: boolean;
+  /** Slowed by Maldição da Lentidão or an ice hit (GDD §8.3, §9). */
+  slowed: boolean;
 };
 
 export type StructureSnapshotDTO = {
@@ -137,6 +141,28 @@ export type ProjectileSnapshotDTO = {
   element: string;
   position: Vec2DTO;
   velocity: Vec2DTO;
+  /**
+   * Height above the ground plane. Without it the client drew every spell
+   * sliding at y=0, half-buried in the ground and casting no shadow — the arc
+   * a charged throw actually flies only exists here.
+   */
+  height: number;
+  /** The projectile's real collision radius, so a boulder reads bigger than a bolt. */
+  radius: number;
+};
+
+/**
+ * A spell that was just cast, for VFX only (GDD §17). Buffs and curses land
+ * instantly on the mages in range, so without this the wire would show no
+ * trace of three of the four spells in the deck.
+ */
+export type SpellCastDTO = {
+  id: string;
+  /** 'blessing' | 'slow_curse' | 'arcane_shield' | 'plague'. */
+  spellId: string;
+  team: number;
+  position: Vec2DTO;
+  radius: number;
 };
 
 export type PuddleSnapshotDTO = {
@@ -153,6 +179,8 @@ export type SnapshotMsg = {
   projectiles: ProjectileSnapshotDTO[];
   puddles: PuddleSnapshotDTO[];
   structures: StructureSnapshotDTO[];
+  /** Casts still inside their VFX window; a client fires each one once, by id. */
+  spells: SpellCastDTO[];
   /** Seconds of match time elapsed, for the countdown (GDD §4). */
   elapsed: number;
   suddenDeath: boolean;

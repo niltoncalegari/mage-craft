@@ -30,6 +30,7 @@ export type {
   SetReadyMsg,
   SnapshotMsg,
   SpectatorDTO,
+  SpellCastDTO,
   StructureSnapshotDTO,
   StartMatchMsg,
   Vec2DTO,

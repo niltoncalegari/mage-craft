@@ -10,8 +10,13 @@ interface PlayerView {
   readonly root: THREE.Group;
   readonly figure: THREE.Group;
   readonly ring: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
-  /** Escudo Arcano indicator (GDD §9) — minimal by design, full VFX is future work. */
+  /** Escudo Arcano indicator (GDD §9): a ring on the ground plus the bubble it implies. */
   readonly shieldRing: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+  readonly shieldDome: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+  /** Bênção de Ímpeto (GDD §9) — spins fast, the way haste should read. */
+  readonly hasteRing: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+  /** Maldição da Lentidão or an ice hit (GDD §8.3, §9) — drags the other way. */
+  readonly slowRing: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
   readonly leftArm: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
   readonly rightArm: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
 }
@@ -26,6 +31,8 @@ export class PlayerRenderer implements GameRenderer {
   private readonly tmp = new THREE.Vector3();
   private readonly activeIds = new Set<number>();
   private readonly views = new Map<number, PlayerView>();
+  /** Renderer-local clock for status-effect spin; see updateStatusFx. */
+  private clock = 0;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -41,6 +48,7 @@ export class PlayerRenderer implements GameRenderer {
   }
 
   sync(alpha: number): void {
+    this.clock += 1 / 60;
     this.activeIds.clear();
 
     for (const player of this.world.players) {
@@ -127,6 +135,36 @@ export class PlayerRenderer implements GameRenderer {
     shieldRing.visible = false;
     root.add(shieldRing);
 
+    // The bubble the ring implies. Additive and thin so the mage inside stays
+    // readable — an opaque shell would hide who is being protected.
+    const shieldDome = new THREE.Mesh(
+      this.assets.geometry(
+        'player-shield-dome',
+        () => new THREE.SphereGeometry(0.92, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+      ),
+      this.assets.material(
+        'player-shield-dome-material',
+        () =>
+          new THREE.MeshBasicMaterial({
+            color: 0x7dd3fc,
+            transparent: true,
+            opacity: 0.18,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          }),
+      ),
+    );
+    shieldDome.scale.y = 1.35;
+    shieldDome.visible = false;
+    root.add(shieldDome);
+
+    const hasteRing = this.buffRing('player-haste-ring', 0.9, 1.0, 0xffd166);
+    root.add(hasteRing);
+
+    const slowRing = this.buffRing('player-slow-ring', 1.04, 1.16, 0x8ecae6);
+    root.add(slowRing);
+
     const body = this.shadowMesh(
       this.assets.geometry('player-body', () => new THREE.CylinderGeometry(0.31, 0.36, 0.62, 12)),
       bodyMat,
@@ -180,7 +218,42 @@ export class PlayerRenderer implements GameRenderer {
     figure.add(leftBoot, rightBoot);
 
     root.add(figure);
-    return { root, figure, ring, shieldRing, leftArm, rightArm };
+    return { root, figure, ring, shieldRing, shieldDome, hasteRing, slowRing, leftArm, rightArm };
+  }
+
+  /**
+   * A dashed status ring lying on the ground. Dashed rather than solid because
+   * a mage can carry several of these at once (hasted *and* slowed is a normal
+   * state), and concentric solid rings turn into a target painted on the floor.
+   */
+  private buffRing(
+    key: string,
+    inner: number,
+    outer: number,
+    color: number,
+  ): THREE.Mesh<THREE.BufferGeometry, THREE.Material> {
+    const mesh = new THREE.Mesh(
+      this.assets.geometry(key, () => {
+        const geo = new THREE.RingGeometry(inner, outer, 24, 1, 0, Math.PI * 1.55);
+        geo.rotateX(-Math.PI / 2);
+        return geo;
+      }),
+      this.assets.material(
+        `${key}-material`,
+        () =>
+          new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 0.75,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          }),
+      ),
+    );
+    mesh.position.y = 0.035;
+    mesh.visible = false;
+    return mesh;
   }
 
   private buildArm(
@@ -219,7 +292,7 @@ export class PlayerRenderer implements GameRenderer {
     view.root.scale.setScalar(scale);
 
     view.ring.visible = player.selected && !defeated;
-    view.shieldRing.visible = Boolean(player.shielded) && !defeated;
+    this.updateStatusFx(view, player, defeated);
 
     if (defeated) {
       view.figure.position.y = 0.16;
@@ -230,6 +303,31 @@ export class PlayerRenderer implements GameRenderer {
 
     const renderTime = player.animationTime + alpha / 60;
     this.applyAnimation(view, player, renderTime);
+  }
+
+  /**
+   * Shows which spells are currently *on* this mage (GDD §9). Only the
+   * transforms move: the materials are shared across every mage, so animating
+   * their opacity here would animate everybody's.
+   */
+  private updateStatusFx(view: PlayerView, player: Player, defeated: boolean): void {
+    const shielded = Boolean(player.shielded) && !defeated;
+    view.shieldRing.visible = shielded;
+    view.shieldDome.visible = shielded;
+
+    const hasted = Boolean(player.hasted) && !defeated;
+    view.hasteRing.visible = hasted;
+    const slowed = Boolean(player.slowed) && !defeated;
+    view.slowRing.visible = slowed;
+
+    // Direction and speed carry the meaning: haste races forward, the slow
+    // curse grinds backwards at a fraction of the rate. Driven by the
+    // renderer's own clock, not `animationTime`, which restarts at every
+    // animation change and would make the rings jump.
+    const t = this.clock;
+    if (hasted) view.hasteRing.rotation.y = t * 4.5;
+    if (slowed) view.slowRing.rotation.y = -t * 0.9;
+    if (shielded) view.shieldDome.rotation.y = t * 0.6;
   }
 
   private applyAnimation(view: PlayerView, player: Player, renderTime: number): void {
