@@ -2,6 +2,7 @@ import { Vector2 } from '../utils/Vector2';
 import { ObjectPool } from '../utils/ObjectPool';
 import type { EntityId } from '../ecs/Entity';
 import { SNOWBALL } from './config';
+import type { ElementId } from './elements';
 import { type Snowball, Team } from './types';
 
 /** Creates a zeroed snowball instance (used to seed the pool). */
@@ -18,6 +19,7 @@ export function createSnowball(): Snowball {
     radius: SNOWBALL.radius,
     age: 0,
     alive: false,
+    element: undefined,
   };
 }
 
@@ -29,6 +31,7 @@ export function resetSnowball(s: Snowball): void {
   s.heightVelocity = 0;
   s.age = 0;
   s.alive = false;
+  s.element = undefined;
 }
 
 /**
@@ -55,6 +58,7 @@ export function launchSnowball(
   dir: Readonly<Vector2>,
   speed: number,
   arc: number,
+  element?: ElementId,
 ): void {
   (s as { id: EntityId }).id = id;
   s.ownerId = ownerId;
@@ -67,4 +71,5 @@ export function launchSnowball(
   s.radius = SNOWBALL.radius;
   s.age = 0;
   s.alive = true;
+  s.element = element;
 }

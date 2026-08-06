@@ -1,4 +1,5 @@
 import type { EntityId } from '../ecs/Entity';
+import type { ElementId } from '../game/elements';
 import type { BuffType, Team } from '../game/types';
 
 /**
@@ -7,7 +8,17 @@ import type { BuffType, Team } from '../game/types';
  */
 export interface GameEvents {
   SnowballThrown: { snowballId: EntityId; ownerId: EntityId; team: Team };
-  SnowballImpact: { snowballId: EntityId; x: number; y: number; hitPlayerId: EntityId | null };
+  /**
+   * `element` is undefined for the legacy offline snowball (no elemental
+   * catalog there) and set online so impact VFX can match the spell that hit.
+   */
+  SnowballImpact: {
+    snowballId: EntityId;
+    x: number;
+    y: number;
+    hitPlayerId: EntityId | null;
+    element?: ElementId;
+  };
   PlayerHit: {
     playerId: EntityId;
     attackerId: EntityId;

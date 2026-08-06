@@ -1,22 +1,26 @@
 import * as THREE from 'three';
 import type { EventBus } from '../core/EventBus';
 import type { GameRenderer } from '../core/Game';
+import type { EntityId } from '../ecs/Entity';
 import type { AssetManager } from '../engine/AssetManager';
 import { PLAYER, SNOWBALL, TEAM_COLORS, BUFF_COLORS } from '../game/config';
-import type { Player, Snowball } from '../game/types';
+import type { ElementId } from '../game/elements';
+import type { Player, Puddle, Snowball } from '../game/types';
 import type { World } from '../game/World';
 import { toThree } from './coords';
 
 const SNOWBALL_POOL_SIZE = 64;
-const PARTICLE_POOL_SIZE = 500;
+const PARTICLE_POOL_SIZE = 900;
 const FOOTPRINT_POOL_SIZE = 64;
 const SPARKLE_POOL_SIZE = 72;
+const RING_POOL_SIZE = 20;
 const PLAYER_FX_STATE_SIZE = 32;
 const PARTICLE_DT = 1 / 60;
 const PARTICLE_GRAVITY = 7.5;
-const TRAIL_RATE = 18;
 const TRAIL_LIFE = 0.34;
 const BURST_LIFE = 0.55;
+/** Particles spawned per flight tick, forming the tail (GDD §17 — the tail is particles, not a solid mesh). */
+const TAIL_STREAK_COUNT = 3;
 const FOOTPRINT_INTERVAL = 0.22;
 const FOOTPRINT_LIFE = 3.8;
 const FOOTPRINT_SIDE_OFFSET = 0.16;
@@ -25,7 +29,172 @@ const PUFF_COOLDOWN = 0.28;
 const SHARP_TURN_COS = 0.25;
 const SPARKLE_TWO_PI = Math.PI * 2;
 const WHITE = 0xffffff;
+const SMOKE_COLOR = 0x33302c;
 const FOOTPRINT_COLOR = 0x86a5b8;
+const RING_LIFT = 0.05;
+const BUBBLE_MIN_INTERVAL = 0.05;
+const BUBBLE_MAX_INTERVAL = 0.13;
+const BUBBLE_COLOR = 0x80b918;
+const BUBBLE_POP_COLOR = 0xa6ff5c;
+
+/**
+ * Per-element look (GDD §17: "efeito ativo tem que ser visível"). One entry
+ * drives the projectile's own material, the particle tail it sheds in
+ * flight, and its impact burst/shockwave — so a fireball, a frost shard and
+ * a poison flask read as different spells at a glance, not as the same white
+ * ball recolored.
+ */
+interface ElementVfx {
+  /** Projectile body color + emissive glow. */
+  core: number;
+  glow: number;
+  /** Particles shed continuously along the flight path. */
+  trailColor: number;
+  trailSize: number;
+  /** Particles per second while airborne. */
+  trailRate: number;
+  /** Impact burst. */
+  impactColors: readonly number[];
+  impactCount: number;
+  impactSpeed: number;
+  gravityScale: number;
+  /** Cosmetic-only scale multiplier on the projectile mesh. */
+  visualScale: number;
+  /** Expanding shockwave ring on impact. */
+  ring: boolean;
+  ringScale: number;
+  /** Rising smoke puff on a ground/obstacle miss. */
+  smoke: boolean;
+}
+
+/** Legacy offline snowball (no element): pixel-identical to the pre-VFX-pass look. */
+const DEFAULT_VFX: ElementVfx = {
+  core: WHITE,
+  glow: WHITE,
+  trailColor: WHITE,
+  trailSize: 0.1,
+  trailRate: 18,
+  impactColors: [WHITE],
+  impactCount: 8,
+  impactSpeed: 1.5,
+  gravityScale: 1,
+  visualScale: 1,
+  ring: false,
+  ringScale: 0,
+  smoke: false,
+};
+
+const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
+  fire: {
+    core: 0xffb238,
+    glow: 0xff5a1f,
+    trailColor: 0xff7a1a,
+    trailSize: 0.11,
+    trailRate: 30,
+    impactColors: [0xffcf6b, 0xff6a2e, 0xff3d1a],
+    impactCount: 16,
+    impactSpeed: 2.6,
+    gravityScale: 1,
+    visualScale: 1.05,
+    ring: true,
+    ringScale: 2.4,
+    smoke: true,
+  },
+  ice: {
+    core: 0xd8f7ff,
+    glow: 0x4cc9f0,
+    trailColor: 0x8fe3ff,
+    trailSize: 0.08,
+    trailRate: 24,
+    impactColors: [0xbdf1ff, 0x4cc9f0, 0xffffff],
+    impactCount: 14,
+    impactSpeed: 2.2,
+    gravityScale: 0.8,
+    visualScale: 0.95,
+    ring: true,
+    ringScale: 1.8,
+    smoke: false,
+  },
+  lightning: {
+    core: 0xffffff,
+    glow: 0xffe066,
+    trailColor: 0xfff275,
+    trailSize: 0.06,
+    trailRate: 44,
+    impactColors: [0xffffff, 0xffe066, 0xffd60a],
+    impactCount: 18,
+    impactSpeed: 3.6,
+    gravityScale: 0.6,
+    visualScale: 0.85,
+    ring: true,
+    ringScale: 1.6,
+    smoke: false,
+  },
+  poison: {
+    core: 0xcdf27a,
+    glow: 0x80b918,
+    trailColor: 0x9bd63d,
+    trailSize: 0.09,
+    trailRate: 20,
+    impactColors: [0xb6e84a, 0x80b918, 0x5c8a12],
+    impactCount: 12,
+    impactSpeed: 1.6,
+    gravityScale: 1.3,
+    visualScale: 1.05,
+    ring: false,
+    ringScale: 0,
+    smoke: false,
+  },
+  stone: {
+    core: 0xc7cdd6,
+    glow: 0x8d99ae,
+    trailColor: 0x9aa4b2,
+    trailSize: 0.1,
+    trailRate: 10,
+    impactColors: [0xdbe6f2, 0x8d99ae, 0x6b7480],
+    impactCount: 14,
+    impactSpeed: 2.1,
+    gravityScale: 1.4,
+    visualScale: 1.35,
+    ring: true,
+    ringScale: 1.4,
+    smoke: true,
+  },
+  arcane: {
+    core: 0xe6d1ff,
+    glow: 0x9b5de5,
+    trailColor: 0xc9a6f5,
+    trailSize: 0.1,
+    trailRate: 26,
+    impactColors: [0xe6d1ff, 0x9b5de5, 0x6a2fb0],
+    impactCount: 16,
+    impactSpeed: 2.4,
+    gravityScale: 0.7,
+    visualScale: 1.05,
+    ring: true,
+    ringScale: 2.0,
+    smoke: false,
+  },
+  wind: {
+    core: 0xf3fbfb,
+    glow: 0xa8dadc,
+    trailColor: 0xd7f1f2,
+    trailSize: 0.07,
+    trailRate: 22,
+    impactColors: [0xf3fbfb, 0xa8dadc, 0xffffff],
+    impactCount: 14,
+    impactSpeed: 3.0,
+    gravityScale: 0.4,
+    visualScale: 0.85,
+    ring: true,
+    ringScale: 2.6,
+    smoke: false,
+  },
+};
+
+function vfxFor(element: ElementId | undefined): ElementVfx {
+  return element ? ELEMENT_VFX[element] : DEFAULT_VFX;
+}
 
 interface SnowballSlot {
   readonly mesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
@@ -44,6 +213,8 @@ interface ParticleSlot {
   life: number;
   maxLife: number;
   size: number;
+  /** Multiplier on world gravity; <1 lets smoke/bubbles hang and drift up longer. */
+  gravityScale: number;
   active: boolean;
 }
 
@@ -67,6 +238,15 @@ interface SparkleSlot {
   size: number;
 }
 
+/** Flat, expanding shockwave ring — the "explosion" beat under an impact burst. */
+interface RingSlot {
+  readonly mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  life: number;
+  maxLife: number;
+  maxScale: number;
+  active: boolean;
+}
+
 interface PlayerFxState {
   playerId: number;
   footprintTimer: number;
@@ -79,7 +259,9 @@ interface PlayerFxState {
 
 /**
  * Observes snowball simulation data and combat events, rendering pooled flying
- * snowballs, snow trails and hit puffs without mutating world state.
+ * projectiles (with a per-element glow and a particle tail shed in flight),
+ * snow trails, hit puffs, impact bursts/shockwaves and poison-puddle bubbles
+ * — without mutating world state.
  */
 export class ParticleRenderer implements GameRenderer {
   private readonly group = new THREE.Group();
@@ -88,7 +270,10 @@ export class ParticleRenderer implements GameRenderer {
   private readonly particleSlots: ParticleSlot[] = [];
   private readonly footprintSlots: FootprintSlot[] = [];
   private readonly sparkleSlots: SparkleSlot[] = [];
+  private readonly ringSlots: RingSlot[] = [];
   private readonly playerFxStates: PlayerFxState[] = [];
+  private readonly puddleBubbleTimers = new Map<EntityId, number>();
+  private readonly defaultBallMaterial: THREE.MeshStandardMaterial;
   private readonly offSnowballImpact: () => void;
   private readonly offPlayerHit: () => void;
   private readonly offSnowballThrown: () => void;
@@ -97,7 +282,7 @@ export class ParticleRenderer implements GameRenderer {
 
   constructor(
     private readonly scene: THREE.Scene,
-    assets: AssetManager,
+    private readonly assets: AssetManager,
     private readonly world: World,
     events: EventBus,
   ) {
@@ -108,7 +293,7 @@ export class ParticleRenderer implements GameRenderer {
       'particle-renderer-snowball-sphere',
       () => new THREE.SphereGeometry(1, 12, 10),
     );
-    const snowballMaterial = assets.standardMaterial(WHITE, false);
+    this.defaultBallMaterial = assets.standardMaterial(WHITE, false);
     const particleGeometry = assets.geometry(
       'particle-renderer-puff-sphere',
       () => new THREE.SphereGeometry(1, 8, 6),
@@ -122,12 +307,18 @@ export class ParticleRenderer implements GameRenderer {
       'particle-renderer-sparkle-sphere',
       () => new THREE.SphereGeometry(1, 6, 4),
     );
+    const ringGeometry = assets.geometry('particle-renderer-shock-ring', () => {
+      const geometry = new THREE.RingGeometry(0.55, 1, 32);
+      geometry.rotateX(-Math.PI / 2);
+      return geometry;
+    });
 
     for (let i = 0; i < SNOWBALL_POOL_SIZE; i++) {
-      const mesh = new THREE.Mesh(snowballGeometry, snowballMaterial);
+      const mesh = new THREE.Mesh(snowballGeometry, this.defaultBallMaterial);
       mesh.castShadow = true;
       mesh.visible = false;
       this.group.add(mesh);
+
       this.snowballSlots.push({ mesh, snowballId: -1, lastTrailTick: -1 });
     }
 
@@ -137,6 +328,7 @@ export class ParticleRenderer implements GameRenderer {
         transparent: true,
         opacity: 0,
         depthWrite: false,
+        blending: THREE.AdditiveBlending,
       });
       const mesh = new THREE.Mesh(particleGeometry, material);
       mesh.visible = false;
@@ -152,6 +344,7 @@ export class ParticleRenderer implements GameRenderer {
         life: 0,
         maxLife: 1,
         size: 1,
+        gravityScale: 1,
         active: false,
       });
     }
@@ -192,6 +385,21 @@ export class ParticleRenderer implements GameRenderer {
       this.sparkleSlots.push(slot);
     }
 
+    for (let i = 0; i < RING_POOL_SIZE; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color: WHITE,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      });
+      const mesh = new THREE.Mesh(ringGeometry, material);
+      mesh.visible = false;
+      this.group.add(mesh);
+      this.ringSlots.push({ mesh, life: 0, maxLife: 1, maxScale: 1, active: false });
+    }
+
     for (let i = 0; i < PLAYER_FX_STATE_SIZE; i++) {
       this.playerFxStates.push({
         playerId: -1,
@@ -205,29 +413,54 @@ export class ParticleRenderer implements GameRenderer {
     }
 
     this.offSnowballImpact = events.on('SnowballImpact', (event) => {
-      this.spawnBurst(event.x, event.y, 0.18, WHITE, event.hitPlayerId === null ? 8 : 6);
-      if (event.hitPlayerId === null) {
-        this.spawnSnowPuff(event.x, event.y, 7);
+      if (!event.element) {
+        // Legacy offline snowball: no elemental catalog, keep the original look.
+        this.spawnBurst(event.x, event.y, 0.18, WHITE, event.hitPlayerId === null ? 8 : 6);
+        if (event.hitPlayerId === null) this.spawnSnowPuff(event.x, event.y, 7);
+        return;
       }
+
+      const cfg = ELEMENT_VFX[event.element];
+      const count = event.hitPlayerId === null ? cfg.impactCount : Math.round(cfg.impactCount * 0.7);
+      this.spawnElementBurst(event.x, event.y, 0.2, cfg, count);
+      if (event.hitPlayerId === null && cfg.smoke) this.spawnSmoke(event.x, event.y, 6);
+      if (cfg.ring) this.spawnRing(event.x, event.y, cfg.glow, cfg.ringScale);
     });
     this.offPlayerHit = events.on('PlayerHit', (event) => {
-      this.spawnBurst(event.x, event.y, 0.55, this.teamColorForPlayer(event.attackerId), 8);
+      this.spawnBurst(event.x, event.y, 0.55, this.teamColorForPlayer(event.attackerId), 9);
+      this.spawnRing(event.x, event.y, WHITE, 1.1, 0.16);
     });
     this.offSnowballThrown = events.on('SnowballThrown', (event) => {
-      const color = TEAM_COLORS[event.team];
       const snowball = this.findSnowball(event.snowballId);
       if (!snowball) return;
+      const cfg = vfxFor(snowball.element);
       toThree(this.tmp, snowball.position.x, snowball.position.y, snowball.height);
-      this.spawnParticle(this.tmp.x, this.tmp.y, this.tmp.z, 0, 0.45, 0, 0.1, TRAIL_LIFE, color);
+      this.spawnParticle(
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        0,
+        0.45,
+        0,
+        cfg.trailSize,
+        TRAIL_LIFE,
+        cfg.trailColor,
+        cfg.gravityScale,
+      );
+      if (snowball.element) {
+        this.spawnElementBurst(snowball.position.x, snowball.position.y, snowball.height, cfg, 7, 0.55);
+      }
     });
     this.offBuffPickedUp = events.on('BuffPickedUp', (event) => {
       const color = BUFF_COLORS[event.buff];
       this.spawnBurst(event.x, event.y, 0.7, color, 14);
       this.spawnSnowPuff(event.x, event.y, 6);
+      this.spawnRing(event.x, event.y, color, 1.6, 0.3);
     });
     this.offPlayerRespawned = events.on('PlayerRespawned', (event) => {
       this.spawnBurst(event.x, event.y, 0.8, BUFF_COLORS.immunity, 16);
       this.spawnSnowPuff(event.x, event.y, 9);
+      this.spawnRing(event.x, event.y, BUFF_COLORS.immunity, 2.0, 0.4);
     });
   }
 
@@ -253,6 +486,8 @@ export class ParticleRenderer implements GameRenderer {
     this.updateParticles();
     this.updateFootprints();
     this.updateSparkles();
+    this.updateRings();
+    this.updatePuddleBubbles();
   }
 
   dispose(): void {
@@ -272,6 +507,9 @@ export class ParticleRenderer implements GameRenderer {
     for (const sparkle of this.sparkleSlots) {
       sparkle.mesh.material.dispose();
     }
+    for (const ring of this.ringSlots) {
+      ring.mesh.material.dispose();
+    }
     this.group.clear();
   }
 
@@ -279,33 +517,71 @@ export class ParticleRenderer implements GameRenderer {
     if (slot.snowballId !== snowball.id) {
       slot.snowballId = snowball.id;
       slot.lastTrailTick = -1;
+      this.applySlotElement(slot, snowball.element);
     }
 
+    const cfg = vfxFor(snowball.element);
     toThree(this.tmp, snowball.position.x, snowball.position.y, snowball.height);
+    const scale = Math.max(snowball.radius, SNOWBALL.radius * 0.5) * cfg.visualScale;
     slot.mesh.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
-    slot.mesh.scale.setScalar(Math.max(snowball.radius, SNOWBALL.radius * 0.5));
+    slot.mesh.scale.setScalar(scale);
     slot.mesh.visible = true;
 
-    const trailTick = Math.floor(snowball.age * TRAIL_RATE);
+    const trailTick = Math.floor(snowball.age * cfg.trailRate);
     if (snowball.height > SNOWBALL.radius * 0.5 && trailTick > slot.lastTrailTick) {
       slot.lastTrailTick = trailTick;
-      this.spawnTrail(snowball);
+      this.spawnTrail(snowball, cfg);
     }
   }
 
-  private spawnTrail(snowball: Snowball): void {
-    toThree(this.tmp, snowball.position.x, snowball.position.y, snowball.height);
-    this.spawnParticle(
-      this.tmp.x,
-      this.tmp.y,
-      this.tmp.z,
-      -snowball.velocity.x * 0.025,
-      0.18,
-      -snowball.velocity.y * 0.025,
-      0.075,
-      TRAIL_LIFE,
-      WHITE,
+  /** Swaps the pooled projectile's material for the element now occupying this slot. */
+  private applySlotElement(slot: SnowballSlot, element: ElementId | undefined): void {
+    slot.mesh.material = element ? this.ballMaterialFor(element) : this.defaultBallMaterial;
+  }
+
+  private ballMaterialFor(element: ElementId): THREE.MeshStandardMaterial {
+    const cfg = ELEMENT_VFX[element];
+    return this.assets.material(
+      `particle-renderer-ball:${element}`,
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: cfg.core,
+          emissive: cfg.glow,
+          emissiveIntensity: 0.85,
+          roughness: 0.3,
+          metalness: 0.05,
+        }),
     );
+  }
+
+  /**
+   * The "tail" is the trail itself: a short scatter of particles per flight
+   * tick, offset sideways off the flight axis so it reads as a stream rather
+   * than a single-file dotted line — a bright core-colored particle plus a
+   * couple of dimmer, smaller trailColor ones falling slightly behind it.
+   */
+  private spawnTrail(snowball: Snowball, cfg: ElementVfx): void {
+    toThree(this.tmp, snowball.position.x, snowball.position.y, snowball.height);
+    const speed = Math.max(0.001, Math.hypot(snowball.velocity.x, snowball.velocity.y));
+    const perpX = -snowball.velocity.y / speed;
+    const perpZ = snowball.velocity.x / speed;
+
+    for (let i = 0; i < TAIL_STREAK_COUNT; i++) {
+      const jitter = (Math.random() - 0.5) * cfg.trailSize * 2.4;
+      const back = i * 0.16;
+      this.spawnParticle(
+        this.tmp.x + perpX * jitter - snowball.velocity.x * back * 0.05,
+        this.tmp.y + (Math.random() - 0.4) * cfg.trailSize,
+        this.tmp.z + perpZ * jitter - snowball.velocity.y * back * 0.05,
+        -snowball.velocity.x * 0.025,
+        0.18 + Math.random() * 0.12,
+        -snowball.velocity.y * 0.025,
+        cfg.trailSize * (1 - i * 0.25),
+        TRAIL_LIFE * (1 - i * 0.15),
+        i === 0 ? cfg.core : cfg.trailColor,
+        cfg.gravityScale,
+      );
+    }
   }
 
   private spawnBurst(x: number, y: number, height: number, color: number, count: number): void {
@@ -323,6 +599,56 @@ export class ParticleRenderer implements GameRenderer {
         0.13 + (i % 3) * 0.025,
         BURST_LIFE,
         color,
+      );
+    }
+  }
+
+  /** Multi-color impact burst, cycling through the element's palette (GDD §17). */
+  private spawnElementBurst(
+    x: number,
+    y: number,
+    height: number,
+    cfg: ElementVfx,
+    count: number,
+    speedScale = 1,
+  ): void {
+    toThree(this.tmp, x, y, height);
+    const palette = cfg.impactColors;
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 + (i % 2) * 0.35;
+      const speed = (cfg.impactSpeed + (i % 3) * 0.4) * speedScale;
+      this.spawnParticle(
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        Math.cos(angle) * speed,
+        (1.6 + (i % 2) * 0.6) * speedScale,
+        Math.sin(angle) * speed,
+        cfg.trailSize * (1.1 + (i % 3) * 0.25),
+        BURST_LIFE,
+        palette[i % palette.length],
+        cfg.gravityScale,
+      );
+    }
+  }
+
+  /** Rising, slow-falling smoke puff — the aftermath of a fire/stone impact. */
+  private spawnSmoke(x: number, y: number, count: number): void {
+    toThree(this.tmp, x, y, 0.1);
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;
+      const speed = 0.35 + (i % 3) * 0.15;
+      this.spawnParticle(
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        Math.cos(angle) * speed,
+        1.1 + (i % 2) * 0.5,
+        Math.sin(angle) * speed,
+        0.16 + (i % 3) * 0.05,
+        0.7,
+        SMOKE_COLOR,
+        0.35,
       );
     }
   }
@@ -356,6 +682,7 @@ export class ParticleRenderer implements GameRenderer {
     size: number,
     life: number,
     color: number,
+    gravityScale = 1,
   ): void {
     for (const particle of this.particleSlots) {
       if (particle.active) continue;
@@ -368,6 +695,7 @@ export class ParticleRenderer implements GameRenderer {
       particle.life = life;
       particle.maxLife = life;
       particle.size = size;
+      particle.gravityScale = gravityScale;
       particle.active = true;
       particle.mesh.material.color.setHex(color);
       particle.mesh.material.opacity = 1;
@@ -390,7 +718,7 @@ export class ParticleRenderer implements GameRenderer {
         continue;
       }
 
-      particle.vy -= PARTICLE_GRAVITY * PARTICLE_DT;
+      particle.vy -= PARTICLE_GRAVITY * particle.gravityScale * PARTICLE_DT;
       particle.x += particle.vx * PARTICLE_DT;
       particle.y += particle.vy * PARTICLE_DT;
       particle.z += particle.vz * PARTICLE_DT;
@@ -541,6 +869,87 @@ export class ParticleRenderer implements GameRenderer {
       phaseSpeed: 1.2 + (index % 6) * 0.16,
       size: 0.018 + (index % 3) * 0.006,
     };
+  }
+
+  /** Spawns a flat shockwave ring that expands and fades — the "explosion" beat of an impact. */
+  private spawnRing(x: number, y: number, color: number, maxScale: number, life = 0.32): void {
+    if (maxScale <= 0) return;
+    for (const ring of this.ringSlots) {
+      if (ring.active) continue;
+      toThree(this.tmp, x, y, RING_LIFT);
+      ring.life = life;
+      ring.maxLife = life;
+      ring.maxScale = maxScale;
+      ring.active = true;
+      ring.mesh.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
+      ring.mesh.scale.setScalar(0.05);
+      ring.mesh.material.color.setHex(color);
+      ring.mesh.material.opacity = 0.85;
+      ring.mesh.visible = true;
+      return;
+    }
+  }
+
+  private updateRings(): void {
+    for (const ring of this.ringSlots) {
+      if (!ring.active) continue;
+
+      ring.life -= PARTICLE_DT;
+      if (ring.life <= 0) {
+        ring.active = false;
+        ring.mesh.visible = false;
+        ring.mesh.material.opacity = 0;
+        continue;
+      }
+
+      const t = 1 - ring.life / ring.maxLife;
+      const eased = 1 - (1 - t) * (1 - t);
+      ring.mesh.scale.setScalar(0.05 + eased * ring.maxScale);
+      ring.mesh.material.opacity = 0.85 * (1 - t);
+    }
+  }
+
+  /** Green bubbles rising out of every live poison puddle (GDD §9 Praga/Alquimista). */
+  private updatePuddleBubbles(): void {
+    const seen = new Set<EntityId>();
+    for (const puddle of this.world.puddles) {
+      seen.add(puddle.id);
+      let timer = this.puddleBubbleTimers.get(puddle.id);
+      if (timer === undefined) {
+        timer = Math.random() * BUBBLE_MAX_INTERVAL;
+      }
+      timer -= PARTICLE_DT;
+      if (timer <= 0) {
+        this.spawnPuddleBubble(puddle);
+        timer = BUBBLE_MIN_INTERVAL + Math.random() * (BUBBLE_MAX_INTERVAL - BUBBLE_MIN_INTERVAL);
+      }
+      this.puddleBubbleTimers.set(puddle.id, timer);
+    }
+
+    for (const id of this.puddleBubbleTimers.keys()) {
+      if (!seen.has(id)) this.puddleBubbleTimers.delete(id);
+    }
+  }
+
+  private spawnPuddleBubble(puddle: Puddle): void {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = Math.random() * puddle.radius * 0.85;
+    const x = puddle.position.x + Math.cos(angle) * dist;
+    const y = puddle.position.y + Math.sin(angle) * dist;
+    toThree(this.tmp, x, y, 0.03);
+    const color = Math.random() < 0.35 ? BUBBLE_POP_COLOR : BUBBLE_COLOR;
+    this.spawnParticle(
+      this.tmp.x,
+      this.tmp.y,
+      this.tmp.z,
+      (Math.random() - 0.5) * 0.1,
+      0.4 + Math.random() * 0.35,
+      (Math.random() - 0.5) * 0.1,
+      0.045 + Math.random() * 0.05,
+      0.35 + Math.random() * 0.25,
+      color,
+      0.3,
+    );
   }
 
   private fxStateForPlayer(player: Player): PlayerFxState | null {

@@ -125,6 +125,7 @@ export class CollisionSystem implements System {
       x: snowball.position.x,
       y: snowball.position.y,
       hitPlayerId: hitPlayer.id,
+      element: snowball.element,
     });
   }
 
@@ -156,6 +157,7 @@ export class CollisionSystem implements System {
           x: snowball.position.x,
           y: snowball.position.y,
           hitPlayerId: null,
+          element: snowball.element,
         });
         return;
       }

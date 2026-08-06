@@ -1,6 +1,7 @@
 import type { Vector2 } from '../utils/Vector2';
 import type { Health, Transform2D } from '../ecs/Component';
 import type { EntityId } from '../ecs/Entity';
+import type { ElementId } from './elements';
 import type { Shape } from '../physics/shapes';
 
 /** The two opposing squads (design §2). */
@@ -80,6 +81,8 @@ export interface Snowball {
   /** Seconds since launch, used for trails/culling. */
   age: number;
   alive: boolean;
+  /** Which elemental spell this is, for VFX (GDD §17). Undefined for the legacy offline snowball. */
+  element?: ElementId;
 }
 
 export type ObstacleType = 'tree' | 'rock' | 'fort' | 'fence' | 'prop';

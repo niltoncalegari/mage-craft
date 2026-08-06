@@ -38,6 +38,7 @@ export class ProjectileSystem implements System {
           x: s.position.x,
           y: s.position.y,
           hitPlayerId: null,
+          element: s.element,
         });
         continue;
       }

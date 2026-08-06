@@ -14,6 +14,7 @@ const GROUND_LIFT = 0.03;
 
 const TOWER_HEIGHT = 3.2;
 const CORE_HEIGHT = 3.8;
+const TOWER_CRYSTAL_Y = TOWER_HEIGHT + 0.55;
 
 /** Ground-plane health bar, in world units. */
 const BAR_THICKNESS = 0.45;
@@ -22,11 +23,18 @@ const BAR_GAP = 0.6;
 interface StructureView {
   root: THREE.Group;
   body: THREE.Group;
+  /** The floating crystal on a Tower's crown; spun/bobbed independently of the shaft. Null for a Core, whose whole body already spins. */
+  crystal: THREE.Object3D | null;
   rubble: THREE.Mesh;
   shield: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   barFill: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   barBack: THREE.Mesh;
   spin: number;
+}
+
+interface StructureBody {
+  group: THREE.Group;
+  crystal: THREE.Object3D | null;
 }
 
 /**
@@ -78,6 +86,10 @@ export class StructureRenderer implements GameRenderer {
     if (structure.alive && structure.kind === 'core') {
       view.spin += 0.004;
       view.body.rotation.y = view.spin;
+    } else if (structure.alive && view.crystal) {
+      view.spin += 0.01;
+      view.crystal.rotation.y = view.spin;
+      view.crystal.position.y = TOWER_CRYSTAL_Y + Math.sin(view.spin * 1.6) * 0.05;
     }
 
     const fraction = clamp01(structure.health / Math.max(1, structure.maxHealth));
@@ -95,8 +107,9 @@ export class StructureRenderer implements GameRenderer {
 
     const color = TEAM_COLORS[structure.team === Team.Player ? 'player' : 'enemy'];
     const root = new THREE.Group();
-    const body =
+    const built =
       structure.kind === 'core' ? this.buildCore(color, structure) : this.buildTower(color, structure);
+    const body = built.group;
     root.add(body);
 
     const rubble = new THREE.Mesh(
@@ -140,7 +153,7 @@ export class StructureRenderer implements GameRenderer {
     root.position.copy(this.tmp);
     this.group.add(root);
 
-    const view: StructureView = { root, body, rubble, shield, barFill, barBack, spin: 0 };
+    const view: StructureView = { root, body, crystal: built.crystal, rubble, shield, barFill, barBack, spin: 0 };
     this.views.set(structure.id, view);
     return view;
   }
@@ -155,7 +168,7 @@ export class StructureRenderer implements GameRenderer {
     });
   }
 
-  private buildTower(color: number, structure: Structure): THREE.Group {
+  private buildTower(color: number, structure: Structure): StructureBody {
     const group = new THREE.Group();
     const r = structure.radius * 0.72;
 
@@ -178,10 +191,22 @@ export class StructureRenderer implements GameRenderer {
     crown.castShadow = true;
     group.add(crown);
 
-    return group;
+    // Shares the Core's crystal-on-stone language (GDD §17) so a Tower and a
+    // Core read as the same kind of thing at a glance.
+    const crystal = new THREE.Mesh(
+      this.assets.geometry('tower-crystal', () => new THREE.OctahedronGeometry(1, 0)),
+      this.crystalMaterial(color),
+    );
+    const crystalR = r * 0.55;
+    crystal.scale.set(crystalR, crystalR * 1.4, crystalR);
+    crystal.position.y = TOWER_CRYSTAL_Y;
+    crystal.castShadow = true;
+    group.add(crystal);
+
+    return { group, crystal };
   }
 
-  private buildCore(color: number, structure: Structure): THREE.Group {
+  private buildCore(color: number, structure: Structure): StructureBody {
     const group = new THREE.Group();
     const r = structure.radius * 0.8;
 
@@ -197,14 +222,31 @@ export class StructureRenderer implements GameRenderer {
 
     const crystal = new THREE.Mesh(
       this.assets.geometry('core-crystal', () => new THREE.OctahedronGeometry(1, 0)),
-      this.assets.standardMaterial(color),
+      this.crystalMaterial(color),
     );
     crystal.scale.set(r * 0.75, CORE_HEIGHT * 0.5, r * 0.75);
     crystal.position.y = 1.1 + CORE_HEIGHT * 0.45;
     crystal.castShadow = true;
     group.add(crystal);
 
-    return group;
+    // The whole body (plinth + crystal) already spins as a unit — see updateView.
+    return { group, crystal: null };
+  }
+
+  /** Slight glow so the crystal reads as the "energy" part of a stone-and-crystal structure (GDD §17). */
+  private crystalMaterial(color: number): THREE.MeshStandardMaterial {
+    return this.assets.material(
+      `structure-crystal:${color}`,
+      () =>
+        new THREE.MeshStandardMaterial({
+          color,
+          emissive: color,
+          emissiveIntensity: 0.35,
+          roughness: 0.25,
+          metalness: 0.1,
+          flatShading: true,
+        }),
+    );
   }
 }
 

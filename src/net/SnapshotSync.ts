@@ -1,6 +1,7 @@
 import type { EntityId } from '../ecs/Entity';
 import type { EventBus } from '../core/EventBus';
 import { DAMAGE, SIM } from '../game/config';
+import { isElementId, type ElementId } from '../game/elements';
 import { launchSnowball } from '../game/Snowball';
 import { type AnimationName, PlayerState, Team, type Player, type Structure } from '../game/types';
 import type { World } from '../game/World';
@@ -263,6 +264,7 @@ export class SnapshotSync {
       const speed = dir.length();
       dir.normalize();
       const snowball = this.world.acquireSnowball();
+      const element = isElementId(p.element) ? p.element : undefined;
       launchSnowball(
         snowball,
         this.world.ids.allocate(),
@@ -274,6 +276,7 @@ export class SnapshotSync {
         dir,
         speed,
         0,
+        element,
       );
       this.projectileIds.set(p.id, snowball.id);
       this.events.emit('SnowballThrown', { snowballId: snowball.id, ownerId: snowball.id, team: Team.Player });
@@ -282,12 +285,21 @@ export class SnapshotSync {
     for (const [wireId, entityId] of this.projectileIds) {
       if (seen.has(wireId)) continue;
       const idx = this.world.snowballs.findIndex((s) => s.id === entityId);
+      // The wire has no discrete impact message — a projectile just stops
+      // appearing in the snapshot — so its last known position/element has to
+      // be read off the snowball before it's released back to the pool.
+      let x = 0;
+      let y = 0;
+      let impactElement: ElementId | undefined;
       if (idx !== -1) {
         const [snowball] = this.world.snowballs.splice(idx, 1);
+        x = snowball.position.x;
+        y = snowball.position.y;
+        impactElement = snowball.element;
         this.world.snowballPool.release(snowball);
       }
       this.projectileIds.delete(wireId);
-      this.events.emit('SnowballImpact', { snowballId: entityId, x: 0, y: 0, hitPlayerId: null });
+      this.events.emit('SnowballImpact', { snowballId: entityId, x, y, hitPlayerId: null, element: impactElement });
     }
   }
 
