@@ -1,9 +1,9 @@
 import { render, type JSX } from 'preact';
 import type { GameRenderer } from '../core/Game';
-import { TEAM_COLORS } from '../game/config';
 import { Team, type Structure } from '../game/types';
 import type { World } from '../game/World';
 import type { MatchState } from '../net/SnapshotSync';
+import { teamFill, teamInk } from './teamInk';
 import { HAND_SIZE } from '../../sim/Deck';
 import { MANA_MAX, MATCH_DURATION, SUDDEN_DEATH_DURATION } from '../../sim/config';
 import { spellFor, type CardId, type SpellCard } from '../../sim/spells';
@@ -61,7 +61,6 @@ interface HudRefs {
   bar: HTMLElement;
 }
 
-const teamColor = (team: Team): string => `#${TEAM_COLORS[team].toString(16).padStart(6, '0')}`;
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 
 /** Callback ref that stores the mounted element into `target[key]` (returns void). */
@@ -242,11 +241,11 @@ export class MatchHUD implements GameRenderer {
     const towers = structures.filter((s) => s.kind === 'tower');
 
     refs.label.textContent = team === Team.Player ? 'Você' : 'Adversário';
-    refs.label.style.color = teamColor(team);
+    refs.label.style.color = teamInk(team);
 
     const fraction = core ? clamp01(core.health / Math.max(1, core.maxHealth)) : 0;
     refs.coreFill.style.width = `${Math.round(fraction * 100)}%`;
-    refs.coreFill.style.backgroundColor = teamColor(team);
+    refs.coreFill.style.backgroundColor = teamFill(team);
     refs.coreText.textContent = core ? this.coreLabel(core) : '—';
     refs.towers.textContent = towers.map((t) => (t.alive ? '◆' : '◇')).join(' ') || '—';
   }

@@ -23,3 +23,34 @@ body,
 canvas {
   display: block;
 }
+
+/*
+ * Glass tokens for the in-match HUD (MatchHUD, SquadPanel).
+ *
+ * The panels sit on top of the arena, so how much of the board reads through
+ * them is a gameplay property, not decoration: a squad dashboard you cannot see
+ * past is a dashboard you close. Tuned as one set here rather than per module so
+ * the top bar, the card bar and the side panels stay the same material.
+ *
+ * `saturate` is doing more work than the blur — it is what keeps the grass and
+ * the team colours vivid through the sheet instead of milky.
+ */
+:root {
+  --glass-blur: blur(20px) saturate(180%);
+  --glass-tint: rgba(255, 255, 255, 0.16);
+  --glass-tint-lit: rgba(255, 255, 255, 0.3);
+  --glass-edge: rgba(255, 255, 255, 0.45);
+  /* Bright hairline along the top edge, dim one along the bottom: the single
+     strongest cue that a surface is a pane rather than a painted rectangle. */
+  --glass-specular: inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.18);
+  --glass-shadow: 0 10px 30px rgba(11, 24, 41, 0.28);
+  /* Inset panels (rows, meters) — a second, thinner sheet on the first. */
+  --glass-inset: rgba(255, 255, 255, 0.16);
+  --glass-inset-lit: rgba(255, 255, 255, 0.28);
+  --glass-track: rgba(16, 30, 44, 0.3);
+  /* Ink runs darker than on an opaque panel: the backdrop is now the arena. */
+  --glass-ink: #14212e;
+  --glass-ink-soft: #3f556c;
+  --glass-halo: 0 1px 2px rgba(255, 255, 255, 0.65);
+}

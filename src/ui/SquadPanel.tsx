@@ -1,7 +1,7 @@
 import { render, type JSX } from 'preact';
 import type { GameRenderer } from '../core/Game';
-import { TEAM_COLORS } from '../game/config';
 import { Team } from '../game/types';
+import { teamInk } from './teamInk';
 import type { SquadMemberView } from '../net/SnapshotSync';
 import { SQUAD_SIZE } from '../../sim/config';
 import { isRosterId, rosterFor } from '../../sim/cards';
@@ -61,7 +61,6 @@ interface PanelRefs {
   sides: SideRefs[];
 }
 
-const teamColor = (team: Team): string => `#${TEAM_COLORS[team].toString(16).padStart(6, '0')}`;
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 
 /** Callback ref that stores the mounted element into `target[key]` (same as {@link MatchHUD}). */
@@ -146,7 +145,7 @@ function SquadPanelView({ refs }: { refs: PanelRefs }): JSX.Element {
 }
 
 /**
- * The two squad dashboards: your mages on the left, the opponent's on the right.
+ * The two squad dashboards, one docked on each half of the arena.
  *
  * Since the pivot nobody steers a mage, so following the fight means following
  * eight units you do not control — this is where their health, buffs, curses and
@@ -242,7 +241,7 @@ export class SquadPanel implements GameRenderer {
     refs.root.classList.toggle(styles.right, !onLeft);
 
     refs.label.textContent = SIDE_LABEL[side];
-    refs.label.style.color = teamColor(team);
+    refs.label.style.color = teamInk(team);
     // Kills this side has scored = bodies the other side has lost.
     const kills = opponents.reduce((n, m) => n + m.deaths, 0);
     refs.kills.textContent = `${kills} ${kills === 1 ? 'abate' : 'abates'}`;

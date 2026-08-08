@@ -11,17 +11,23 @@
   width: min(760px, calc(100% - 24px));
 }
 
-/* The frosted panel every readout sits on, matching HUD.module.css. */
+/*
+ * The pane every readout sits on. Tokens are shared with SquadPanel (see
+ * src/style.css) so the top bar, the card bar and the side dashboards are
+ * plainly the same sheet of glass rather than three lookalike panels.
+ */
 .side,
 .clockBox,
 .nextBox,
 .manaBox {
-  backdrop-filter: blur(8px);
-  background: rgba(255, 255, 255, 0.82);
-  border: 2px solid rgba(255, 255, 255, 0.9);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  background: linear-gradient(158deg, var(--glass-tint-lit), var(--glass-tint) 58%);
+  border: 1px solid var(--glass-edge);
   border-radius: 16px;
-  box-shadow: 0 6px 16px rgba(28, 50, 74, 0.18);
-  color: #263343;
+  box-shadow: var(--glass-specular), var(--glass-shadow);
+  color: var(--glass-ink);
+  text-shadow: var(--glass-halo);
 }
 
 .side {
@@ -44,8 +50,9 @@
 }
 
 .coreMeter {
-  background: rgba(37, 56, 76, 0.16);
+  background: var(--glass-track);
   border-radius: 999px;
+  box-shadow: inset 0 1px 2px rgba(11, 24, 41, 0.25);
   height: 15px;
   overflow: hidden;
   position: relative;
@@ -59,18 +66,20 @@
   width: 0;
 }
 
+/* Sits on the recessed track, not on the pane, so it carries its own shadow. */
 .coreText {
-  color: #14212e;
+  color: #f4f9ff;
   font-size: 10px;
   font-weight: 900;
   inset: 0;
   line-height: 15px;
   position: absolute;
   text-align: center;
+  text-shadow: 0 1px 2px rgba(9, 20, 34, 0.75);
 }
 
 .towers {
-  color: #3d566f;
+  color: var(--glass-ink-soft);
   font-size: 13px;
   font-weight: 900;
   letter-spacing: 2px;
@@ -91,7 +100,7 @@
 }
 
 .phase {
-  color: #6b7f94;
+  color: var(--glass-ink-soft);
   font-size: 10px;
   font-weight: 900;
   letter-spacing: 0.4px;
@@ -121,7 +130,10 @@
 }
 
 .hint {
-  background: rgba(20, 33, 46, 0.62);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(150%);
+  background: rgba(14, 27, 41, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 999px;
   color: #f2f7fc;
   font-size: 11px;
@@ -146,7 +158,7 @@
 }
 
 .nextLabel {
-  color: #6b7f94;
+  color: var(--glass-ink-soft);
   font-size: 9px;
   font-weight: 900;
   letter-spacing: 0.4px;
@@ -165,13 +177,14 @@
 }
 
 .card {
+  -webkit-backdrop-filter: var(--glass-blur);
   align-items: flex-start;
-  backdrop-filter: blur(8px);
-  background: rgba(255, 255, 255, 0.9);
-  border: 2px solid rgba(255, 255, 255, 0.95);
+  backdrop-filter: var(--glass-blur);
+  background: linear-gradient(158deg, rgba(255, 255, 255, 0.38), var(--glass-tint) 62%);
+  border: 1px solid var(--glass-edge);
   border-radius: 14px;
-  box-shadow: 0 6px 16px rgba(28, 50, 74, 0.22);
-  color: #263343;
+  box-shadow: var(--glass-specular), var(--glass-shadow);
+  color: var(--glass-ink);
   cursor: pointer;
   display: flex;
   flex-direction: column;
@@ -180,6 +193,7 @@
   padding: 8px 10px 6px;
   position: relative;
   text-align: left;
+  text-shadow: var(--glass-halo);
   transition: transform 90ms ease, box-shadow 90ms ease, border-color 90ms ease;
   width: 104px;
 }
@@ -193,8 +207,8 @@
 }
 
 .cardSelected {
-  border-color: #c68a12;
-  box-shadow: 0 0 0 3px rgba(198, 138, 18, 0.35), 0 8px 18px rgba(28, 50, 74, 0.26);
+  border-color: rgba(214, 168, 24, 0.95);
+  box-shadow: var(--glass-specular), 0 0 0 3px rgba(198, 138, 18, 0.4), var(--glass-shadow);
   transform: translateY(-4px);
 }
 
@@ -222,15 +236,16 @@
 }
 
 .cardRole {
-  color: #6b7f94;
+  color: var(--glass-ink-soft);
   font-size: 10px;
   font-weight: 700;
 }
 
 .cardKey {
-  color: #9bb0c4;
+  color: var(--glass-ink-soft);
   font-size: 10px;
   font-weight: 900;
+  opacity: 0.75;
   position: absolute;
   right: 8px;
   top: 6px;
@@ -247,8 +262,9 @@
 }
 
 .manaMeter {
-  background: rgba(37, 56, 76, 0.16);
+  background: var(--glass-track);
   border-radius: 999px;
+  box-shadow: inset 0 1px 2px rgba(11, 24, 41, 0.25);
   height: 12px;
   overflow: hidden;
   width: 100%;

@@ -1,21 +1,28 @@
 /*
  * Docked squad dashboards, one per side, sitting below MatchHUD's `.top` bar.
- * Same frosted language as MatchHUD.module.css so the two read as one HUD.
+ *
+ * Glass rather than an opaque card, and that is a gameplay decision: these two
+ * panels cover the lanes the Towers stand in, so a dashboard you cannot see past
+ * is one you keep collapsed. The tokens live in src/style.css, shared with
+ * MatchHUD, so the whole HUD stays one material.
  */
 
 .panel {
-  backdrop-filter: blur(8px);
-  background: rgba(255, 255, 255, 0.82);
-  border: 2px solid rgba(255, 255, 255, 0.9);
-  border-radius: 16px;
-  box-shadow: 0 6px 16px rgba(28, 50, 74, 0.18);
-  color: #263343;
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  /* Lit at the top, falling off downward — a pane catching the light. */
+  background: linear-gradient(158deg, var(--glass-tint-lit), var(--glass-tint) 58%);
+  border: 1px solid var(--glass-edge);
+  border-radius: 18px;
+  box-shadow: var(--glass-specular), var(--glass-shadow);
+  color: var(--glass-ink);
   display: flex;
   flex-direction: column;
   font-family: 'Segoe UI', system-ui, sans-serif;
   gap: 6px;
-  padding: 8px;
+  padding: 9px;
   position: absolute;
+  text-shadow: var(--glass-halo);
   top: 92px;
   width: 210px;
 }
@@ -50,7 +57,8 @@
 }
 
 .headerKills {
-  background: rgba(37, 56, 76, 0.12);
+  background: var(--glass-inset-lit);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 999px;
   flex: 0 0 auto;
   font-size: 11px;
@@ -59,7 +67,7 @@
 }
 
 .chevron {
-  color: #5b6b7e;
+  color: var(--glass-ink-soft);
   flex: 0 0 auto;
   font-size: 11px;
   line-height: 1;
@@ -89,10 +97,13 @@
   display: none;
 }
 
+/* A second, thinner sheet resting on the panel — no nested backdrop-filter:
+   stacking those is expensive and, in several engines, simply wrong. */
 .row {
-  background: rgba(37, 56, 76, 0.06);
-  border: 2px solid transparent;
-  border-radius: 11px;
+  background: var(--glass-inset);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
   color: inherit;
   cursor: pointer;
   display: flex;
@@ -102,17 +113,18 @@
   padding: 5px 7px;
   pointer-events: auto;
   text-align: left;
-  transition: background-color 120ms linear;
+  transition: background-color 120ms linear, border-color 120ms linear;
   width: 100%;
 }
 
 .row:hover {
-  background: rgba(37, 56, 76, 0.13);
+  background: var(--glass-inset-lit);
 }
 
 .rowActive {
-  background: rgba(255, 226, 106, 0.4);
-  border-color: rgba(214, 168, 24, 0.85);
+  background: rgba(255, 226, 106, 0.42);
+  border-color: rgba(214, 168, 24, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 0 0 1px rgba(214, 168, 24, 0.35);
 }
 
 /* Down but not out: squads are permanent, so a dead mage keeps its row. */
@@ -147,7 +159,7 @@
 }
 
 .role {
-  color: #5b6b7e;
+  color: var(--glass-ink-soft);
   flex: 0 0 auto;
   font-size: 9px;
   letter-spacing: 0.04em;
@@ -155,7 +167,7 @@
 }
 
 .kd {
-  color: #40506a;
+  color: var(--glass-ink);
   flex: 0 0 auto;
   font-size: 10px;
   font-weight: 900;
@@ -168,8 +180,9 @@
  * an inline fill ignores width and height entirely and the bar renders empty.
  */
 .healthMeter {
-  background: rgba(37, 56, 76, 0.18);
+  background: var(--glass-track);
   border-radius: 999px;
+  box-shadow: inset 0 1px 2px rgba(11, 24, 41, 0.25);
   display: block;
   height: 9px;
   overflow: hidden;
@@ -195,7 +208,7 @@
 }
 
 .healthText {
-  color: #40506a;
+  color: var(--glass-ink);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   font-weight: 900;
@@ -203,7 +216,7 @@
 }
 
 .respawn {
-  color: #a2493c;
+  color: #8f3123;
   font-size: 10px;
   font-weight: 900;
   margin-right: auto;
