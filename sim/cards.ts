@@ -45,7 +45,7 @@ export interface RosterEntry {
 const CATALOG: Readonly<Record<RosterId, RosterEntry>> = {
   stone_golem: {
     id: 'stone_golem',
-    name: 'Golem de Pedra',
+    name: 'Stone Golem',
     role: 'tank',
     health: 280,
     moveSpeed: 3.5,
@@ -53,7 +53,7 @@ const CATALOG: Readonly<Record<RosterId, RosterEntry>> = {
   },
   ice_sentinel: {
     id: 'ice_sentinel',
-    name: 'Sentinela de Gelo',
+    name: 'Ice Sentinel',
     role: 'tank',
     health: 200,
     moveSpeed: 4.0,
@@ -61,7 +61,7 @@ const CATALOG: Readonly<Record<RosterId, RosterEntry>> = {
   },
   pyromancer: {
     id: 'pyromancer',
-    name: 'Piromante',
+    name: 'Pyromancer',
     role: 'damage',
     health: 80,
     moveSpeed: 5.0,
@@ -69,7 +69,7 @@ const CATALOG: Readonly<Record<RosterId, RosterEntry>> = {
   },
   stormcaller: {
     id: 'stormcaller',
-    name: 'Condutor de Raio',
+    name: 'Stormcaller',
     role: 'damage',
     health: 60,
     moveSpeed: 5.0,
@@ -77,7 +77,7 @@ const CATALOG: Readonly<Record<RosterId, RosterEntry>> = {
   },
   arcane_archer: {
     id: 'arcane_archer',
-    name: 'Arqueiro Arcano',
+    name: 'Arcane Archer',
     role: 'damage',
     health: 70,
     moveSpeed: 5.5,
@@ -85,7 +85,7 @@ const CATALOG: Readonly<Record<RosterId, RosterEntry>> = {
   },
   alchemist: {
     id: 'alchemist',
-    name: 'Alquimista',
+    name: 'Alchemist',
     role: 'damage',
     health: 70,
     moveSpeed: 5.0,
@@ -93,7 +93,7 @@ const CATALOG: Readonly<Record<RosterId, RosterEntry>> = {
   },
   wind_dervish: {
     id: 'wind_dervish',
-    name: 'Dervixe do Vento',
+    name: 'Wind Dervish',
     role: 'damage',
     health: 65,
     moveSpeed: 7.0,
@@ -101,7 +101,7 @@ const CATALOG: Readonly<Record<RosterId, RosterEntry>> = {
   },
   cleric: {
     id: 'cleric',
-    name: 'Clérigo',
+    name: 'Cleric',
     role: 'support',
     health: 95,
     moveSpeed: 5.0,
@@ -111,7 +111,7 @@ const CATALOG: Readonly<Record<RosterId, RosterEntry>> = {
   },
   arcane_bard: {
     id: 'arcane_bard',
-    name: 'Bardo Arcano',
+    name: 'Arcane Bard',
     role: 'support',
     health: 70,
     moveSpeed: 5.0,

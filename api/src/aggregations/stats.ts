@@ -90,6 +90,77 @@ export async function getUserSummary(userId: string): Promise<UserSummary> {
   };
 }
 
+/**
+ * Comps played fewer times than this are noise: one lucky match would show as a
+ * 100% win rate and outrank everything the player actually relies on.
+ */
+const MIN_GAMES_FOR_COMP = 2;
+
+export interface SquadStat {
+  /** Sorted mage ids joined by '+', so pick order does not split a comp in two. */
+  signature: string;
+  squad: string[];
+  games: number;
+  wins: number;
+  /** 0..1 */
+  winRate: number;
+  structuresDestroyed: number;
+}
+
+export interface CardStat {
+  cardId: string;
+  casts: number;
+}
+
+/** Win rate per squad composition — the "which comps do I win with" question. */
+export async function getUserSquadStats(userId: string): Promise<SquadStat[]> {
+  const rows = await MatchLog.aggregate<{
+    _id: string;
+    squad: string[];
+    games: number;
+    wins: number;
+    structuresDestroyed: number;
+  }>([
+    { $match: { userId: new Types.ObjectId(userId), 'squad.0': { $exists: true } } },
+    { $addFields: { sortedSquad: { $sortArray: { input: '$squad', sortBy: 1 } } } },
+    {
+      $group: {
+        _id: { $reduce: { input: '$sortedSquad', initialValue: '', in: { $concat: ['$$value', '+', '$$this'] } } },
+        squad: { $first: '$sortedSquad' },
+        games: { $sum: 1 },
+        wins: { $sum: { $cond: ['$won', 1, 0] } },
+        structuresDestroyed: { $sum: '$structuresDestroyed' },
+      },
+    },
+    { $match: { games: { $gte: MIN_GAMES_FOR_COMP } } },
+  ]);
+
+  return rows
+    .map((r) => ({
+      // The $reduce leaves a leading separator; the client never parses this,
+      // but a stray '+' would look like a bug in any log that prints it.
+      signature: r._id.replace(/^\+/, ''),
+      squad: r.squad,
+      games: r.games,
+      wins: r.wins,
+      winRate: r.games > 0 ? r.wins / r.games : 0,
+      structuresDestroyed: r.structuresDestroyed,
+    }))
+    .sort((a, b) => b.winRate - a.winRate || b.games - a.games);
+}
+
+/** Total casts per card across every logged match, most-cast first. */
+export async function getUserCardStats(userId: string): Promise<CardStat[]> {
+  const rows = await MatchLog.aggregate<{ _id: string; casts: number }>([
+    { $match: { userId: new Types.ObjectId(userId) } },
+    { $unwind: '$cards' },
+    { $group: { _id: '$cards.cardId', casts: { $sum: '$cards.casts' } } },
+    { $match: { casts: { $gt: 0 } } },
+    { $sort: { casts: -1 } },
+  ]);
+  return rows.map((r) => ({ cardId: r._id, casts: r.casts }));
+}
+
 export async function getRanking(options: { skip: number; limit: number; sort: 'wins' | 'kdr' }): Promise<RankingEntry[]> {
   const rows = await MatchLog.aggregate<{
     _id: Types.ObjectId;

@@ -77,3 +77,58 @@ describe('GET /api/me/stats/elements', () => {
     expect(res.body.elements).toEqual([{ elementId: 'fire', casts: 9, hits: 5, kills: 3, damageDealt: 130 }]);
   });
 });
+
+const SQUAD_A = ['stone_golem', 'pyromancer', 'stormcaller', 'cleric'];
+const SQUAD_B = ['ice_sentinel', 'wind_dervish', 'alchemist', 'arcane_bard'];
+
+describe('GET /api/me/stats/squads', () => {
+  it('ranks compositions by win rate, ignoring the order they were picked in', async () => {
+    const { token } = await registerUser(app);
+    // Squad A: 2 games, 1 win — and the second one lists the same mages shuffled.
+    await reportMatch(token, { won: true, squad: SQUAD_A, structuresDestroyed: 3 });
+    await reportMatch(token, { won: false, squad: [...SQUAD_A].reverse(), structuresDestroyed: 1 });
+    // Squad B: 2 games, 2 wins.
+    await reportMatch(token, { won: true, squad: SQUAD_B, structuresDestroyed: 4 });
+    await reportMatch(token, { won: true, squad: SQUAD_B, structuresDestroyed: 2 });
+
+    const res = await request(app).get('/api/me/stats/squads').set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.squads).toHaveLength(2);
+    expect(res.body.squads[0]).toMatchObject({ games: 2, wins: 2, winRate: 1, structuresDestroyed: 6 });
+    expect(res.body.squads[0].squad).toEqual([...SQUAD_B].sort());
+    expect(res.body.squads[1]).toMatchObject({ games: 2, wins: 1, winRate: 0.5 });
+    expect(res.body.squads[1].signature).toBe([...SQUAD_A].sort().join('+'));
+  });
+
+  it('hides a comp played only once, and matches logged without a squad', async () => {
+    const { token } = await registerUser(app);
+    await reportMatch(token, { won: true, squad: SQUAD_A });
+    await reportMatch(token, { won: true }); // pre-builder log, no squad
+
+    const res = await request(app).get('/api/me/stats/squads').set('Authorization', `Bearer ${token}`);
+
+    expect(res.body.squads).toEqual([]);
+  });
+});
+
+describe('GET /api/me/stats/cards', () => {
+  it('sums casts per card across matches, most-cast first', async () => {
+    const { token } = await registerUser(app);
+    await reportMatch(token, {
+      cards: [
+        { cardId: 'plague', casts: 3 },
+        { cardId: 'blessing', casts: 1 },
+      ],
+    });
+    await reportMatch(token, { cards: [{ cardId: 'blessing', casts: 5 }] });
+
+    const res = await request(app).get('/api/me/stats/cards').set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.cards).toEqual([
+      { cardId: 'blessing', casts: 6 },
+      { cardId: 'plague', casts: 3 },
+    ]);
+  });
+});

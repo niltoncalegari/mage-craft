@@ -97,6 +97,15 @@ export class World {
   roundOver = false;
   winner: Team | null = null;
 
+  /**
+   * Successful casts per team, per spell — the only record of what a player
+   * actually *did*, since a spell leaves no trace once its duration expires.
+   * Counted here rather than at the caller because both the server session and
+   * a locally simulated match cast through `castSpell`, and a tally that lived
+   * in one of them would silently miss the other.
+   */
+  readonly castsBySpell = new Map<Team, Map<SpellId, number>>();
+
   /** Seconds of match time elapsed (GDD §4). */
   elapsed = 0;
   /** Set once normal time ends level on structures; doubles mana regen. */
@@ -332,7 +341,17 @@ export class World {
     this.spendMana(team, spell.cost);
     this.applySpellEffect(team, spell, position);
     this.recordCastFx(team, spell, position);
+    this.recordCast(team, spell.id);
     return { ok: true };
+  }
+
+  private recordCast(team: Team, spellId: SpellId): void {
+    let byTeam = this.castsBySpell.get(team);
+    if (!byTeam) {
+      byTeam = new Map();
+      this.castsBySpell.set(team, byTeam);
+    }
+    byTeam.set(spellId, (byTeam.get(spellId) ?? 0) + 1);
   }
 
   /** Leaves a short-lived, gameplay-free trace of the cast for clients (GDD §17). */

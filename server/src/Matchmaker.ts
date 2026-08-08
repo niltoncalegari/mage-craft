@@ -9,6 +9,7 @@
  * anything else.
  */
 
+import type { RosterId } from '../../sim/cards';
 import type { CardId } from '../../sim/spells';
 
 /** How long a player waits for a human before the server gives them a bot. */
@@ -18,6 +19,8 @@ export interface QueueEntry {
   clientId: string;
   name: string;
   deck: CardId[];
+  /** Undefined keeps the default squad — the other half of the loadout. */
+  squad?: RosterId[];
   /** Epoch seconds, injected so tests can drive the clock. */
   joinedAt: number;
 }

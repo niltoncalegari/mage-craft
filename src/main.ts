@@ -69,19 +69,7 @@ const settings = new Settings();
 const session = getSession();
 if (session?.name) settings.set('playerName', session.name);
 
-let appHandle: { dispose(): void } | null = null;
-let practiceBooting = false;
-
-const startPractice = (): void => {
-  if (practiceBooting) return;
-  practiceBooting = true;
-  appHandle?.dispose();
-  appHandle = null;
-  void bootOfflineMatch();
-};
-
-appHandle = mountApp(container, {
-  actions: { startPractice },
+mountApp(container, {
   stats: { wins: settings.get('wins'), losses: settings.get('losses') },
   selectedElement: settings.get('selectedElement'),
   onSelectElement: (element: ElementId) => {
@@ -89,7 +77,15 @@ appHandle = mountApp(container, {
   },
 });
 
-async function bootOfflineMatch(): Promise<void> {
+/**
+ * RETIRED — the pre-v1.1 SnowCraft loop (controllable hero, lives, snowballs)
+ * against `src/game/**` + `src/systems/**`. Practice now runs the real siege
+ * simulation in the browser (`src/net/LocalSession.ts`), so nothing calls this
+ * any more. Kept in the tree as reference for the systems that have no siege
+ * equivalent yet; exported only so `noUnusedLocals` tolerates it. Do not
+ * re-wire it to a button — it describes a game this one no longer is.
+ */
+export async function bootOfflineMatch(): Promise<void> {
   const knownMap = MAPS.some((m) => m.value === settings.get('selectedMap'));
   const selectedMap = knownMap ? settings.get('selectedMap') : MAPS[0].value;
   const mapUrl = `${import.meta.env.BASE_URL}maps/${selectedMap}`;

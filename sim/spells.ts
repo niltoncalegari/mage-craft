@@ -56,7 +56,7 @@ export interface SpellCard {
 const CATALOG: Readonly<Record<SpellId, SpellCard>> = {
   blessing: {
     id: 'blessing',
-    name: 'Bênção de Ímpeto',
+    name: 'Blessing of Haste',
     kind: 'buff',
     cost: BLESSING_COST,
     radius: BLESSING_RADIUS,
@@ -69,7 +69,7 @@ const CATALOG: Readonly<Record<SpellId, SpellCard>> = {
   },
   slow_curse: {
     id: 'slow_curse',
-    name: 'Maldição da Lentidão',
+    name: 'Curse of Slowing',
     kind: 'curse',
     cost: SLOW_CURSE_COST,
     radius: SLOW_CURSE_RADIUS,

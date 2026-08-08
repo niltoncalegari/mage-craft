@@ -11,8 +11,8 @@ import styles from './MatchHUD.module.css';
 
 /** What the player can be told about a spell at a glance (GDD §9). */
 const KIND_LABEL: Readonly<Record<SpellCard['kind'], string>> = {
-  buff: 'Bênção',
-  curse: 'Maldição',
+  buff: 'Blessing',
+  curse: 'Curse',
 };
 
 export interface MatchHudDeps {
@@ -123,7 +123,7 @@ function MatchHudView({ refs }: { refs: HudRefs }): JSX.Element {
         <span class={styles.hint} ref={keep(refs, 'hint')} />
         <div class={styles.barRow}>
           <div class={styles.nextBox}>
-            <span class={styles.nextLabel}>Próxima</span>
+            <span class={styles.nextLabel}>Next</span>
             <span class={styles.nextName} ref={keep(refs, 'nextName')} />
           </div>
           <div class={styles.hand}>
@@ -219,7 +219,7 @@ export class MatchHUD implements GameRenderer {
 
   private updateClock(state: MatchState): void {
     this.refs.clock.textContent = formatSeconds(remainingSeconds(state));
-    this.refs.phase.textContent = state.suddenDeath ? 'Morte súbita' : 'Tempo normal';
+    this.refs.phase.textContent = state.suddenDeath ? 'Sudden death' : 'Regulation';
     this.refs.phase.classList.toggle(styles.phaseUrgent, state.suddenDeath);
   }
 
@@ -240,7 +240,7 @@ export class MatchHUD implements GameRenderer {
     const core = structures.find((s) => s.kind === 'core');
     const towers = structures.filter((s) => s.kind === 'tower');
 
-    refs.label.textContent = team === Team.Player ? 'Você' : 'Adversário';
+    refs.label.textContent = team === Team.Player ? 'You' : 'Opponent';
     refs.label.style.color = teamInk(team);
 
     const fraction = core ? clamp01(core.health / Math.max(1, core.maxHealth)) : 0;
@@ -252,10 +252,10 @@ export class MatchHUD implements GameRenderer {
 
   private coreLabel(core: Structure): string {
     const health = Math.max(0, Math.ceil(core.health));
-    if (!core.alive) return 'Núcleo destruído';
+    if (!core.alive) return 'Core destroyed';
     // While its Towers stand the Core cannot be hurt at all, so a health number
     // alone would read as "almost lost" to no purpose.
-    return core.invulnerable ? `Núcleo protegido · ${health}` : `Núcleo ${health}`;
+    return core.invulnerable ? `Core shielded · ${health}` : `Core ${health}`;
   }
 
   private updateHand(state: MatchState): void {

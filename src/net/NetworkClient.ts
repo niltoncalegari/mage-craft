@@ -3,6 +3,7 @@ import {
   type ClientMsg,
   type ErrorMsg,
   type MatchFoundMsg,
+  type MatchResultMsg,
   type MatchStartMsg,
   type QueueStatusMsg,
   type RoomListMsg,
@@ -18,6 +19,7 @@ export type NetworkHandlers = {
   onMatchStart?(msg: MatchStartMsg): void;
   onSnapshot?(msg: SnapshotMsg): void;
   onRoundEnd?(msg: RoundEndMsg): void;
+  onMatchResult?(msg: MatchResultMsg): void;
   onQueueStatus?(msg: QueueStatusMsg): void;
   onMatchFound?(msg: MatchFoundMsg): void;
   onError?(msg: ErrorMsg): void;
@@ -151,6 +153,15 @@ export class NetworkClient {
     this.send(deck ? { type: 'join_queue', name, deck } : { type: 'join_queue', name });
   }
 
+  /**
+   * Registers the squad and deck for this connection's next match. Send it
+   * right after connecting: it applies to the queue and to a room seat alike,
+   * whichever the player reaches for.
+   */
+  setLoadout(deck?: string[], squad?: string[]): void {
+    this.send({ type: 'set_loadout', ...(deck ? { deck } : {}), ...(squad ? { squad } : {}) });
+  }
+
   leaveQueue(): void {
     this.send({ type: 'leave_queue' });
   }
@@ -172,6 +183,9 @@ export class NetworkClient {
         break;
       case 'round_end':
         this.handlers.onRoundEnd?.(msg as RoundEndMsg);
+        break;
+      case 'match_result':
+        this.handlers.onMatchResult?.(msg as MatchResultMsg);
         break;
       case 'queue_status':
         this.handlers.onQueueStatus?.(msg as QueueStatusMsg);

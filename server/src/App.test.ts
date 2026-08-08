@@ -10,12 +10,14 @@ import type {
   ClientMsg,
   ErrorMsg,
   MatchFoundMsg,
+  MatchResultMsg,
   QueueStatusMsg,
   RoomListMsg,
   RoomStateMsg,
   ServerMsg,
   SnapshotMsg,
 } from '../../sim/protocol';
+import { defaultSquad } from '../../sim/cards';
 import { SQUAD_SIZE } from '../../sim/config';
 import { HAND_SIZE } from '../../sim/Deck';
 import { BOT_FALLBACK_SECONDS } from './Matchmaker';
@@ -399,6 +401,102 @@ describe('App — matchmaking queue', () => {
     expect(hub.to<ErrorMsg>('c2', 'error')).toEqual([]);
     // Casts never summon anything (GDD §9) — both squads are already full.
     expect(session.liveWorld?.mages.size).toBe(SQUAD_SIZE * 2);
+  });
+});
+
+describe('App — loadout', () => {
+  const SQUAD = ['ice_sentinel', 'wind_dervish', 'alchemist', 'arcane_bard'];
+
+  it('fields the squad a queued player registered before joining the queue', () => {
+    send('c1', { type: 'set_loadout', squad: SQUAD });
+    send('c1', { type: 'join_queue', name: 'Alice' });
+    send('c2', { type: 'join_queue', name: 'Bob' });
+    app.dispose();
+
+    expect(hub.to<ErrorMsg>('c1', 'error')).toEqual([]);
+    const fielded = [...(getSession().liveWorld?.mages.values() ?? [])]
+      .filter((m) => m.team === 0)
+      .map((m) => m.rosterId)
+      .sort();
+    expect(fielded).toEqual([...SQUAD].sort());
+    // The opponent, who sent nothing, still gets the default squad.
+    expect([...(getSession().liveWorld?.mages.values() ?? [])].filter((m) => m.team === 1)).toHaveLength(SQUAD_SIZE);
+  });
+
+  it('applies a loadout sent before the room existed to the seat that follows', () => {
+    send('c1', { type: 'set_loadout', squad: SQUAD });
+    hostRoom('c1', 'Alice');
+    send('c1', { type: 'add_bot', team: 1, difficulty: 'normal' });
+    send('c1', { type: 'set_ready', ready: true });
+    send('c1', { type: 'start_match' });
+    app.dispose();
+
+    const fielded = [...(getSession().liveWorld?.mages.values() ?? [])]
+      .filter((m) => m.team === 0)
+      .map((m) => m.rosterId)
+      .sort();
+    expect(fielded).toEqual([...SQUAD].sort());
+  });
+
+  it('rejects an illegal squad and leaves the queue usable', () => {
+    // Four mages, all real, but no support — the role floor (GDD §7).
+    send('c1', { type: 'set_loadout', squad: ['stone_golem', 'ice_sentinel', 'pyromancer', 'stormcaller'] });
+
+    expect(hub.last<ErrorMsg>('c1', 'error')?.message).toMatch(/invalid squad/);
+
+    hub.clear();
+    send('c1', { type: 'join_queue', name: 'Alice' });
+    expect(hub.to<ErrorMsg>('c1', 'error')).toEqual([]);
+    expect(hub.last<QueueStatusMsg>('c1', 'queue_status')).toMatchObject({ position: 1 });
+  });
+
+  it('applies a loadout all at once, so an illegal deck takes the squad down with it', () => {
+    send('c1', { type: 'set_loadout', squad: SQUAD, deck: ['blessing'] });
+
+    expect(hub.last<ErrorMsg>('c1', 'error')?.message).toMatch(/invalid deck/);
+
+    send('c1', { type: 'join_queue', name: 'Alice' });
+    send('c2', { type: 'join_queue', name: 'Bob' });
+    app.dispose();
+
+    // Half-applying would field a squad the player picked alongside a deck they
+    // did not — the message is rejected whole instead.
+    const fielded = [...(getSession().liveWorld?.mages.values() ?? [])]
+      .filter((m) => m.team === 0)
+      .map((m) => m.rosterId)
+      .sort();
+    expect(fielded).toEqual([...defaultSquad()].sort());
+  });
+});
+
+describe('App — match result', () => {
+  it('sends both players the finished match summary before round_end', () => {
+    send('c1', { type: 'join_queue', name: 'Alice' });
+    send('c2', { type: 'join_queue', name: 'Bob' });
+    app.dispose();
+
+    const session = getSession();
+    for (const st of session.liveWorld?.structures.values() ?? []) {
+      if (st.team === 1) {
+        st.invulnerable = false;
+        st.health = 0;
+        st.alive = false;
+      }
+    }
+    hub.clear();
+    session.tick();
+
+    const result = hub.last<MatchResultMsg>('c1', 'match_result');
+    expect(result).toBeTruthy();
+    expect(result?.winnerTeam).toBe(0);
+    expect(result?.perTeam[0].squad).toHaveLength(SQUAD_SIZE);
+    expect(result?.durationSeconds).toBeGreaterThan(0);
+    expect(hub.last<MatchResultMsg>('c2', 'match_result')).toBeTruthy();
+
+    // Ordering matters: a client that navigates on round_end must already have
+    // the numbers.
+    const forC1 = hub.sent.filter((s) => s.clientId === 'c1').map((s) => s.msg.type);
+    expect(forC1.indexOf('match_result')).toBeLessThan(forC1.indexOf('round_end'));
   });
 });
 

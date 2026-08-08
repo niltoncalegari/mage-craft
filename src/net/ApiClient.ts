@@ -55,6 +55,9 @@ export interface MatchLogEntry {
   livesSpent: number;
   map: string;
   elements: ElementStat[];
+  squad?: string[];
+  cards?: CardStat[];
+  structuresDestroyed?: number;
   createdAt: string;
 }
 
@@ -64,6 +67,21 @@ export interface ElementStat {
   hits: number;
   kills: number;
   damageDealt: number;
+}
+
+export interface SquadStat {
+  signature: string;
+  squad: string[];
+  games: number;
+  wins: number;
+  /** 0..1 */
+  winRate: number;
+  structuresDestroyed: number;
+}
+
+export interface CardStat {
+  cardId: string;
+  casts: number;
 }
 
 export interface RankingEntry {
@@ -87,6 +105,10 @@ export interface ReportMatchInput {
   livesSpent: number;
   map: string;
   elements: ElementStat[];
+  /** The loadout this match was played with; absent on pre-builder logs. */
+  squad?: string[];
+  cards?: CardStat[];
+  structuresDestroyed?: number;
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -120,6 +142,14 @@ export const ApiClient = {
 
   myElementStats(token: string): Promise<{ elements: ElementStat[] }> {
     return request('/api/me/stats/elements', { headers: { Authorization: `Bearer ${token}` } });
+  },
+
+  mySquadStats(token: string): Promise<{ squads: SquadStat[] }> {
+    return request('/api/me/stats/squads', { headers: { Authorization: `Bearer ${token}` } });
+  },
+
+  myCardStats(token: string): Promise<{ cards: CardStat[] }> {
+    return request('/api/me/stats/cards', { headers: { Authorization: `Bearer ${token}` } });
   },
 
   ranking(sort: 'wins' | 'kdr' = 'wins', page = 1, limit = 20): Promise<{ entries: RankingEntry[] }> {

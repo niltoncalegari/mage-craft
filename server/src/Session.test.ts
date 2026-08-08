@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { defaultSquad } from '../../sim/cards';
 import { SQUAD_SIZE } from '../../sim/config';
 import { TEAM_A, TEAM_B } from '../../sim/entities';
+import type { MatchSummary } from '../../sim/matchStats';
 import { Rng } from '../../sim/rng';
 import { Vec2 } from '../../sim/Vec2';
 import { RoomManager } from './RoomManager';
@@ -213,6 +215,75 @@ describe('Session — round end', () => {
     s.setReady('p3', true);
     s.startMatch();
     expect(s.liveWorld).toBeTruthy();
+  });
+});
+
+describe('Session — loadout', () => {
+  it('fields the squad the seated player registered', () => {
+    const squad = ['ice_sentinel', 'wind_dervish', 'alchemist', 'arcane_bard'] as const;
+    const s = newSession();
+    s.join('p1', 'Alice');
+    s.selectTeam('p1', TEAM_A);
+    s.selectElement('p1', 'fire');
+    s.setSquad('p1', [...squad]);
+    s.addBot(TEAM_B, 'normal');
+
+    s.startMatch();
+
+    const fielded = [...(s.liveWorld?.mages.values() ?? [])]
+      .filter((m) => m.team === TEAM_A)
+      .map((m) => m.rosterId)
+      .sort();
+    expect(fielded).toEqual([...squad].sort());
+  });
+
+  it('leaves a bot seat on the default squad', () => {
+    const s = newSession();
+    s.join('p1', 'Alice');
+    s.selectTeam('p1', TEAM_A);
+    s.selectElement('p1', 'fire');
+    s.setSquad('p1', ['ice_sentinel', 'wind_dervish', 'alchemist', 'arcane_bard']);
+    s.addBot(TEAM_B, 'normal');
+
+    s.startMatch();
+
+    const botSquad = [...(s.liveWorld?.mages.values() ?? [])]
+      .filter((m) => m.team === TEAM_B)
+      .map((m) => m.rosterId)
+      .sort();
+    expect(botSquad).toEqual([...defaultSquad()].sort());
+  });
+});
+
+describe('Session — match result', () => {
+  it('captures the match summary before the rematch drops the world', () => {
+    const summaries: MatchSummary[] = [];
+    const s = startedSession({ onMatchResult: (summary) => summaries.push(summary) });
+
+    eliminate(s, TEAM_B);
+    s.tick();
+    s.tick(); // must not fire again
+
+    expect(summaries).toHaveLength(1);
+    // The world is already gone by the time the callback runs — the summary is
+    // the only remaining account of the match, so it has to be complete.
+    expect(s.liveWorld).toBeNull();
+    expect(summaries[0].winnerTeam).toBe(TEAM_A);
+    expect(summaries[0].perTeam[TEAM_A].squad).toHaveLength(SQUAD_SIZE);
+    expect(summaries[0].perTeam[TEAM_A].structuresDestroyed).toBeGreaterThan(0);
+  });
+
+  it('counts the casts a player actually spent', () => {
+    const summaries: MatchSummary[] = [];
+    const s = startedSession({ onMatchResult: (summary) => summaries.push(summary) });
+
+    const card = s.deckFor(TEAM_A)?.hand()[0] ?? 'blessing';
+    expect(s.submitCast('p1', card, new Vec2(0, 0)).ok).toBe(true);
+
+    eliminate(s, TEAM_B);
+    s.tick();
+
+    expect(summaries[0].perTeam[TEAM_A].casts).toContainEqual({ cardId: card, casts: 1 });
   });
 });
 

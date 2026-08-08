@@ -1,0 +1,231 @@
+/* Shared surface for the squad and deck builders. Both are "pick from a pool,
+   fill a fixed number of slots, see instantly whether it is legal". */
+
+.slots {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, 1fr);
+  margin-bottom: 6px;
+}
+
+.slot {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 4px;
+  justify-content: center;
+  min-height: 84px;
+  padding: 10px;
+  text-align: center;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.slotFilled {
+  background: rgba(255, 255, 255, 0.07);
+  border-style: solid;
+  border-color: var(--element-color, var(--copper));
+  color: var(--ink);
+}
+
+.slot:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.slotName {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.slotRole {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.slotRemove {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pool {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--element-color, var(--copper));
+  border-radius: 12px;
+  color: var(--ink);
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  padding: 12px;
+  text-align: left;
+  transition:
+    background 160ms ease,
+    transform 160ms ease;
+  width: 100%;
+}
+
+.card:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+  transform: translateY(-1px);
+}
+
+.card:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.cardPicked {
+  background: rgba(62, 207, 191, 0.12);
+  border-color: var(--teal);
+}
+
+.cardHead {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.cardName {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.cardMeta {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.stepper {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.stepBtn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  height: 28px;
+  line-height: 1;
+  width: 28px;
+}
+
+.stepBtn:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.stepCount {
+  font-size: 14px;
+  font-weight: 700;
+  min-width: 2ch;
+  text-align: center;
+}
+
+.costCurve {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.costRow {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 150px 1fr auto;
+}
+
+.costLabel {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.fill {
+  border-radius: 999px;
+  height: 100%;
+  transition: width 200ms ease;
+}
+
+.costValue {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.saveBar {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 18px;
+  padding-top: 14px;
+}
+
+.saveState {
+  color: var(--ok);
+  font-size: 12px;
+  font-weight: 700;
+  margin-right: auto;
+}
+
+.saveHint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: auto;
+}
+
+@media (max-width: 640px) {
+  .slots {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .costRow {
+    grid-template-columns: 110px 1fr auto;
+  }
+}

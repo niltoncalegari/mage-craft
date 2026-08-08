@@ -14,7 +14,7 @@ const ROLE_LABEL: Readonly<Record<string, string>> = {
   support: 'Suporte',
 };
 
-const SIDE_LABEL = ['Sua equipe', 'Adversário'] as const;
+const SIDE_LABEL = ['Your squad', 'Opponent'] as const;
 
 export interface SquadPanelDeps {
   /** Every mage in the match, in a match-stable order. */
@@ -98,16 +98,16 @@ function RowView({ refs }: { refs: RowRefs }): JSX.Element {
         <span class={styles.healthText} ref={keep(refs, 'healthText')} />
         <span class={styles.respawn} ref={keep(refs, 'respawn')} hidden />
         <span class={`${styles.chip} ${styles.chipShield}`} ref={keep(chips, 'shield')} hidden>
-          Escudo
+          Shield
         </span>
         <span class={`${styles.chip} ${styles.chipHaste}`} ref={keep(chips, 'haste')} hidden>
-          Ímpeto
+          Haste
         </span>
         <span class={`${styles.chip} ${styles.chipSlow}`} ref={keep(chips, 'slow')} hidden>
-          Lentidão
+          Slowed
         </span>
         <span class={`${styles.chip} ${styles.chipImmune}`} ref={keep(chips, 'immune')} hidden>
-          Imune
+          Immune
         </span>
       </span>
     </button>

@@ -12,6 +12,15 @@ const elementUsageSchema = new Schema(
   { _id: false },
 );
 
+/** Casts of one spell in a single match — the deck half of a loadout's record. */
+const cardUsageSchema = new Schema(
+  {
+    cardId: { type: String, required: true },
+    casts: { type: Number, required: true, min: 0, default: 0 },
+  },
+  { _id: false },
+);
+
 const matchLogSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
@@ -25,6 +34,14 @@ const matchLogSchema = new Schema(
     livesSpent: { type: Number, required: true, min: 0, default: 0 },
     map: { type: String, required: true },
     elements: { type: [elementUsageSchema], required: true, default: [] },
+    /*
+     * The loadout this match was played with, and what it achieved. All
+     * optional with defaults so documents written before the squad builder
+     * existed stay valid — there is nothing to migrate.
+     */
+    squad: { type: [String], default: [] },
+    cards: { type: [cardUsageSchema], default: [] },
+    structuresDestroyed: { type: Number, min: 0, default: 0 },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );

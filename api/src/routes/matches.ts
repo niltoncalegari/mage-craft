@@ -9,6 +9,11 @@ export const matchesRouter = Router();
 const MODES = new Set(['sp-vs-ai', 'pvp']);
 const DIFFICULTIES = new Set(['easy', 'normal', 'hard']);
 
+interface CardUsageInput {
+  cardId: string;
+  casts: number;
+}
+
 interface ElementUsageInput {
   elementId: string;
   casts: number;
@@ -43,6 +48,27 @@ function parseElements(value: unknown): ElementUsageInput[] | null {
       kills: e.kills,
       damageDealt: e.damageDealt,
     });
+  }
+  return parsed;
+}
+
+/** The squad this match was played with. Absent is fine — older clients send none. */
+function parseSquad(value: unknown): string[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  if (value.some((id) => typeof id !== 'string' || id.length === 0)) return null;
+  return value as string[];
+}
+
+function parseCards(value: unknown): CardUsageInput[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  const parsed: CardUsageInput[] = [];
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) return null;
+    const c = item as Record<string, unknown>;
+    if (typeof c.cardId !== 'string' || !isNonNegativeNumber(c.casts)) return null;
+    parsed.push({ cardId: c.cardId, casts: c.casts });
   }
   return parsed;
 }
@@ -88,6 +114,20 @@ matchesRouter.post('/', requireAuthOrApiKey, async (req: AuthedRequest, res) => 
     res.status(400).json({ error: 'elements must be an array of { elementId, casts, hits, kills, damageDealt }' });
     return;
   }
+  const squad = parseSquad(body.squad);
+  if (!squad) {
+    res.status(400).json({ error: 'squad must be an array of mage ids' });
+    return;
+  }
+  const cards = parseCards(body.cards);
+  if (!cards) {
+    res.status(400).json({ error: 'cards must be an array of { cardId, casts }' });
+    return;
+  }
+  if (body.structuresDestroyed !== undefined && !isNonNegativeNumber(body.structuresDestroyed)) {
+    res.status(400).json({ error: 'structuresDestroyed must be a non-negative number' });
+    return;
+  }
 
   const match = await MatchLog.create({
     userId,
@@ -101,6 +141,9 @@ matchesRouter.post('/', requireAuthOrApiKey, async (req: AuthedRequest, res) => 
     livesSpent: body.livesSpent,
     map: body.map,
     elements,
+    squad,
+    cards,
+    structuresDestroyed: body.structuresDestroyed ?? 0,
   });
 
   res.status(201).json({ id: match._id.toString() });

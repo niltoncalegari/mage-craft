@@ -14,101 +14,33 @@ import { Commander } from '../../sim/bot/Commander';
 import { defaultSquad, type RosterId } from '../../sim/cards';
 import { SIM_DT } from '../../sim/config';
 import { Deck, defaultDeck } from '../../sim/Deck';
-import type { ElementId } from '../../sim/elements';
 import { TEAM_A, TEAM_B, type Team } from '../../sim/entities';
+import { summarize, type MatchSummary } from '../../sim/matchStats';
 import { Rng } from '../../sim/rng';
+import { buildSnapshot, SNAPSHOT_EVERY_N_TICKS, type Snapshot } from '../../sim/snapshot';
 import type { CardId } from '../../sim/spells';
 import { Vec2 } from '../../sim/Vec2';
 import type { CastRejection, World } from '../../sim/World';
 import type { Room, RoomState, RoomSummary, Slot, Spectator } from './Room';
 
-/** 60/3 = 20Hz, within the project plan's ~20-30Hz snapshot target. */
-export const SNAPSHOT_EVERY_N_TICKS = 3;
-
-/** A plain-data view of one simulation tick, independent of the wire protocol. */
-export interface Snapshot {
-  tick: number;
-  mages: MageSnapshotState[];
-  projectiles: ProjectileSnapshotState[];
-  puddles: PuddleSnapshotState[];
-  structures: StructureSnapshotState[];
-  /** Casts inside their VFX window (GDD §17) — cosmetic, never gameplay. */
-  spells: SpellCastSnapshotState[];
-  elapsed: number;
-  suddenDeath: boolean;
-  /** Mana per team, indexed by team number — the App picks the receiver's. */
-  mana: Record<number, number>;
-}
-
-export interface MageSnapshotState {
-  id: string;
-  team: number;
-  position: Vec2;
-  facing: Vec2;
-  health: number;
-  maxHealth: number;
-  charging: boolean;
-  charge: number;
-  element: ElementId;
-  role: string;
-  rosterId: RosterId | null;
-  alive: boolean;
-  /** True while Escudo Arcano still has damage to absorb (GDD §9) — for a client shield indicator. */
-  shielded: boolean;
-  /** Bênção de Ímpeto running (GDD §9) — for the client's haste aura. */
-  hasted: boolean;
-  /** Slowed by an ice hit or Maldição da Lentidão (GDD §8.3, §9). */
-  slowed: boolean;
-  /** Enemy mages this one put down (GDD §4); see `World.kill` for who gets credited. */
-  kills: number;
-  /** Times this mage was put down. A team's kill total is the enemy's sum of these. */
-  deaths: number;
-  /** Seconds until it returns; 0 while alive. The wire omits it when 0. */
-  respawnRemaining: number;
-  /** Post-respawn damage immunity is running. The wire omits it when false. */
-  immune: boolean;
-}
-
-export interface StructureSnapshotState {
-  id: string;
-  team: number;
-  kind: string;
-  position: Vec2;
-  radius: number;
-  health: number;
-  maxHealth: number;
-  alive: boolean;
-  invulnerable: boolean;
-}
-
-export interface ProjectileSnapshotState {
-  id: string;
-  element: ElementId;
-  position: Vec2;
-  velocity: Vec2;
-  /** Above the ground plane; the client draws (and shadows) the arc with it. */
-  height: number;
-  radius: number;
-}
-
-export interface SpellCastSnapshotState {
-  id: string;
-  spellId: string;
-  team: number;
-  position: Vec2;
-  radius: number;
-}
-
-export interface PuddleSnapshotState {
-  id: string;
-  position: Vec2;
-  radius: number;
-  remaining: number;
-}
+// The snapshot shape moved to `sim/snapshot.ts` so a client running a match
+// locally can build the same bytes; re-exported here because the server and its
+// tests have always reached for it through Session.
+export { SNAPSHOT_EVERY_N_TICKS };
+export type {
+  MageSnapshotState,
+  ProjectileSnapshotState,
+  PuddleSnapshotState,
+  Snapshot,
+  SpellCastSnapshotState,
+  StructureSnapshotState,
+} from '../../sim/snapshot';
 
 export interface SessionCallbacks {
   onSnapshot?: (snap: Snapshot) => void;
   onRoundEnd?: (winnerTeam: number) => void;
+  /** The finished match's own numbers, captured before the world is dropped. */
+  onMatchResult?: (summary: MatchSummary) => void;
 }
 
 export class Session {
@@ -128,6 +60,7 @@ export class Session {
   /** Teams played by the AI commander — the queue's bot fallback (GDD §10). */
   private commanders = new Map<Team, Commander>();
   private playerDecks = new Map<string, CardId[]>();
+  private playerSquads = new Map<string, RosterId[]>();
   private unitDifficulty: Difficulty = 'normal';
 
   constructor(
@@ -245,8 +178,9 @@ export class Session {
     this.commanders = new Map();
 
     // One seat per team in a 1v1; an empty or bot seat gets an AI commander so
-    // the match is always contested. There is no squad-builder yet (GDD §16),
-    // so every team fields the same default squad.
+    // the match is always contested. Both halves of a seat's loadout come from
+    // the player who registered them, falling back to the defaults for a bot
+    // seat or a player who never opened the builders.
     for (const team of [TEAM_A, TEAM_B] as Team[]) {
       const slot = this.room.slots().find((s) => s.team === team);
       const cards = (slot?.playerId ? this.playerDecks.get(slot.playerId) : null) ?? defaultDeck();
@@ -256,7 +190,8 @@ export class Session {
         this.commanders.set(team, new Commander(this.rng, (slot?.difficulty as Difficulty) ?? 'normal'));
       }
 
-      world.initSquad(team, defaultSquad());
+      const squad = (slot?.playerId ? this.playerSquads.get(slot.playerId) : null) ?? defaultSquad();
+      world.initSquad(team, squad);
     }
 
     // Every mage on the board is permanent from tick one — Brain drives all
@@ -267,6 +202,11 @@ export class Session {
   /** Registers the deck a player brought, used on the next `startMatch`. */
   setDeck(playerId: string, cards: CardId[]): void {
     this.playerDecks.set(playerId, cards);
+  }
+
+  /** Registers the squad a player brought, used on the next `startMatch`. */
+  setSquad(playerId: string, squad: RosterId[]): void {
+    this.playerSquads.set(playerId, squad);
   }
 
   deckFor(team: Team): Deck | null {
@@ -338,16 +278,21 @@ export class Session {
     this.tickCount++;
 
     const snap =
-      this.tickCount % SNAPSHOT_EVERY_N_TICKS === 0 ? this.buildSnapshot(this.world) : null;
+      this.tickCount % SNAPSHOT_EVERY_N_TICKS === 0 ? buildSnapshot(this.world, this.tickCount) : null;
 
     let roundEndWinner: number | null = null;
+    let summary: MatchSummary | null = null;
     if (this.world.roundOver) {
       // A null winner is a draw (GDD §4), reported as -1 on the wire.
       roundEndWinner = this.world.winner ?? -1;
+      // Read the match before `beginRematch` drops the world — this is the only
+      // instant its own numbers still exist.
+      summary = summarize(this.world);
       this.beginRematch();
     }
 
     if (snap) this.cb.onSnapshot?.(snap);
+    if (summary) this.cb.onMatchResult?.(summary);
     if (roundEndWinner !== null) this.cb.onRoundEnd?.(roundEndWinner);
   }
 
@@ -404,65 +349,4 @@ export class Session {
     this.matchEnded = true;
   }
 
-  private buildSnapshot(world: World): Snapshot {
-    return {
-      tick: this.tickCount,
-      elapsed: world.elapsed,
-      suddenDeath: world.suddenDeath,
-      mana: { [TEAM_A]: world.manaOf(TEAM_A), [TEAM_B]: world.manaOf(TEAM_B) },
-      structures: [...world.structures.values()].map((s) => ({
-        id: s.id,
-        team: s.team,
-        kind: s.kind,
-        position: s.position,
-        radius: s.radius,
-        health: s.health,
-        maxHealth: s.maxHealth,
-        alive: s.alive,
-        invulnerable: s.invulnerable,
-      })),
-      mages: [...world.mages.values()].map((m) => ({
-        id: m.id,
-        team: m.team,
-        position: m.position,
-        facing: m.facing,
-        health: m.health,
-        maxHealth: m.maxHealth,
-        charging: m.charging,
-        charge: m.charge,
-        element: m.element,
-        role: m.role,
-        rosterId: m.rosterId,
-        alive: m.alive,
-        shielded: m.shieldAmount > 0,
-        hasted: m.speedBuffTimer > 0,
-        slowed: m.slowTimer > 0,
-        kills: m.kills,
-        deaths: m.deaths,
-        respawnRemaining: m.respawnTimer,
-        immune: m.immunityTimer > 0,
-      })),
-      projectiles: [...world.projectiles.values()].map((p) => ({
-        id: p.id,
-        element: p.element,
-        position: p.position,
-        velocity: p.velocity,
-        height: p.height,
-        radius: p.radius,
-      })),
-      puddles: [...world.puddles.values()].map((pu) => ({
-        id: pu.id,
-        position: pu.position,
-        radius: pu.radius,
-        remaining: pu.duration - pu.elapsed,
-      })),
-      spells: [...world.spellCasts.values()].map((fx) => ({
-        id: fx.id,
-        spellId: fx.spellId,
-        team: fx.team,
-        position: fx.position,
-        radius: fx.radius,
-      })),
-    };
-  }
 }

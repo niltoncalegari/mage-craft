@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getUserElementStats, getUserSummary } from '../aggregations/stats.js';
+import { getUserCardStats, getUserElementStats, getUserSquadStats, getUserSummary } from '../aggregations/stats.js';
 import { requireAuth } from '../middleware/auth.js';
 import { MatchLog } from '../models/MatchLog.js';
 import { User } from '../models/User.js';
@@ -39,4 +39,14 @@ meRouter.get('/matches', async (req: AuthedRequest, res) => {
 meRouter.get('/stats/elements', async (req: AuthedRequest, res) => {
   const elements = await getUserElementStats(req.userId!);
   res.json({ elements });
+});
+
+meRouter.get('/stats/squads', async (req: AuthedRequest, res) => {
+  const squads = await getUserSquadStats(req.userId!);
+  res.json({ squads });
+});
+
+meRouter.get('/stats/cards', async (req: AuthedRequest, res) => {
+  const cards = await getUserCardStats(req.userId!);
+  res.json({ cards });
 });

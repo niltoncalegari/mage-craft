@@ -1,21 +1,16 @@
 import { render, type JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { getElement, isElementId, SELECTABLE_ELEMENTS, toCssColor, type ElementId } from '../game/elements';
-import { ApiClient, type ElementStat, type MatchLogEntry, type RankingEntry, type UserSummary } from '../net/ApiClient';
+import type { ElementId } from '../game/elements';
+import { ApiClient } from '../net/ApiClient';
 import { LobbyBridge } from '../net/lobbyBridge';
 import { loadOnlineMapData, OnlineMatch } from '../net/OnlineMatch';
 import type { MatchFoundMsg, QueueStatusMsg } from '../net/protocol';
+import { recordFor, reportFor } from '../net/SiegeMatchReporter';
 import { PortalScene } from '../render/PortalScene';
-import { ElementUsageChart } from './ElementUsageChart';
 import styles from './App.module.css';
-import {
-  clearSession,
-  getSession,
-  loginAccount,
-  loginGuest,
-  registerAccount,
-  type UserProfile,
-} from './auth';
+import { clearSession, getSession, type UserProfile } from './auth';
+import { loadLoadout } from './loadout';
+import { recordMatch } from './matchHistory';
 import {
   createLocalRoom,
   joinLocalRoom,
@@ -26,11 +21,25 @@ import {
   type RoomDetail,
   type RoomSummary,
 } from './roomStore';
+import { CreateRoomScreen } from './screens/CreateRoomScreen';
+import { DashboardScreen } from './screens/DashboardScreen';
+import { HomeScreen } from './screens/HomeScreen';
+import { LoginScreen } from './screens/LoginScreen';
+import { PracticeScreen } from './screens/PracticeScreen';
+import { QueueScreen } from './screens/QueueScreen';
+import { RankingScreen } from './screens/RankingScreen';
+import { RoomBrowserScreen } from './screens/RoomBrowserScreen';
+import { RoomLobbyScreen } from './screens/RoomLobbyScreen';
+import { TitleScreen } from './screens/TitleScreen';
 
 export type AppScreen =
   | 'title'
   | 'login'
+  /** The three-action landing surface. */
+  | 'home'
+  /** Squad, deck and match history — everything you bring and everything you learned. */
   | 'dashboard'
+  | 'practice'
   | 'rooms'
   | 'createRoom'
   | 'queue'
@@ -38,12 +47,7 @@ export type AppScreen =
   | 'onlineMatch'
   | 'ranking';
 
-export interface AppActions {
-  startPractice(): void;
-}
-
 interface AppProps {
-  actions: AppActions;
   stats?: { wins: number; losses: number };
   selectedElement: ElementId;
   onSelectElement(element: ElementId): void;
@@ -82,8 +86,11 @@ function AppShell(props: AppProps): JSX.Element {
     localTeam: null as number | null,
   });
 
-  const [screen, setScreen] = useState<AppScreen>(() => (getSession() ? 'dashboard' : 'title'));
+  const [screen, setScreen] = useState<AppScreen>(() => (getSession() ? 'home' : 'title'));
   const [user, setUser] = useState<UserProfile | null>(() => getSession());
+  /** Read from the bridge's long-lived handlers, which must not close over a stale user. */
+  const userRef = useRef<UserProfile | null>(user);
+  userRef.current = user;
   const [room, setRoom] = useState<RoomDetail | null>(null);
   const [rooms, setRooms] = useState<RoomSummary[]>(() => listLocalRooms());
   const [selectedElement, setSelectedElement] = useState<ElementId>(props.selectedElement);
@@ -102,6 +109,15 @@ function AppShell(props: AppProps): JSX.Element {
     spectating,
     awaitingResultDismiss: metaRef.current.awaitingResultDismiss,
     localTeam: metaRef.current.localTeam,
+  };
+
+  /**
+   * Tells the server what this player brings. Sent on every path into a match
+   * because the server keeps it per connection, not per room.
+   */
+  const sendLoadout = (bridge: LobbyBridge): void => {
+    const loadout = loadLoadout();
+    bridge.net.setLoadout(loadout.deck, loadout.squad);
   };
 
   const chooseElement = (element: ElementId): void => {
@@ -149,6 +165,22 @@ function AppShell(props: AppProps): JSX.Element {
         // bot opponent the only) place that names your side.
         metaRef.current.localTeam = msg.yourTeam;
         setQueueFound(msg);
+      },
+      onMatchResult: (msg) => {
+        // Arrives just before round_end, while the match view is still up.
+        const team = metaRef.current.localTeam;
+        if (team === null || metaRef.current.spectating) return;
+        const record = recordFor(msg, team, 'pvp');
+        if (!record) return;
+
+        recordMatch(record);
+        const token = userRef.current?.token;
+        if (token) {
+          ApiClient.reportMatch(token, reportFor(record, 'pvp')).catch(() => {
+            // The local history already has it; a failed sync is not worth
+            // interrupting the victory screen for.
+          });
+        }
       },
       onRoundEnd: (msg) => {
         setClaimNotice('Round over — rematch lobby. Claimed bots become your seat.');
@@ -222,7 +254,7 @@ function AppShell(props: AppProps): JSX.Element {
 
   const signIn = (profile: UserProfile): void => {
     setUser(profile);
-    setScreen('dashboard');
+    setScreen('home');
   };
 
   const signOut = (): void => {
@@ -261,11 +293,14 @@ function AppShell(props: AppProps): JSX.Element {
       const bridge = getBridge();
       await bridge.connect();
       setOnline(true);
+      // Register the loadout before queueing: the server seats a queued player
+      // immediately, with no lobby in between to send it during.
+      sendLoadout(bridge);
       bridge.net.joinQueue(name);
     } catch (err) {
       setNetError(err instanceof Error ? err.message : 'Could not reach server');
       setOnline(false);
-      setScreen('dashboard');
+      setScreen('home');
     }
   };
 
@@ -274,7 +309,7 @@ function AppShell(props: AppProps): JSX.Element {
     if (bridge?.connected) bridge.net.leaveQueue();
     setQueueStatus(null);
     setQueueFound(null);
-    setScreen('dashboard');
+    setScreen('home');
   };
 
   const createOnlineRoom = async (opts: {
@@ -293,6 +328,7 @@ function AppShell(props: AppProps): JSX.Element {
       const bridge = getBridge();
       await bridge.connect();
       setOnline(true);
+      sendLoadout(bridge);
       const createdP = bridge.waitForRoomState((m) => m.slots.length === 0 || m.state === 'lobby');
       bridge.net.createRoom(opts.teamSize, opts.fillBots, opts.botDifficulty);
       const created = await createdP;
@@ -333,6 +369,7 @@ function AppShell(props: AppProps): JSX.Element {
       const bridge = getBridge();
       await bridge.connect();
       setOnline(true);
+      sendLoadout(bridge);
       const joinedP = bridge.waitForRoomState((m) => m.roomId.toUpperCase() === code);
       bridge.net.joinRoom(code, playerName);
       const state = await joinedP;
@@ -360,37 +397,38 @@ function AppShell(props: AppProps): JSX.Element {
       <div class={styles.vignette} />
       <div class={styles.layer}>
         {screen === 'title' ? (
-          <TitleScreen
-            onEnter={() => setScreen(user ? 'dashboard' : 'login')}
-            onPractice={() => props.actions.startPractice()}
-          />
+          <TitleScreen onEnter={() => setScreen(user ? 'home' : 'login')} onPractice={() => setScreen('practice')} />
         ) : null}
         {screen === 'login' ? <LoginScreen onBack={() => setScreen('title')} onSignedIn={signIn} /> : null}
-        {screen === 'dashboard' && user ? (
-          <DashboardScreen
+        {screen === 'home' && user ? (
+          <HomeScreen
             user={user}
             stats={props.stats}
-            onPractice={() => props.actions.startPractice()}
-            onBrowseRooms={() => {
+            onFindMatch={() => void enterQueue(user.name)}
+            onPractice={() => setScreen('practice')}
+            onOpenDashboard={() => setScreen('dashboard')}
+            onOpenRanking={() => setScreen('ranking')}
+            onCustomMatch={() => {
               void refreshRooms();
               setScreen('rooms');
             }}
-            onCreateRoom={() => setScreen('createRoom')}
-            onQuickMatch={() => void enterQueue(user.name)}
-            onOpenRanking={() => setScreen('ranking')}
             onSignOut={signOut}
           />
+        ) : null}
+        {screen === 'dashboard' && user ? <DashboardScreen user={user} onBack={() => setScreen('home')} /> : null}
+        {screen === 'practice' ? (
+          <PracticeScreen token={user?.token} onExit={() => setScreen(user ? 'home' : 'title')} />
         ) : null}
         {screen === 'queue' && user ? (
           <QueueScreen status={queueStatus} found={queueFound} netError={netError} onCancel={leaveQueue} />
         ) : null}
-        {screen === 'ranking' && user ? <RankingScreen onBack={() => setScreen('dashboard')} /> : null}
+        {screen === 'ranking' && user ? <RankingScreen onBack={() => setScreen('home')} /> : null}
         {screen === 'rooms' && user ? (
           <RoomBrowserScreen
             rooms={rooms}
             online={online}
             netError={netError}
-            onBack={() => setScreen('dashboard')}
+            onBack={() => setScreen('home')}
             onCreate={() => setScreen('createRoom')}
             onJoin={(id) => void joinOnlineRoom(id, user.name, selectedElement)}
             onRefresh={() => void refreshRooms()}
@@ -400,7 +438,7 @@ function AppShell(props: AppProps): JSX.Element {
           <CreateRoomScreen
             hostName={user.name}
             netError={netError}
-            onBack={() => setScreen('dashboard')}
+            onBack={() => setScreen('home')}
             onCreated={(opts) =>
               void createOnlineRoom({
                 ...opts,
@@ -456,7 +494,7 @@ function AppShell(props: AppProps): JSX.Element {
             }}
             onStart={() => {
               if (room.online && bridgeRef.current?.connected) bridgeRef.current.net.startMatch();
-              else props.actions.startPractice();
+              else setScreen('practice');
             }}
           />
         ) : null}
@@ -485,716 +523,5 @@ function AppShell(props: AppProps): JSX.Element {
         ) : null}
       </div>
     </>
-  );
-}
-
-function TitleScreen(props: { onEnter(): void; onPractice(): void }): JSX.Element {
-  return (
-    <div class={styles.titleScreen}>
-      <p class={styles.tag}>Enter the arena</p>
-      <h1 class={styles.brand}>Mage Craft</h1>
-      <p class={styles.sub}>
-        Charge your conjuration. Cross the portal. Short elemental duels — online halls or solo practice.
-      </p>
-      <div class={styles.titleActions}>
-        <button type="button" class={`${styles.btn} ${styles.btnTeal}`} onClick={props.onEnter}>
-          Enter Hall
-        </button>
-        <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onPractice}>
-          Quick Practice
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function LoginScreen(props: {
-  onBack(): void;
-  onSignedIn(profile: UserProfile): void;
-}): JSX.Element {
-  const [mode, setMode] = useState<'guest' | 'login' | 'register'>('guest');
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async (): Promise<void> => {
-    setError(null);
-    try {
-      if (mode === 'guest') {
-        props.onSignedIn(await loginGuest(name));
-        return;
-      }
-      if (mode === 'login') {
-        props.onSignedIn(await loginAccount(email, password));
-        return;
-      }
-      props.onSignedIn(await registerAccount(name, email, password));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Auth failed');
-    }
-  };
-
-  return (
-    <div class={`${styles.panel} ${styles.panelNarrow}`}>
-      <p class={styles.tag}>Account</p>
-      <h2 class={styles.panelTitle}>Sign in</h2>
-      <div class={styles.toolbar}>
-        <button type="button" class={mode === 'guest' ? `${styles.btn} ${styles.btnTeal}` : styles.btn} onClick={() => setMode('guest')}>
-          Guest
-        </button>
-        <button type="button" class={mode === 'login' ? `${styles.btn} ${styles.btnTeal}` : styles.btn} onClick={() => setMode('login')}>
-          Login
-        </button>
-        <button type="button" class={mode === 'register' ? `${styles.btn} ${styles.btnTeal}` : styles.btn} onClick={() => setMode('register')}>
-          Register
-        </button>
-      </div>
-      <div class={styles.form}>
-        {mode !== 'login' ? (
-          <label class={styles.field}>
-            <span>Display name</span>
-            <input class={styles.input} value={name} onInput={(e) => setName(e.currentTarget.value)} />
-          </label>
-        ) : null}
-        {mode !== 'guest' ? (
-          <label class={styles.field}>
-            <span>Email</span>
-            <input
-              class={styles.input}
-              type="email"
-              value={email}
-              onInput={(e) => setEmail(e.currentTarget.value)}
-            />
-          </label>
-        ) : null}
-        {mode !== 'guest' ? (
-          <label class={styles.field}>
-            <span>Password</span>
-            <input
-              class={styles.input}
-              type="password"
-              value={password}
-              onInput={(e) => setPassword(e.currentTarget.value)}
-            />
-          </label>
-        ) : null}
-        {error ? <p class={styles.panelHint}>{error}</p> : null}
-        <button type="button" class={`${styles.btn} ${styles.btnBlock} ${styles.btnTeal}`} onClick={() => void submit()}>
-          Continue
-        </button>
-        <button type="button" class={`${styles.btn} ${styles.btnGhost} ${styles.btnBlock}`} onClick={props.onBack}>
-          Back
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function DashboardScreen(props: {
-  user: UserProfile;
-  stats?: { wins: number; losses: number };
-  onPractice(): void;
-  onBrowseRooms(): void;
-  onCreateRoom(): void;
-  onQuickMatch(): void;
-  onOpenRanking(): void;
-  onSignOut(): void;
-}): JSX.Element {
-  const wins = props.stats?.wins ?? props.user.wins;
-  const losses = props.stats?.losses ?? props.user.losses;
-
-  const [serverStats, setServerStats] = useState<UserSummary | null>(null);
-  const [matches, setMatches] = useState<MatchLogEntry[]>([]);
-  const [elementStats, setElementStats] = useState<ElementStat[]>([]);
-  const [loadError, setLoadError] = useState('');
-
-  useEffect(() => {
-    const token = props.user.token;
-    if (!token) return;
-    let cancelled = false;
-    Promise.all([ApiClient.me(token), ApiClient.myMatches(token, 1, 5), ApiClient.myElementStats(token)])
-      .then(([me, history, elements]) => {
-        if (cancelled) return;
-        setServerStats(me.stats);
-        setMatches(history.matches);
-        setElementStats(elements.elements);
-      })
-      .catch((err) => {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load your stats.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [props.user.token]);
-
-  // Prefer the server-computed favorite (real usage across all matches) once
-  // it loads; guests and accounts still loading fall back to the locally
-  // stored field.
-  const favoriteId =
-    serverStats?.favoriteElement && isElementId(serverStats.favoriteElement)
-      ? serverStats.favoriteElement
-      : isElementId(props.user.favoriteElement)
-        ? props.user.favoriteElement
-        : 'fire';
-  const favorite = getElement(favoriteId);
-  const favoriteColor = toCssColor(favorite.color);
-
-  return (
-    <div class={`${styles.panel} ${styles.panelWide}`}>
-      <div class={styles.panelHeader}>
-        <div>
-          <p class={styles.tag}>Welcome</p>
-          <h2 class={styles.panelTitle}>{props.user.name}</h2>
-        </div>
-        <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onSignOut}>
-          Sign out
-        </button>
-      </div>
-
-      <div class={styles.dashGrid}>
-        <div class={styles.profileCard}>
-          <div class={styles.statRow}>
-            <div class={styles.stat}>
-              <b>{serverStats?.wins ?? wins}</b>
-              <span>Wins</span>
-            </div>
-            <div class={styles.stat}>
-              <b>{serverStats?.losses ?? losses}</b>
-              <span>Losses</span>
-            </div>
-            {serverStats ? (
-              <div class={styles.stat}>
-                <b>{serverStats.kdr.toFixed(2)}</b>
-                <span>KDR</span>
-              </div>
-            ) : null}
-          </div>
-          {!props.user.token ? (
-            <p class={styles.panelHint} style={{ marginTop: 14 }}>
-              Playing as guest — create an account to keep KDR, match history and a ranking spot across devices.
-            </p>
-          ) : null}
-          <p class={styles.panelHint} style={{ marginTop: 14 }}>
-            Favorite element
-          </p>
-          <div
-            class={styles.favoriteElement}
-            style={{ '--element-color': favoriteColor } as JSX.CSSProperties}
-            title={favorite.role}
-          >
-            <span class={styles.favoriteSwatch} aria-hidden="true" />
-            <span class={styles.favoriteName}>{favorite.name}</span>
-          </div>
-        </div>
-
-        <div>
-          <div class={styles.actionGrid}>
-            <button type="button" class={`${styles.actionCard} ${styles.actionCardPrimary}`} onClick={props.onQuickMatch}>
-              <h3>Battle</h3>
-              <p>Queue for a 1v1 siege. Paired by arrival — no code, no ready-up.</p>
-            </button>
-            <button type="button" class={styles.actionCard} onClick={props.onBrowseRooms}>
-              <h3>Browse halls</h3>
-              <p>List open rooms, join by code, or enter a practice hall.</p>
-            </button>
-            <button type="button" class={styles.actionCard} onClick={props.onCreateRoom}>
-              <h3>Create room</h3>
-              <p>Host a 1x1–6x6 duel and configure teams before the match.</p>
-            </button>
-            <button type="button" class={styles.actionCard} onClick={props.onPractice}>
-              <h3>Solo practice</h3>
-              <p>Jump into the offline arena against AI — same combat loop.</p>
-            </button>
-            <button type="button" class={styles.actionCard} onClick={props.onOpenRanking}>
-              <h3>Ranking</h3>
-              <p>See how your wins and KDR stack up against everyone else.</p>
-            </button>
-          </div>
-
-          {props.user.token ? (
-            <div class={styles.panel} style={{ marginTop: 16 }}>
-              <p class={styles.panelHint} style={{ marginBottom: 10 }}>
-                Skills used (all matches)
-              </p>
-              {loadError ? <p class={styles.error}>{loadError}</p> : null}
-              <ElementUsageChart stats={elementStats} />
-              <p class={styles.panelHint} style={{ margin: '16px 0 8px' }}>
-                Recent matches
-              </p>
-              <div class={styles.roomList}>
-                {matches.length === 0 ? (
-                  <p class={styles.panelHint}>No matches reported yet — play a solo practice run.</p>
-                ) : null}
-                {matches.map((m) => (
-                  <div class={styles.matchRow} key={m._id}>
-                    <div>
-                      <p class={styles.roomName}>
-                        {m.won ? 'Victory' : 'Defeat'} · {m.mode}
-                      </p>
-                      <p class={styles.roomMeta}>
-                        {m.kills} kills · {m.deaths} deaths · {m.map}
-                      </p>
-                    </div>
-                    <span class={m.won ? `${styles.badge} ${styles.badgeTeal}` : styles.badge}>{m.score} pts</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * The waiting room for the matchmaking queue. The server reports the queue once,
- * on join, so the clock here is local — and it is the honest number anyway: what
- * the player wants to know is how long *they* have been waiting.
- */
-function QueueScreen(props: {
-  status: QueueStatusMsg | null;
-  found: MatchFoundMsg | null;
-  netError: string | null;
-  onCancel(): void;
-}): JSX.Element {
-  const [waited, setWaited] = useState(0);
-
-  useEffect(() => {
-    const started = Date.now() - (props.status?.elapsedSeconds ?? 0) * 1000;
-    const timer = window.setInterval(() => setWaited(Math.floor((Date.now() - started) / 1000)), 250);
-    return () => window.clearInterval(timer);
-  }, [props.status]);
-
-  const found = props.found;
-  return (
-    <div class={`${styles.panel} ${styles.panelNarrow}`}>
-      <p class={styles.tag}>Matchmaking</p>
-      <h2 class={styles.panelTitle}>{found ? 'Opponent found' : 'Finding an opponent'}</h2>
-
-      {found ? (
-        <p class={styles.panelHint}>
-          {found.againstBot
-            ? 'No one else was searching, so an AI commander takes the other side.'
-            : `Facing ${found.opponentName}.`}{' '}
-          Entering the arena…
-        </p>
-      ) : (
-        <>
-          <p class={styles.panelHint}>
-            Waiting {waited}s · {props.status?.waiting ?? 1} in queue · position{' '}
-            {props.status?.position ?? 1}
-          </p>
-          <p class={styles.panelHint} style={{ marginTop: 8 }}>
-            If nobody shows up, an AI commander takes the seat so you still play.
-          </p>
-        </>
-      )}
-
-      {props.netError ? <p class={styles.error}>{props.netError}</p> : null}
-
-      <div class={styles.toolbar} style={{ marginTop: 16 }}>
-        <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onCancel}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function RankingScreen(props: { onBack(): void }): JSX.Element {
-  const [sort, setSort] = useState<'wins' | 'kdr'>('wins');
-  const [entries, setEntries] = useState<RankingEntry[]>([]);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    ApiClient.ranking(sort)
-      .then((res) => {
-        if (!cancelled) setEntries(res.entries);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the ranking.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [sort]);
-
-  return (
-    <div class={`${styles.panel} ${styles.panelWide}`}>
-      <div class={styles.panelHeader}>
-        <div>
-          <p class={styles.tag}>Global</p>
-          <h2 class={styles.panelTitle}>Ranking</h2>
-        </div>
-        <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onBack}>
-          Dashboard
-        </button>
-      </div>
-
-      <div class={styles.toolbar}>
-        {(
-          [
-            ['wins', 'By wins'],
-            ['kdr', 'By KDR'],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            type="button"
-            class={sort === id ? `${styles.tab} ${styles.tabActive}` : styles.tab}
-            onClick={() => setSort(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {error ? <p class={styles.error}>{error}</p> : null}
-      {!error && loading ? <p class={styles.panelHint}>Loading…</p> : null}
-      {!error && !loading && entries.length === 0 ? (
-        <p class={styles.panelHint}>No ranked players yet — be the first to report a match.</p>
-      ) : null}
-
-      <div class={styles.roomList}>
-        {entries.map((entry, index) => (
-          <div class={`${styles.matchRow} ${styles.matchRowRanked}`} key={entry.userId}>
-            <span class={styles.rankPosition}>#{index + 1}</span>
-            <div>
-              <p class={styles.roomName}>{entry.username}</p>
-              <p class={styles.roomMeta}>
-                {entry.wins}W {entry.losses}L · {entry.kills} kills · {entry.deaths} deaths
-              </p>
-            </div>
-            <span class={styles.badge}>{entry.kdr.toFixed(2)} KDR</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RoomBrowserScreen(props: {
-  rooms: RoomSummary[];
-  online: boolean;
-  netError: string | null;
-  onBack(): void;
-  onCreate(): void;
-  onJoin(roomId: string): void;
-  onRefresh(): void;
-}): JSX.Element {
-  const [code, setCode] = useState('');
-  return (
-    <div class={`${styles.panel} ${styles.panelWide}`}>
-      <div class={styles.panelHeader}>
-        <div>
-          <p class={styles.tag}>Online</p>
-          <h2 class={styles.panelTitle}>Open halls</h2>
-          <p class={styles.panelHint}>
-            {props.online
-              ? 'Live rooms from the game server. Join a live match as spectator.'
-              : 'Server offline — showing local demos. Start mageserver on :8080.'}
-          </p>
-          {props.netError ? <p class={styles.panelHint}>{props.netError}</p> : null}
-        </div>
-        <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onBack}>
-          Dashboard
-        </button>
-      </div>
-
-      <div class={styles.toolbar}>
-        <input
-          class={styles.input}
-          placeholder="Room code"
-          value={code}
-          onInput={(e) => setCode(e.currentTarget.value.toUpperCase())}
-        />
-        <button type="button" class={styles.btn} onClick={() => props.onJoin(code.trim())} disabled={code.trim().length < 3}>
-          Join code
-        </button>
-        <button type="button" class={`${styles.btn} ${styles.btnTeal}`} onClick={props.onCreate}>
-          Create room
-        </button>
-        <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onRefresh}>
-          Refresh
-        </button>
-      </div>
-
-      <div class={styles.roomList}>
-        {props.rooms.map((room) => (
-          <button type="button" class={styles.roomRow} key={room.roomId} onClick={() => props.onJoin(room.roomId)}>
-            <div>
-              <p class={styles.roomName}>{room.name}</p>
-              <p class={styles.roomMeta}>
-                {room.teamSize}v{room.teamSize} · {room.roomId}
-                {room.state === 'in_progress' ? ' · live' : ''}
-                {room.acceptsSpectators ? ' · spectators ok' : ''}
-              </p>
-            </div>
-            <span
-              class={
-                room.state === 'in_progress'
-                  ? `${styles.badge} ${styles.badgeTeal}`
-                  : room.isDemo
-                    ? styles.badge
-                    : `${styles.badge} ${styles.badgeTeal}`
-              }
-            >
-              {room.state === 'in_progress' ? 'Live' : room.isDemo ? 'Demo' : 'Lobby'}
-            </span>
-            <span class={styles.badge}>
-              {room.filled}/{room.capacity}
-            </span>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function CreateRoomScreen(props: {
-  hostName: string;
-  netError: string | null;
-  onBack(): void;
-  onCreated(opts: { name: string; teamSize: number; fillBots: boolean; botDifficulty: string }): void;
-}): JSX.Element {
-  const [name, setName] = useState(`${props.hostName}'s Hall`);
-  const [teamSize, setTeamSize] = useState(1);
-  const [fillBots, setFillBots] = useState(true);
-  const [botDifficulty, setBotDifficulty] = useState('normal');
-  return (
-    <div class={`${styles.panel} ${styles.panelNarrow}`}>
-      <p class={styles.tag}>Host</p>
-      <h2 class={styles.panelTitle}>Create room</h2>
-      <p class={styles.panelHint}>Team size sets capacity (2 × size). Fill with bots to start alone.</p>
-      {props.netError ? <p class={styles.panelHint}>{props.netError}</p> : null}
-      <div class={styles.form}>
-        <label class={styles.field}>
-          <span>Room name</span>
-          <input class={styles.input} value={name} maxLength={32} onInput={(e) => setName(e.currentTarget.value)} />
-        </label>
-        <label class={styles.field}>
-          <span>Team size</span>
-          <select class={styles.select} value={String(teamSize)} onChange={(e) => setTeamSize(Number(e.currentTarget.value))}>
-            {[1, 2, 3, 4, 5, 6].map((n) => (
-              <option value={n} key={n}>
-                {n}v{n}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label class={styles.field}>
-          <span>
-            <input type="checkbox" checked={fillBots} onChange={(e) => setFillBots(e.currentTarget.checked)} /> Fill
-            empty seats with bots
-          </span>
-        </label>
-        {fillBots ? (
-          <label class={styles.field}>
-            <span>Bot difficulty</span>
-            <select class={styles.select} value={botDifficulty} onChange={(e) => setBotDifficulty(e.currentTarget.value)}>
-              <option value="easy">Easy</option>
-              <option value="normal">Normal</option>
-              <option value="hard">Hard</option>
-            </select>
-          </label>
-        ) : null}
-        <button
-          type="button"
-          class={`${styles.btn} ${styles.btnBlock} ${styles.btnTeal}`}
-          onClick={() => props.onCreated({ name, teamSize, fillBots, botDifficulty })}
-        >
-          Open lobby
-        </button>
-        <button type="button" class={`${styles.btn} ${styles.btnGhost} ${styles.btnBlock}`} onClick={props.onBack}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function RoomLobbyScreen(props: {
-  room: RoomDetail;
-  netError: string | null;
-  claimNotice: string | null;
-  spectating: boolean;
-  onLeave(): void;
-  onSelectElement(el: ElementId): void;
-  onSelectTeam(team: 0 | 1): void;
-  onAddBot(team: 0 | 1): void;
-  onRemoveBot(slotId: string): void;
-  onToggleReady(): void;
-  onClaimSlot(slotId: string): void;
-  onStart(): void;
-}): JSX.Element {
-  const { room } = props;
-  const you = room.slots.find((s) => s.isYou);
-  const team0 = room.slots.filter((s) => s.team === 0);
-  const team1 = room.slots.filter((s) => s.team === 1);
-  const occupied = room.slots.filter((s) => s.name);
-  const allReady = occupied.length > 0 && occupied.every((s) => s.ready);
-  const canStart = room.filled >= room.capacity && allReady;
-
-  return (
-    <div class={`${styles.panel} ${styles.panelWide}`}>
-      <div class={styles.panelHeader}>
-        <div>
-          <p class={styles.tag}>
-            Lobby · {room.roomId}
-            {room.online ? ' · online' : ' · local'}
-            {props.spectating ? ' · spectating' : ''}
-          </p>
-          <h2 class={styles.panelTitle}>{room.name}</h2>
-          <p class={styles.panelHint}>
-            {room.teamSize}v{room.teamSize} · host {room.hostName}
-            {room.isHost ? ' (you)' : ''}
-          </p>
-        </div>
-        <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onLeave}>
-          Leave
-        </button>
-      </div>
-
-      {props.netError ? <p class={styles.panelHint}>{props.netError}</p> : null}
-      {props.claimNotice ? <p class={styles.panelHint}>{props.claimNotice}</p> : null}
-
-      {props.spectating ? (
-        <>
-          <p class={styles.panelHint}>You are spectating. Claim a bot seat for the next round:</p>
-          <div class={styles.toolbar}>
-            {room.slots
-              .filter((s) => s.isBot)
-              .map((s) => (
-                <button
-                  type="button"
-                  key={s.slotId}
-                  class={`${styles.btn} ${styles.btnGhost}`}
-                  disabled={Boolean(s.pendingClaimPlayerId)}
-                  onClick={() => props.onClaimSlot(s.slotId)}
-                >
-                  {s.pendingClaimPlayerId ? `Claimed · ${s.name}` : `Claim ${s.name} (${s.element})`}
-                </button>
-              ))}
-          </div>
-        </>
-      ) : (
-        <>
-          <p class={styles.panelHint}>Your element</p>
-          <div class={styles.elementChips}>
-            {SELECTABLE_ELEMENTS.map((el) => (
-              <button
-                type="button"
-                key={el.id}
-                class={you?.element === el.id ? `${styles.chip} ${styles.chipActive}` : styles.chip}
-                onClick={() => props.onSelectElement(el.id)}
-              >
-                {el.name}
-              </button>
-            ))}
-          </div>
-
-          <div class={styles.toolbar}>
-            <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={() => props.onSelectTeam(0)}>
-              Join team A
-            </button>
-            <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={() => props.onSelectTeam(1)}>
-              Join team B
-            </button>
-            {room.isHost ? (
-              <>
-                <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={() => props.onAddBot(0)}>
-                  Bot → A
-                </button>
-                <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={() => props.onAddBot(1)}>
-                  Bot → B
-                </button>
-              </>
-            ) : null}
-          </div>
-        </>
-      )}
-
-      <div class={styles.teams}>
-        <TeamColumn title="Team A" slots={team0} isHost={room.isHost} onRemoveBot={props.onRemoveBot} />
-        <TeamColumn title="Team B" slots={team1} isHost={room.isHost} onRemoveBot={props.onRemoveBot} />
-      </div>
-
-      {room.spectators && room.spectators.length > 0 ? (
-        <p class={styles.panelHint}>
-          Spectators: {room.spectators.map((s) => `${s.name}${s.claimedSlotId ? ' (claimed)' : ''}`).join(', ')}
-        </p>
-      ) : null}
-
-      <div class={styles.footerBar}>
-        {!props.spectating ? (
-          <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onToggleReady}>
-            {you?.ready ? 'Unready' : 'Ready'}
-          </button>
-        ) : null}
-        {room.isHost && !props.spectating ? (
-          <button
-            type="button"
-            class={`${styles.btn} ${styles.btnTeal}`}
-            disabled={!canStart}
-            title={!canStart ? 'Fill every slot and ready up' : 'Start'}
-            onClick={props.onStart}
-          >
-            Start duel
-          </button>
-        ) : (
-          <p class={styles.panelHint}>{props.spectating ? 'Waiting for round to end…' : 'Waiting for host to start…'}</p>
-        )}
-      </div>
-      <p class={styles.panelHint} style={{ marginTop: 10 }}>
-        {room.online
-          ? 'Online: Start runs the authoritative server match. Late joiners spectate until rematch.'
-          : 'Local fallback — Start opens solo practice.'}
-      </p>
-    </div>
-  );
-}
-
-function TeamColumn(props: {
-  title: string;
-  slots: RoomDetail['slots'];
-  isHost: boolean;
-  onRemoveBot(slotId: string): void;
-}): JSX.Element {
-  return (
-    <div class={styles.teamCol}>
-      <h3>{props.title}</h3>
-      {props.slots.map((slot) => (
-        <div class={slot.isYou ? `${styles.slot} ${styles.slotYou}` : styles.slot} key={slot.slotId}>
-          {slot.name ? (
-            <div>
-              <p class={styles.roomName}>
-                {slot.name}
-                {slot.isYou ? ' · you' : ''}
-                {slot.ready ? ' ✓' : ''}
-                {slot.pendingClaimPlayerId ? ' · claimed' : ''}
-              </p>
-              <p class={styles.roomMeta}>
-                {slot.element || 'no element'}
-                {slot.isBot ? ' · bot' : ''}
-              </p>
-            </div>
-          ) : (
-            <span class={styles.slotEmpty}>Empty slot</span>
-          )}
-          {props.isHost && slot.isBot ? (
-            <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={() => props.onRemoveBot(slot.slotId)}>
-              Remove
-            </button>
-          ) : null}
-        </div>
-      ))}
-    </div>
   );
 }

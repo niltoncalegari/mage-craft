@@ -4,10 +4,13 @@
  * Hub. The only piece of the server that knows about every layer, by design.
  */
 
+import { isRosterId, type RosterId } from '../../sim/cards';
 import type { Team } from '../../sim/entities';
 import { TEAM_A, TEAM_B } from '../../sim/entities';
 import { defaultDeck, validateDeck } from '../../sim/Deck';
 import { ALL_ELEMENTS } from '../../sim/elements';
+import type { MatchSummary } from '../../sim/matchStats';
+import { validateSquad } from '../../sim/squad';
 import { isSpellId, type CardId } from '../../sim/spells';
 import type {
   AddBotMsg,
@@ -22,12 +25,14 @@ import type {
   SelectElementMsg,
   SelectTeamMsg,
   ServerMsg,
+  SetLoadoutMsg,
   SetReadyMsg,
-  SnapshotMsg,
   SpectatorDTO,
+  TeamSummaryDTO,
   Vec2DTO,
 } from '../../sim/protocol';
 import { peekType } from '../../sim/protocol';
+import { toSnapshotMsg } from '../../sim/snapshot';
 import { Vec2 } from '../../sim/Vec2';
 import { Matchmaker, type Pairing } from './Matchmaker';
 import { RoomManager } from './RoomManager';
@@ -56,6 +61,12 @@ export class App {
   private readonly rooms = new RoomManager();
   private readonly sessions = new Map<string, Session>();
   private readonly clientRoom = new Map<string, string>();
+  /**
+   * Loadouts registered before the player has a room. `set_loadout` has to work
+   * pre-join — the queue seats you with no lobby at all — so this cannot live on
+   * a Session the way decks used to.
+   */
+  private readonly loadouts = new Map<string, { deck?: CardId[]; squad?: RosterId[] }>();
   private readonly matchmaker = new Matchmaker();
   private queueTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -169,6 +180,9 @@ export class App {
       case 'leave_queue':
         this.matchmaker.leave(clientId);
         break;
+      case 'set_loadout':
+        this.handleSetLoadout(clientId, msg as SetLoadoutMsg);
+        break;
       case 'cast':
         this.handleCast(clientId, msg as CastMsg);
         break;
@@ -180,6 +194,7 @@ export class App {
   /** The Hub's disconnect handler. */
   handleDisconnect(clientId: string): void {
     this.matchmaker.leave(clientId);
+    this.loadouts.delete(clientId);
 
     const roomId = this.clientRoom.get(clientId);
     this.clientRoom.delete(clientId);
@@ -218,6 +233,7 @@ export class App {
     const roomId = room.id;
     const session = new Session(room, {
       onSnapshot: (snap) => this.broadcastSnapshot(roomId, snap),
+      onMatchResult: (summary) => this.broadcastMatchResult(roomId, summary),
       onRoundEnd: (winner) => this.broadcastRoundEnd(roomId, winner),
     });
     this.sessions.set(roomId, session);
@@ -242,6 +258,8 @@ export class App {
     }
 
     this.clientRoom.set(clientId, msg.roomId);
+    // A loadout sent before the room existed still has to reach this seat.
+    this.applyLoadout(clientId);
     this.broadcastRoomState(msg.roomId);
   }
 
@@ -274,13 +292,17 @@ export class App {
   /* ---- matchmaking (GDD §4) ---------------------------------------------- */
 
   private handleJoinQueue(clientId: string, msg: JoinQueueMsg): void {
-    const deck = this.resolveDeck(clientId, msg.deck);
+    const stored = this.loadouts.get(clientId);
+    // `join_queue.deck` predates `set_loadout` and still wins when sent, so an
+    // older client keeps working; everything else comes from the stored loadout.
+    const deck = msg.deck ? this.resolveDeck(clientId, msg.deck) : (stored?.deck ?? defaultDeck());
     if (!deck) return;
 
     this.matchmaker.join({
       clientId,
-      name: msg.name || 'Conjurador',
+      name: msg.name || 'Conjurer',
       deck,
+      squad: stored?.squad,
       joinedAt: this.now() / 1000,
     });
     this.sendQueueStatus(clientId);
@@ -297,6 +319,55 @@ export class App {
       return null;
     }
     return cards.filter(isSpellId);
+  }
+
+  /** Validates a submitted squad. Unlike a deck, absence means "keep the default". */
+  private resolveSquad(clientId: string, ids: string[] | undefined): RosterId[] | null {
+    if (!ids) return null;
+
+    const check = validateSquad(ids);
+    if (!check.ok) {
+      this.sendError(clientId, `invalid squad: ${check.reason}`);
+      return null;
+    }
+    return ids.filter(isRosterId);
+  }
+
+  /**
+   * Records what this client brings to their next match. Deliberately outside
+   * `withRoom`: it arrives before a room exists on the queue path, and applying
+   * it to an already-joined room is handled here too so the order of the two
+   * messages never matters.
+   */
+  private handleSetLoadout(clientId: string, msg: SetLoadoutMsg): void {
+    // Validate both halves before committing either: a message that half-applies
+    // would leave the player fielding a squad they can see and a deck they
+    // cannot, with only an error message to explain the difference.
+    const deck = msg.deck ? this.resolveDeck(clientId, msg.deck) : undefined;
+    if (msg.deck && !deck) return;
+
+    const squad = msg.squad ? this.resolveSquad(clientId, msg.squad) : undefined;
+    if (msg.squad && !squad) return;
+
+    const stored = this.loadouts.get(clientId) ?? {};
+    if (deck) stored.deck = deck;
+    if (squad) stored.squad = squad;
+
+    this.loadouts.set(clientId, stored);
+    this.applyLoadout(clientId);
+  }
+
+  /** Pushes a stored loadout into the client's session, if they are already seated. */
+  private applyLoadout(clientId: string): void {
+    const loadout = this.loadouts.get(clientId);
+    if (!loadout) return;
+
+    const roomId = this.clientRoom.get(clientId);
+    const sess = roomId ? this.sessions.get(roomId) : null;
+    if (!sess) return;
+
+    if (loadout.deck) sess.setDeck(clientId, loadout.deck);
+    if (loadout.squad) sess.setSquad(clientId, loadout.squad);
   }
 
   private sendQueueStatus(clientId: string): void {
@@ -336,6 +407,7 @@ export class App {
     const roomId = room.id;
     const session = new Session(room, {
       onSnapshot: (snap) => this.broadcastSnapshot(roomId, snap),
+      onMatchResult: (summary) => this.broadcastMatchResult(roomId, summary),
       onRoundEnd: (winner) => this.broadcastRoundEnd(roomId, winner),
     });
     this.sessions.set(roomId, session);
@@ -356,6 +428,7 @@ export class App {
          */
         session.selectElement(entry.clientId, QUEUE_ELEMENT);
         session.setDeck(entry.clientId, entry.deck);
+        if (entry.squad) session.setSquad(entry.clientId, entry.squad);
         session.setReady(entry.clientId, true);
         this.clientRoom.set(entry.clientId, roomId);
       }
@@ -378,7 +451,7 @@ export class App {
       this.sendJSON(entry.clientId, {
         type: 'match_found',
         roomId,
-        opponentName: opponent?.name ?? 'Autômato Arcano',
+        opponentName: opponent?.name ?? 'Arcane Automaton',
         yourTeam: team,
         againstBot: !opponent,
       });
@@ -461,86 +534,57 @@ export class App {
   }
 
   private broadcastSnapshot(roomId: string, snap: Snapshot): void {
-    const msg: Omit<SnapshotMsg, 'mana' | 'hand' | 'next'> = {
-      type: 'snapshot',
-      tick: snap.tick,
-      elapsed: snap.elapsed,
-      suddenDeath: snap.suddenDeath,
-      structures: snap.structures.map((s) => ({
-        id: s.id,
-        team: s.team,
-        kind: s.kind,
-        position: fromVec2(s.position),
-        radius: s.radius,
-        health: s.health,
-        maxHealth: s.maxHealth,
-        alive: s.alive,
-        invulnerable: s.invulnerable,
-      })),
-      mages: snap.mages.map((m) => ({
-        id: m.id,
-        team: m.team,
-        position: fromVec2(m.position),
-        facing: fromVec2(m.facing),
-        health: m.health,
-        maxHealth: m.maxHealth,
-        charging: m.charging,
-        charge: m.charge,
-        element: m.element,
-        role: m.role,
-        shielded: m.shielded,
-        hasted: m.hasted,
-        slowed: m.slowed,
-        kills: m.kills,
-        deaths: m.deaths,
-        ...(m.rosterId ? { rosterId: m.rosterId } : {}),
-        // Omitted rather than sent as 0/false: this rides 20 times a second for
-        // eight mages, and both are the exception, not the rule.
-        ...(m.respawnRemaining > 0 ? { respawnRemaining: m.respawnRemaining } : {}),
-        ...(m.immune ? { immune: true } : {}),
-      })),
-      projectiles: snap.projectiles.map((p) => ({
-        id: p.id,
-        element: p.element,
-        position: fromVec2(p.position),
-        velocity: fromVec2(p.velocity),
-        height: p.height,
-        radius: p.radius,
-      })),
-      puddles: snap.puddles.map((pu) => ({
-        id: pu.id,
-        position: fromVec2(pu.position),
-        radius: pu.radius,
-        remaining: pu.remaining,
-      })),
-      spells: snap.spells.map((fx) => ({
-        id: fx.id,
-        spellId: fx.spellId,
-        team: fx.team,
-        position: fromVec2(fx.position),
-        radius: fx.radius,
-      })),
-    };
-
     // Mana and hand are per-receiver: you see your own bar and your own cards,
     // never the opponent's. A spectator has neither.
     const sess = this.sessions.get(roomId);
     for (const id of this.humanIds(roomId)) {
       const team = sess?.teamOf(id) ?? null;
       if (team === null) {
-        this.sendJSON(id, { ...msg, mana: 0, hand: [] });
+        this.sendJSON(id, toSnapshotMsg(snap, { mana: 0, hand: [] }));
         continue;
       }
 
       const deck = sess?.deckFor(team) ?? null;
-      const next = deck?.next() ?? null;
-      this.sendJSON(id, {
-        ...msg,
-        mana: snap.mana[team] ?? 0,
-        hand: deck?.hand() ?? [],
-        ...(next ? { next } : {}),
-      });
+      this.sendJSON(
+        id,
+        toSnapshotMsg(snap, {
+          mana: snap.mana[team] ?? 0,
+          hand: deck?.hand() ?? [],
+          next: deck?.next() ?? null,
+        }),
+      );
     }
+  }
+
+  /**
+   * The finished match's numbers, sent just before `round_end` so a client that
+   * navigates on round end has already received them.
+   */
+  private broadcastMatchResult(roomId: string, summary: MatchSummary): void {
+    const perTeam: Record<number, TeamSummaryDTO> = {};
+    for (const [team, side] of Object.entries(summary.perTeam)) {
+      perTeam[Number(team)] = {
+        squad: [...side.squad],
+        kills: side.kills,
+        deaths: side.deaths,
+        structuresDestroyed: side.structuresDestroyed,
+        casts: side.casts.map((c) => ({ cardId: c.cardId, casts: c.casts })),
+        mages: side.mages.map((m) => ({
+          role: m.role,
+          kills: m.kills,
+          deaths: m.deaths,
+          ...(m.rosterId ? { rosterId: m.rosterId } : {}),
+        })),
+      };
+    }
+
+    this.broadcastToHumans(roomId, {
+      type: 'match_result',
+      winnerTeam: summary.winnerTeam,
+      durationSeconds: summary.durationSeconds,
+      suddenDeath: summary.suddenDeath,
+      perTeam,
+    });
   }
 
   private broadcastRoundEnd(roomId: string, winnerTeam: number): void {
@@ -581,10 +625,6 @@ export class App {
 function toVec2(v: Vec2DTO | undefined): Vec2 {
   if (!v || typeof v.x !== 'number' || typeof v.y !== 'number') return Vec2.zero;
   return new Vec2(v.x, v.y);
-}
-
-function fromVec2(v: Vec2): Vec2DTO {
-  return { x: v.x, y: v.y };
 }
 
 function teamFromWire(team: number): Team {

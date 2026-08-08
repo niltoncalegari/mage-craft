@@ -10,6 +10,15 @@
 
 export type Vec2DTO = { x: number; y: number };
 
+/**
+ * Strips a `Vec2` down to the wire shape. Lives here rather than beside the
+ * sender because every producer of a snapshot needs it — the server, and any
+ * client running a match locally.
+ */
+export function fromVec2(v: { x: number; y: number }): Vec2DTO {
+  return { x: v.x, y: v.y };
+}
+
 export type CreateRoomMsg = {
   type: 'create_room';
   teamSize: number;
@@ -32,8 +41,23 @@ export type StartMatchMsg = { type: 'start_match' };
  * queue, and the server builds the 1v1 room. This is the primary way into a
  * match; `create_room`/`join_room` survive for private/custom games.
  */
-export type JoinQueueMsg = { type: 'join_queue'; name: string; deck?: string[] };
+export type JoinQueueMsg = {
+  type: 'join_queue';
+  name: string;
+  /** @deprecated Send `set_loadout` instead — it also covers custom rooms. */
+  deck?: string[];
+};
 export type LeaveQueueMsg = { type: 'leave_queue' };
+
+/**
+ * What the player brings to their next match: the 8-card deck and the 4-mage
+ * squad (GDD §7). Sent once after connecting, before joining a queue or a room,
+ * because it has to apply to both paths — a room seat is claimed long after any
+ * queue message would have been sent.
+ *
+ * Either half may be omitted, in which case the server keeps its default.
+ */
+export type SetLoadoutMsg = { type: 'set_loadout'; deck?: string[]; squad?: string[] };
 
 /**
  * The only in-match message a player sends since the pivot: spend mana to cast
@@ -57,6 +81,7 @@ export type ClientMsg =
   | StartMatchMsg
   | JoinQueueMsg
   | LeaveQueueMsg
+  | SetLoadoutMsg
   | CastMsg;
 
 export type PlayerSlotDTO = {
@@ -214,6 +239,34 @@ export type MatchStartMsg = { type: 'match_start' };
 export type RoundEndMsg = { type: 'round_end'; winnerTeam: number };
 export type ErrorMsg = { type: 'error'; message: string };
 
+export type MageStatDTO = { rosterId?: string; role: string; kills: number; deaths: number };
+export type CastStatDTO = { cardId: string; casts: number };
+export type TeamSummaryDTO = {
+  squad: string[];
+  kills: number;
+  deaths: number;
+  structuresDestroyed: number;
+  casts: CastStatDTO[];
+  mages: MageStatDTO[];
+};
+
+/**
+ * The match's account of itself, sent alongside `round_end`.
+ *
+ * Kept as its own message rather than fields on `RoundEndMsg` because
+ * `round_end` drives the rematch-lobby handover on the client, and a consumer
+ * that only wants the numbers (history, analytics, a future replay) should not
+ * have to touch that path.
+ */
+export type MatchResultMsg = {
+  type: 'match_result';
+  winnerTeam: number;
+  durationSeconds: number;
+  suddenDeath: boolean;
+  /** Keyed by wire team number. */
+  perTeam: Record<number, TeamSummaryDTO>;
+};
+
 /** Queue feedback: how long you have waited and how many are searching. */
 export type QueueStatusMsg = {
   type: 'queue_status';
@@ -238,6 +291,7 @@ export type ServerMsg =
   | MatchStartMsg
   | SnapshotMsg
   | RoundEndMsg
+  | MatchResultMsg
   | QueueStatusMsg
   | MatchFoundMsg
   | ErrorMsg;

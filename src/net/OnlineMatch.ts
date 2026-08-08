@@ -21,12 +21,23 @@ import { World } from '../game/World';
 import { MatchHUD } from '../ui/MatchHUD';
 import { Menus } from '../ui/Menus';
 import { SquadPanel } from '../ui/SquadPanel';
-import type { NetworkClient } from './NetworkClient';
 import { SnapshotSync } from './SnapshotSync';
 import type { SnapshotMsg } from './protocol';
 
 /** Why the player left the online match view — decides where the app navigates back to. */
 export type LeaveMatchReason = 'quit' | 'roundEnd';
+
+/**
+ * Everything this view needs from whatever is running the match. It is two
+ * members wide on purpose: a match that renders server snapshots and a match
+ * simulated in this very tab differ only in where the snapshots come from and
+ * where a cast goes, so both satisfy this and the view cannot tell them apart.
+ * `NetworkClient` satisfies it structurally; see `LocalSession`.
+ */
+export interface MatchTransport {
+  readonly connected: boolean;
+  sendCast(cardId: string, position: { x: number; y: number }): void;
+}
 
 /**
  * The map online matches are played on. The server loads this exact file too
@@ -113,9 +124,16 @@ export class OnlineMatch {
   /** Whether that press has travelled far enough to be a drag rather than a click. */
   private dragging = false;
 
+  /**
+   * Pumped once per frame before the view syncs, so a locally simulated match
+   * advances on the same clock that draws it. Null for a server match, where
+   * the simulation runs elsewhere.
+   */
+  private readonly onTick: ((dt: number) => void) | null;
+
   constructor(
     container: HTMLElement,
-    private readonly net: NetworkClient,
+    private readonly net: MatchTransport,
     opts: {
       spectating: boolean;
       localPlayerId: string;
@@ -123,9 +141,11 @@ export class OnlineMatch {
       localTeam: number | null;
       mapData: MapData;
       onLeaveMatch: (reason: LeaveMatchReason) => void;
+      onTick?: (dt: number) => void;
     },
   ) {
     this.spectating = opts.spectating;
+    this.onTick = opts.onTick ?? null;
 
     // Same construction order as Game.init: obstacles share the world's id
     // space so nothing collides with mage/projectile ids.
@@ -213,6 +233,9 @@ export class OnlineMatch {
       if (this.disposed) return;
       const dt = Math.min((now - this.lastFrameTime) / 1000, 0.1);
       this.lastFrameTime = now;
+      // A local match steps here, before the view reads it — one clock for the
+      // simulation and the render, so they cannot drift apart.
+      if (!this.paused) this.onTick?.(dt);
       this.sync.tick(dt);
       for (const r of this.renderers) r.sync(0);
       this.renderer.render();
@@ -269,7 +292,7 @@ export class OnlineMatch {
   private updateStatus(): void {
     this.statusEl.hidden = !this.spectating;
     this.statusEl.textContent = this.spectating
-      ? 'Assistindo — você entra na próxima partida'
+      ? 'Spectating — you play the next match'
       : '';
   }
 
