@@ -64,6 +64,16 @@ export interface Mage {
   maxHealth: number;
   alive: boolean;
 
+  /**
+   * Enemy mages this one has personally put down (GDD §4). A team's kill total
+   * is *not* the sum of these — see `World.kill`: a Tower bolt, a Praga zone and
+   * friendly fire all take a mage off the field with nobody to credit. The team
+   * total is the opposing team's `deaths`.
+   */
+  kills: number;
+  /** Times this mage has been put down. Squads are permanent, so this only grows. */
+  deaths: number;
+
   state: MageState;
 
   /** 0..1 */

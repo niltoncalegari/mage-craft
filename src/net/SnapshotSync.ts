@@ -46,6 +46,36 @@ export interface MatchState {
   next: string | null;
 }
 
+/**
+ * One row of the squad dashboard: everything about a mage that the render-only
+ * {@link World} does not carry (identity, tally, respawn clock) plus the health
+ * and status it does.
+ *
+ * Mutated in place every snapshot rather than reallocated — the panel reads this
+ * 60 times a second and eight fresh objects per frame is pure garbage.
+ */
+export interface SquadMemberView {
+  /** The server's mage id — what the panel keys selection on. */
+  readonly wireId: string;
+  /** The render world's numeric id — what the highlight ring resolves against. */
+  readonly entityId: EntityId;
+  /** POV-relative, so `Team.Player` is always the local commander's squad. */
+  team: Team;
+  rosterId: string | null;
+  role: string;
+  health: number;
+  maxHealth: number;
+  alive: boolean;
+  kills: number;
+  deaths: number;
+  /** Seconds until it returns; 0 while alive. */
+  respawnRemaining: number;
+  shielded: boolean;
+  hasted: boolean;
+  slowed: boolean;
+  immune: boolean;
+}
+
 const EMPTY_MATCH_STATE: MatchState = {
   mana: 0,
   elapsed: 0,
@@ -76,6 +106,8 @@ interface MageTrack {
   prevHealth: number;
   /** Local clock time until which the hit pose should be held. */
   hitUntil: number;
+  /** The dashboard row for this mage, updated in place from every snapshot. */
+  view: SquadMemberView;
 }
 
 /**
@@ -93,6 +125,13 @@ interface MageTrack {
  */
 export class SnapshotSync {
   private readonly mageTracks = new Map<string, MageTrack>();
+  /**
+   * Dashboard rows in first-seen order. Squads are built once by `initSquad` and
+   * no mage is ever removed, so every snapshot lists them in the same order and
+   * this array is written once, on the first snapshot, then only mutated. Not
+   * sorted by id on purpose — `mage-10` sorts before `mage-9`.
+   */
+  private readonly squadViews: SquadMemberView[] = [];
   private readonly projectileTracks = new Map<string, ProjectileTrack>();
   private readonly puddleIds = new Map<string, EntityId>();
   private readonly structureIds = new Map<string, EntityId>();
@@ -127,6 +166,32 @@ export class SnapshotSync {
   /** The latest per-player match state (mana, clock, hand) from the wire. */
   get matchState(): MatchState {
     return this.match;
+  }
+
+  /** Every mage in the match, in a match-stable order. Backs the squad panel. */
+  get squad(): readonly SquadMemberView[] {
+    return this.squadViews;
+  }
+
+  /**
+   * Which half of the arena the local commander's own side occupies.
+   *
+   * Teams are mirrored by POV — your squad is always `Team.Player`, whichever
+   * wire team you drew — but *positions* are not: the board renders exactly as
+   * the server laid it out. So a commander seated on the right watches their own
+   * blue squad on the right, and a HUD pinned to the left would be reading the
+   * board backwards. Derived from where your own Core stands rather than from
+   * the team number, so it stays right if a map ever seats teams differently.
+   */
+  get mySide(): 'left' | 'right' {
+    const core = this.world.structures.find((s) => s.team === Team.Player && s.kind === 'core');
+    return core && core.position.x > 0 ? 'right' : 'left';
+  }
+
+  /** The render world's id for a server mage id — how the highlight finds its mage. */
+  entityIdFor(wireId: string | null): EntityId | null {
+    if (wireId === null) return null;
+    return this.mageTracks.get(wireId)?.entityId ?? null;
   }
 
   /** Whether the given wire team number (0/1) is the local player's team. */
@@ -210,6 +275,10 @@ export class SnapshotSync {
       const idx = this.world.players.findIndex((p) => p.id === track.entityId);
       if (idx !== -1) this.world.players.splice(idx, 1);
       if (track.entityId === this.localEntity) this.localEntity = null;
+      // Never taken in a real match — squads are permanent (GDD §4) — but the
+      // dashboard must not keep a row for a mage the server stopped sending.
+      const row = this.squadViews.indexOf(track.view);
+      if (row !== -1) this.squadViews.splice(row, 1);
       this.mageTracks.delete(wireId);
     }
   }
@@ -220,6 +289,25 @@ export class SnapshotSync {
     player.selected = m.id === this.localPlayerId;
     if (player.selected) this.localEntity = player.id;
 
+    const view: SquadMemberView = {
+      wireId: m.id,
+      entityId: player.id,
+      team: player.team,
+      rosterId: m.rosterId ?? null,
+      role: m.role,
+      health: m.health,
+      maxHealth: m.maxHealth,
+      alive: m.health > 0,
+      kills: m.kills,
+      deaths: m.deaths,
+      respawnRemaining: m.respawnRemaining ?? 0,
+      shielded: m.shielded,
+      hasted: m.hasted,
+      slowed: m.slowed,
+      immune: m.immune ?? false,
+    };
+    this.squadViews.push(view);
+
     const track: MageTrack = {
       entityId: player.id,
       targetX: m.position.x,
@@ -229,6 +317,7 @@ export class SnapshotSync {
       prevY: m.position.y,
       prevHealth: m.health,
       hitUntil: 0,
+      view,
     };
     this.mageTracks.set(m.id, track);
     return track;
@@ -248,6 +337,21 @@ export class SnapshotSync {
     player.hasted = m.hasted;
     player.slowed = m.slowed;
     player.alive = m.health > 0;
+
+    const view = track.view;
+    view.team = player.team;
+    view.rosterId = m.rosterId ?? null;
+    view.role = m.role;
+    view.health = m.health;
+    view.maxHealth = m.maxHealth;
+    view.alive = player.alive;
+    view.kills = m.kills;
+    view.deaths = m.deaths;
+    view.respawnRemaining = m.respawnRemaining ?? 0;
+    view.shielded = m.shielded;
+    view.hasted = m.hasted;
+    view.slowed = m.slowed;
+    view.immune = m.immune ?? false;
 
     track.targetX = m.position.x;
     track.targetY = m.position.y;

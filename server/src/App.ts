@@ -491,7 +491,13 @@ export class App {
         shielded: m.shielded,
         hasted: m.hasted,
         slowed: m.slowed,
+        kills: m.kills,
+        deaths: m.deaths,
         ...(m.rosterId ? { rosterId: m.rosterId } : {}),
+        // Omitted rather than sent as 0/false: this rides 20 times a second for
+        // eight mages, and both are the exception, not the rule.
+        ...(m.respawnRemaining > 0 ? { respawnRemaining: m.respawnRemaining } : {}),
+        ...(m.immune ? { immune: true } : {}),
       })),
       projectiles: snap.projectiles.map((p) => ({
         id: p.id,

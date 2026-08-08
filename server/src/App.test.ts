@@ -206,6 +206,19 @@ describe('App — match protocol', () => {
     expect(snap?.elapsed).toEqual(expect.any(Number));
   });
 
+  it('sends every mage a kill tally, and omits respawn state while it is alive', () => {
+    startedMatch();
+    const session = getSession();
+    for (let i = 0; i < 3; i++) session.tick();
+
+    const mage = hub.last<SnapshotMsg>('host', 'snapshot')?.mages[0];
+    expect(mage).toMatchObject({ kills: 0, deaths: 0 });
+    // Absent, not zero/false: the client tests these for presence, the same way
+    // it does for the optional slot fields above.
+    expect(mage && 'respawnRemaining' in mage).toBe(false);
+    expect(mage && 'immune' in mage).toBe(false);
+  });
+
   it('sends each player their own hand plus the card queued behind it', () => {
     startedMatch();
     const session = getSession();

@@ -4,7 +4,7 @@ import { TEAM_A, TEAM_B } from '../../sim/entities';
 import { Rng } from '../../sim/rng';
 import { Vec2 } from '../../sim/Vec2';
 import { RoomManager } from './RoomManager';
-import { Session, SNAPSHOT_EVERY_N_TICKS, type SessionCallbacks } from './Session';
+import { Session, SNAPSHOT_EVERY_N_TICKS, type SessionCallbacks, type Snapshot } from './Session';
 
 function newSession(teamSize = 1, cb: SessionCallbacks = {}): Session {
   return new Session(new RoomManager().createRoom(teamSize), cb, new Rng(1));
@@ -132,6 +132,38 @@ describe('Session — ticking', () => {
       },
     });
     for (let i = 0; i < SNAPSHOT_EVERY_N_TICKS; i++) s.tick();
+  });
+
+  // The squad panel reads all four of these off every mage, every snapshot.
+  it('carries each mage’s kill tally and respawn state', () => {
+    const s = startedSession({
+      onSnapshot: (snap) => {
+        for (const m of snap.mages) {
+          expect(m.kills).toBe(0);
+          expect(m.deaths).toBe(0);
+          expect(m.respawnRemaining).toBe(0);
+          expect(m.immune).toBe(false);
+        }
+      },
+    });
+    for (let i = 0; i < SNAPSHOT_EVERY_N_TICKS; i++) s.tick();
+  });
+
+  it('reports a downed mage’s remaining respawn time and its killer’s tally', () => {
+    const snapshots: Snapshot[] = [];
+    const s = startedSession({ onSnapshot: (snap) => snapshots.push(snap) });
+    const world = s.liveWorld!;
+    const [victim] = [...world.mages.values()];
+    const enemy = [...world.mages.values()].find((m) => m.team !== victim.team)!;
+
+    world.dealDamage(victim, victim.maxHealth * 2, Vec2.zero, 0, false, enemy.id);
+    for (let i = 0; i < SNAPSHOT_EVERY_N_TICKS; i++) s.tick();
+
+    const wired = snapshots.at(-1)!.mages;
+    expect(wired.find((m) => m.id === victim.id)?.respawnRemaining).toBeGreaterThan(0);
+    expect(wired.find((m) => m.id === victim.id)?.deaths).toBe(1);
+    expect(wired.find((m) => m.id === enemy.id)?.kills).toBe(1);
+    expect(wired.find((m) => m.id === enemy.id)?.respawnRemaining).toBe(0);
   });
 });
 

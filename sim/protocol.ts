@@ -120,6 +120,18 @@ export type MageSnapshotDTO = {
   hasted: boolean;
   /** Slowed by Maldição da Lentidão or an ice hit (GDD §8.3, §9). */
   slowed: boolean;
+  /**
+   * Enemy mages this one has personally put down (GDD §4). A team's total is
+   * *not* the sum of these — see `World.kill` — it is the opposing team's
+   * `deaths`, which is what the squad panel adds up.
+   */
+  kills: number;
+  /** Times this mage has been put down; survives respawn. */
+  deaths: number;
+  /** Seconds until this mage returns. Omitted while it is alive. */
+  respawnRemaining?: number;
+  /** Post-respawn damage immunity is running. Omitted when false. */
+  immune?: boolean;
 };
 
 export type StructureSnapshotDTO = {

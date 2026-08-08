@@ -80,6 +80,8 @@ function mage(over: Partial<MageSnapshotDTO> = {}): MageSnapshotDTO {
     shielded: false,
     hasted: false,
     slowed: false,
+    kills: 0,
+    deaths: 0,
     ...over,
   };
 }
@@ -265,5 +267,119 @@ describe('SnapshotSync — projectiles', () => {
     sync.applySnapshot(snapshot({ tick: 6, projectiles: [] }));
 
     expect(impacts).toEqual([{ x: 5, element: 'fire' }]);
+  });
+});
+
+/*
+ * The squad dashboard reads its rows from here, not from the render World: a
+ * mage's identity (roster, role), its tally and its respawn clock never reach
+ * `world.players`. Row order also has to survive the whole match, since the
+ * panel writes into four fixed rows per side.
+ */
+describe('SnapshotSync — squad', () => {
+  const squadOf = (over: Partial<MageSnapshotDTO>[] = []): MageSnapshotDTO[] =>
+    [
+      mage({ id: 'mage-1', team: TEAM_A, rosterId: 'stone_golem', role: 'tank', maxHealth: 280, health: 280 }),
+      mage({ id: 'mage-2', team: TEAM_A, rosterId: 'pyromancer', maxHealth: 80, health: 80 }),
+      mage({ id: 'mage-9', team: TEAM_B, rosterId: 'cleric', role: 'support', maxHealth: 95, health: 95 }),
+      mage({ id: 'mage-10', team: TEAM_B, rosterId: 'stormcaller', maxHealth: 60, health: 60 }),
+    ].map((m, i) => ({ ...m, ...(over[i] ?? {}) }));
+
+  it('exposes one row per mage with its identity and tally', () => {
+    const { sync } = makeSync(TEAM_A);
+    sync.applySnapshot(snapshot({ mages: squadOf([{ kills: 2, deaths: 1 }]) }));
+
+    const [golem] = sync.squad;
+    expect(sync.squad).toHaveLength(4);
+    expect(golem).toMatchObject({
+      wireId: 'mage-1',
+      rosterId: 'stone_golem',
+      role: 'tank',
+      maxHealth: 280,
+      kills: 2,
+      deaths: 1,
+      alive: true,
+    });
+  });
+
+  it('mirrors POV so your own squad is Team.Player from either seat', () => {
+    const a = makeSync(TEAM_A);
+    a.sync.applySnapshot(snapshot({ mages: squadOf() }));
+    expect(a.sync.squad.filter((m) => m.team === Team.Player).map((m) => m.wireId)).toEqual([
+      'mage-1',
+      'mage-2',
+    ]);
+
+    const b = makeSync(TEAM_B);
+    b.sync.applySnapshot(snapshot({ mages: squadOf() }));
+    expect(b.sync.squad.filter((m) => m.team === Team.Player).map((m) => m.wireId)).toEqual([
+      'mage-9',
+      'mage-10',
+    ]);
+  });
+
+  // Not sorted by id on purpose: 'mage-10' sorts before 'mage-9'.
+  it('keeps row order across snapshots, in first-seen order', () => {
+    const { sync } = makeSync(TEAM_A);
+    const order = (): string[] => sync.squad.map((m) => m.wireId);
+
+    sync.applySnapshot(snapshot({ mages: squadOf() }));
+    const first = order();
+    sync.applySnapshot(snapshot({ tick: 6, mages: [...squadOf()].reverse() }));
+    sync.applySnapshot(snapshot({ tick: 9, mages: squadOf() }));
+
+    expect(first).toEqual(['mage-1', 'mage-2', 'mage-9', 'mage-10']);
+    expect(order()).toEqual(first);
+  });
+
+  it('reports a downed mage with its respawn countdown', () => {
+    const { sync } = makeSync(TEAM_A);
+    sync.applySnapshot(
+      snapshot({ mages: squadOf([{ health: 0, deaths: 1, respawnRemaining: 4.2 }]) }),
+    );
+
+    expect(sync.squad[0]).toMatchObject({ alive: false, deaths: 1, respawnRemaining: 4.2 });
+  });
+
+  it('treats the omitted respawn and immunity fields as absent, not undefined', () => {
+    const { sync } = makeSync(TEAM_A);
+    sync.applySnapshot(snapshot({ mages: squadOf() }));
+
+    expect(sync.squad[0].respawnRemaining).toBe(0);
+    expect(sync.squad[0].immune).toBe(false);
+  });
+
+  it('resolves a wire mage id to a render entity, and nothing for a stranger', () => {
+    const { sync, world } = makeSync(TEAM_A);
+    sync.applySnapshot(snapshot({ mages: squadOf() }));
+
+    const entityId = sync.entityIdFor('mage-9');
+    expect(entityId).not.toBeNull();
+    expect(world.players.some((p) => p.id === entityId)).toBe(true);
+    expect(sync.entityIdFor('mage-404')).toBeNull();
+    expect(sync.entityIdFor(null)).toBeNull();
+  });
+});
+
+/*
+ * Teams are mirrored by POV, positions are not: whichever wire team you draw,
+ * your squad comes out `Team.Player`, but the board renders exactly where the
+ * server put it. A HUD pinned to one side would therefore be backwards for
+ * whoever drew the other seat.
+ */
+describe('SnapshotSync — which half of the arena is yours', () => {
+  it('reports the side your own Core actually stands on, from either seat', () => {
+    const a = makeSync(TEAM_A);
+    a.sync.applySnapshot(snapshot());
+    expect(a.sync.mySide).toBe('left');
+
+    const b = makeSync(TEAM_B);
+    b.sync.applySnapshot(snapshot());
+    expect(b.sync.mySide).toBe('right');
+  });
+
+  it('falls back to the left before any structure has arrived', () => {
+    const { sync } = makeSync(TEAM_A);
+    expect(sync.mySide).toBe('left');
   });
 });

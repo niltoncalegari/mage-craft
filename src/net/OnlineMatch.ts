@@ -12,6 +12,7 @@ import { ParticleRenderer } from '../render/ParticleRenderer';
 import { PickupRenderer } from '../render/PickupRenderer';
 import { PlayerRenderer } from '../render/PlayerRenderer';
 import { PuddleRenderer } from '../render/PuddleRenderer';
+import { SquadHighlightRenderer } from '../render/SquadHighlightRenderer';
 import { StructureRenderer } from '../render/StructureRenderer';
 import { IdAllocator } from '../ecs/Entity';
 import { MapLoader } from '../game/MapLoader';
@@ -19,7 +20,7 @@ import { Team, type Arena, type MapData } from '../game/types';
 import { World } from '../game/World';
 import { MatchHUD } from '../ui/MatchHUD';
 import { Menus } from '../ui/Menus';
-import { Minimap } from '../ui/Minimap';
+import { SquadPanel } from '../ui/SquadPanel';
 import type { NetworkClient } from './NetworkClient';
 import { SnapshotSync } from './SnapshotSync';
 import type { SnapshotMsg } from './protocol';
@@ -41,6 +42,9 @@ const ONLINE_MAP = 'siege1.json';
 /** Keyboard shortcuts for the four hand slots, in slot order. */
 const HAND_KEYS = ['1', '2', '3', '4'];
 
+/** How far a press must travel before it counts as dragging the view, not clicking. */
+const DRAG_THRESHOLD_PX = 5;
+
 let mapDataPromise: Promise<MapData> | null = null;
 
 /**
@@ -60,11 +64,15 @@ export function loadOnlineMapData(): Promise<MapData> {
 /**
  * Online match view: renders server snapshots through the same rendering
  * pipeline solo/practice mode uses (World + ArenaRenderer/PlayerRenderer/
- * HUD/Minimap/Menus/AudioManager/etc., see src/main.ts's bootOfflineMatch),
- * instead of a bespoke scene. There is no local simulation — {@link
- * SnapshotSync} is the only "system," fed by the server instead of local
- * physics, and it emits the same {@link GameEvents} the offline systems do
- * (inferred from snapshot deltas) so audio/particles/menus work unmodified.
+ * HUD/Menus/AudioManager/etc., see src/main.ts's bootOfflineMatch), instead of a
+ * bespoke scene. There is no local simulation — {@link SnapshotSync} is the only
+ * "system," fed by the server instead of local physics, and it emits the same
+ * {@link GameEvents} the offline systems do (inferred from snapshot deltas) so
+ * audio/particles/menus work unmodified.
+ *
+ * No minimap here, unlike practice mode: it drew the same board the camera
+ * already showed. Its corner went to the squad panels, which say the thing the
+ * arena cannot — who is hurt, who is buffed, and who is scoring.
  */
 export class OnlineMatch {
   private readonly assets = new AssetManager();
@@ -93,10 +101,17 @@ export class OnlineMatch {
   private groundPoint = { x: 0, y: 0 };
   /** Set by the card-hand UI; the next click on the arena spends it. */
   private selectedCardId: string | null = null;
+  /** Wire id of the mage picked out of the squad panel, marked in the arena. */
+  private highlightedMageId: string | null = null;
   private readonly raycaster = new THREE.Raycaster();
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly ndc = new THREE.Vector2();
   private readonly hit = new THREE.Vector3();
+
+  /** Screen position the current left-button press started at, or null when up. */
+  private dragFrom: { x: number; y: number } | null = null;
+  /** Whether that press has travelled far enough to be a drag rather than a click. */
+  private dragging = false;
 
   constructor(
     container: HTMLElement,
@@ -133,14 +148,25 @@ export class OnlineMatch {
       new ParticleRenderer(this.renderer.scene, this.assets, this.world, this.events),
       new PickupRenderer(this.renderer.scene, this.assets, this.world, this.events),
       new PuddleRenderer(this.renderer.scene, this.assets, this.world),
+      new SquadHighlightRenderer(this.renderer.scene, this.world, () =>
+        this.sync.entityIdFor(this.highlightedMageId),
+      ),
       new MatchHUD(container, this.world, {
         getState: () => this.sync.matchState,
         getSelectedCard: () => this.selectedCardId,
         onSelectCard: (cardId) => this.selectCard(cardId),
         isVisible: () => !this.paused,
         isSpectating: () => this.spectating,
+        getMySide: () => this.sync.mySide,
       }),
-      new Minimap(container, this.world, () => this.renderer.cameraController.getView(), () => !this.paused),
+      new SquadPanel(container, {
+        getSquad: () => this.sync.squad,
+        getHighlighted: () => this.highlightedMageId,
+        getMySide: () => this.sync.mySide,
+        onSelect: (wireId) => this.watchMage(wireId),
+        isVisible: () => !this.paused,
+        isCardArmed: () => this.selectedCardId !== null,
+      }),
     ];
 
     this.audio = new AudioManager(this.events);
@@ -252,6 +278,11 @@ export class OnlineMatch {
     this.selectedCardId = cardId;
   }
 
+  /** Marks a mage in the arena, or clears the mark when it is already the one. */
+  watchMage(wireId: string): void {
+    this.highlightedMageId = this.highlightedMageId === wireId ? null : wireId;
+  }
+
   /** Spends mana to place a card at a world point (GDD §5). */
   castCard(cardId: string, position: { x: number; y: number }): void {
     if (this.spectating || !this.net.connected) return;
@@ -291,6 +322,10 @@ export class OnlineMatch {
    *
    * This used to feed the aim of a charged throw. It now feeds deployment: the
    * point under the cursor is where a selected card will be summoned.
+   *
+   * The left button does double duty: held and moved it drags the view around
+   * like a map, pressed and released on the spot it casts. A press only becomes
+   * a drag past {@link DRAG_THRESHOLD_PX}, so the casting gesture is unchanged.
    */
   private onPointer(ev: PointerEvent): void {
     const rect = this.renderer.domElement.getBoundingClientRect();
@@ -306,9 +341,66 @@ export class OnlineMatch {
       return;
     }
 
-    if (ev.type === 'pointerup' && ev.button === 0 && this.selectedCardId) {
-      this.castCard(this.selectedCardId, this.groundPoint);
-      this.selectCard(null);
+    if (ev.type === 'pointerdown' && ev.button === 0) {
+      this.dragFrom = { x: ev.clientX, y: ev.clientY };
+      this.dragging = false;
+      this.renderer.domElement.setPointerCapture?.(ev.pointerId);
+      return;
     }
+
+    if (ev.type === 'pointermove') {
+      this.dragView(ev, rect);
+      return;
+    }
+
+    if (ev.type === 'pointerup' && ev.button === 0) {
+      const wasDrag = this.dragging;
+      this.endDrag(ev);
+      // A drag is a camera move, never a cast — otherwise letting go after
+      // looking around would fire the armed card wherever you stopped.
+      if (!wasDrag && this.selectedCardId) {
+        this.castCard(this.selectedCardId, this.groundPoint);
+        this.selectCard(null);
+      }
+    }
+  }
+
+  /**
+   * Pulls the ground under the cursor, one world unit per world unit.
+   *
+   * The delta is converted analytically from pixels rather than by raycasting
+   * again: a second raycast would run against the camera this very move is
+   * about to shift, so the correction would chase itself and the view would
+   * shake. `getView()` already reports the visible ground rectangle with the
+   * camera's tilt foreshortening applied, which is exactly the scale needed.
+   */
+  private dragView(ev: PointerEvent, rect: DOMRect): void {
+    const from = this.dragFrom;
+    if (!from) return;
+
+    if (!this.dragging) {
+      if (Math.hypot(ev.clientX - from.x, ev.clientY - from.y) < DRAG_THRESHOLD_PX) return;
+      this.dragging = true;
+      this.renderer.domElement.style.cursor = 'grabbing';
+    }
+
+    const view = this.renderer.cameraController.getView();
+    const dx = ev.clientX - from.x;
+    const dy = ev.clientY - from.y;
+    from.x = ev.clientX;
+    from.y = ev.clientY;
+
+    // Negated: dragging the ground right means looking further left.
+    this.renderer.cameraController.panBy(
+      -(dx / rect.width) * view.halfX * 2,
+      -(dy / rect.height) * view.halfY * 2,
+    );
+  }
+
+  private endDrag(ev: PointerEvent): void {
+    this.dragFrom = null;
+    this.dragging = false;
+    this.renderer.domElement.style.cursor = '';
+    this.renderer.domElement.releasePointerCapture?.(ev.pointerId);
   }
 }

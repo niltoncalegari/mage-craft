@@ -15,6 +15,11 @@ export class Renderer {
   /** Optional provider for the follow-camera target (local hero, gameplay coords). */
   private followTarget: (() => { x: number; y: number } | null) | null = null;
 
+  private readonly raycaster = new THREE.Raycaster();
+  private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private readonly ndc = new THREE.Vector2();
+  private readonly hit = new THREE.Vector3();
+
   constructor(private readonly container: HTMLElement) {
     this.webgl = new THREE.WebGLRenderer({ antialias: true });
     this.webgl.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -89,9 +94,27 @@ export class Renderer {
     this.cameraController.resize(this.aspect());
   };
 
+  /**
+   * The gameplay point under a pointer event, by raycasting the ground plane —
+   * the same technique InputManager uses, kept here because the wheel handler
+   * lives here and needs it to zoom toward the cursor.
+   */
+  groundPointAt(clientX: number, clientY: number): { x: number; y: number } | null {
+    const rect = this.domElement.getBoundingClientRect();
+    this.ndc.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    const point = this.raycaster.ray.intersectPlane(this.groundPlane, this.hit);
+    return point ? { x: point.x, y: point.z } : null;
+  }
+
   private readonly onWheel = (event: WheelEvent): void => {
     event.preventDefault();
-    this.cameraController.zoom(event.deltaY);
+    // Anchored on the cursor, so the ground under the pointer stays put as the
+    // view tightens — the gesture people already know from map apps.
+    this.cameraController.zoom(event.deltaY, this.groundPointAt(event.clientX, event.clientY));
   };
 
   dispose(): void {

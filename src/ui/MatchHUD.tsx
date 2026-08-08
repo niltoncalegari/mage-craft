@@ -25,6 +25,8 @@ export interface MatchHudDeps {
   isVisible: () => boolean;
   /** Spectators get the clock and the structures, but no hand of their own. */
   isSpectating: () => boolean;
+  /** Which half of the arena the local commander's own side stands on. */
+  getMySide: () => 'left' | 'right';
 }
 
 interface CardRefs {
@@ -42,11 +44,15 @@ interface SideRefs {
   towers: HTMLElement;
 }
 
+/**
+ * Named by screen position, not by whose side it is: which team a box shows
+ * depends on which half of the arena that team stands on (see `updateSides`).
+ */
 interface HudRefs {
   clock: HTMLElement;
   phase: HTMLElement;
-  mine: SideRefs;
-  theirs: SideRefs;
+  left: SideRefs;
+  right: SideRefs;
   manaFill: HTMLElement;
   manaText: HTMLElement;
   hand: CardRefs[];
@@ -106,12 +112,12 @@ function MatchHudView({ refs }: { refs: HudRefs }): JSX.Element {
   return (
     <>
       <div class={styles.top}>
-        <SideView refs={refs.mine} mirrored={false} />
+        <SideView refs={refs.left} mirrored={false} />
         <div class={styles.clockBox}>
           <span class={styles.clock} ref={keep(refs, 'clock')} />
           <span class={styles.phase} ref={keep(refs, 'phase')} />
         </div>
-        <SideView refs={refs.theirs} mirrored />
+        <SideView refs={refs.right} mirrored />
       </div>
 
       <div class={styles.bar} ref={keep(refs, 'bar')}>
@@ -164,8 +170,8 @@ export class MatchHUD implements GameRenderer {
    */
   private readonly refs = {
     hand: [] as CardRefs[],
-    mine: {} as SideRefs,
-    theirs: {} as SideRefs,
+    left: {} as SideRefs,
+    right: {} as SideRefs,
   } as HudRefs;
 
   constructor(
@@ -218,17 +224,24 @@ export class MatchHUD implements GameRenderer {
     this.refs.phase.classList.toggle(styles.phaseUrgent, state.suddenDeath);
   }
 
+  /**
+   * Each box shows the team standing on that half of the board. Teams are
+   * mirrored by POV — yours is always `Team.Player` — but the arena is not, so a
+   * commander seated on the right would otherwise read their own Core off the
+   * box furthest from it.
+   */
   private updateSides(): void {
-    this.updateSide(this.refs.mine, Team.Player, 'Você');
-    this.updateSide(this.refs.theirs, Team.Enemy, 'Adversário');
+    const mineOnLeft = this.deps.getMySide() === 'left';
+    this.updateSide(this.refs.left, mineOnLeft ? Team.Player : Team.Enemy);
+    this.updateSide(this.refs.right, mineOnLeft ? Team.Enemy : Team.Player);
   }
 
-  private updateSide(refs: SideRefs, team: Team, label: string): void {
+  private updateSide(refs: SideRefs, team: Team): void {
     const structures = this.world.structures.filter((s) => s.team === team);
     const core = structures.find((s) => s.kind === 'core');
     const towers = structures.filter((s) => s.kind === 'tower');
 
-    refs.label.textContent = label;
+    refs.label.textContent = team === Team.Player ? 'Você' : 'Adversário';
     refs.label.style.color = teamColor(team);
 
     const fraction = core ? clamp01(core.health / Math.max(1, core.maxHealth)) : 0;

@@ -14,6 +14,9 @@ export interface CameraView {
  * (design §4). The zoom is adjustable with the mouse wheel between the whole
  * arena (min) and a close follow view (max); the view scrolls with the target
  * and is clamped so it never shows beyond the arena edges.
+ *
+ * Since the siege pivot there is no hero to follow in an online match, so the
+ * view is steered by hand instead: {@link panBy} drags it around like a map.
  */
 export class CameraController {
   readonly camera: THREE.OrthographicCamera;
@@ -42,6 +45,16 @@ export class CameraController {
   private halfH = 10;
   private readonly focus = new THREE.Vector3(0, 0, 0);
   private readonly desired = new THREE.Vector3(0, 0, 0);
+  /**
+   * Hand-steered offset from the follow target (gameplay coords). Kept apart
+   * from `focus` so it survives the per-frame lerp in {@link update}, which
+   * would otherwise drag a panned view back to the target every frame.
+   */
+  private readonly panOffset = new THREE.Vector2(0, 0);
+  /** Set by {@link panBy}: the next update lands the view instead of easing to it. */
+  private panSnap = false;
+  /** Gameplay point the current wheel gesture is zooming toward, if any. */
+  private zoomAnchor: { x: number; y: number } | null = null;
 
   constructor() {
     this.camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 400);
@@ -54,6 +67,7 @@ export class CameraController {
     this.aspect = aspect;
     this.focus.set(0, 0, 0);
     this.desired.set(0, 0, 0);
+    this.panOffset.set(0, 0);
     this.applyFrustum();
     this.applyPosition();
   }
@@ -63,10 +77,38 @@ export class CameraController {
     if (this.arena) this.applyFrustum();
   }
 
-  /** Steers zoom from a wheel event (scroll up = zoom in); eased in {@link update}. */
-  zoom(deltaY: number): void {
+  /**
+   * Steers zoom from a wheel event (scroll up = zoom in); eased in {@link update}.
+   *
+   * `anchor` is the gameplay point under the cursor. Given one, the zoom pulls
+   * toward it instead of toward the middle of the screen, which is what makes
+   * zooming feel like a map rather than a slider.
+   */
+  zoom(deltaY: number, anchor: { x: number; y: number } | null = null): void {
     const next = this.zoomTarget + (deltaY < 0 ? this.zoomStep : -this.zoomStep);
     this.zoomTarget = THREE.MathUtils.clamp(next, 0, 1);
+    this.zoomAnchor = anchor;
+  }
+
+  /**
+   * Drags the view by a ground-plane delta, the way you pull a map around.
+   *
+   * Marks the next {@link update} to snap instead of easing: the whole point of
+   * a grab is that the ground tracks the cursor exactly, and `followLerp` would
+   * turn that into elastic. Zoomed all the way out the arena is already on
+   * screen in full, so `clampPan` reduces this to a no-op — panning only means
+   * anything once there is something off screen.
+   */
+  panBy(dx: number, dy: number): void {
+    this.panOffset.set(this.panOffset.x + dx, this.panOffset.y + dy);
+    this.clampPan();
+    this.panSnap = true;
+  }
+
+  /** Recentres the view, discarding a hand-steered pan. */
+  resetPan(): void {
+    this.panOffset.set(0, 0);
+    this.panSnap = true;
   }
 
   /**
@@ -75,25 +117,65 @@ export class CameraController {
    */
   update(target: { x: number; y: number } | null): void {
     this.animateZoom();
-    if (target) {
-      this.desired.set(target.x, 0, target.y);
-    } else {
-      this.desired.set(0, 0, 0);
-    }
+    this.desired.set(
+      (target?.x ?? 0) + this.panOffset.x,
+      0,
+      (target?.y ?? 0) + this.panOffset.y,
+    );
     this.clampToArena(this.desired);
 
-    this.focus.x += (this.desired.x - this.focus.x) * this.followLerp;
-    this.focus.z += (this.desired.z - this.focus.z) * this.followLerp;
+    if (this.panSnap) {
+      this.panSnap = false;
+      this.focus.x = this.desired.x;
+      this.focus.z = this.desired.z;
+    } else {
+      this.focus.x += (this.desired.x - this.focus.x) * this.followLerp;
+      this.focus.z += (this.desired.z - this.focus.z) * this.followLerp;
+    }
     this.applyPosition();
   }
 
   /** Eases the applied zoom toward the wheel target, reframing only on change. */
   private animateZoom(): void {
-    if (this.zoomT === this.zoomTarget) return;
+    if (this.zoomT === this.zoomTarget) {
+      this.zoomAnchor = null;
+      return;
+    }
+
+    const beforeX = this.halfW;
+    const beforeZ = this.halfH / Math.sin(this.tilt);
+
     const diff = this.zoomTarget - this.zoomT;
     this.zoomT =
       Math.abs(diff) < 1e-4 ? this.zoomTarget : this.zoomT + diff * this.zoomLerp;
     this.applyFrustum();
+
+    this.holdAnchorUnderCursor(beforeX, beforeZ);
+    // Zooming out shrinks how far the view may stray; without this the stored
+    // pan would survive at its old size and the next zoom-in would jump.
+    this.clampPan();
+  }
+
+  /**
+   * Shifts the pan so the point the wheel was aimed at keeps the same place on
+   * screen across a zoom step. Applied per frame against the frustum change
+   * that actually happened, rather than once against the target zoom, because
+   * the zoom itself eases in over several frames.
+   */
+  private holdAnchorUnderCursor(beforeHalfX: number, beforeHalfZ: number): void {
+    const anchor = this.zoomAnchor;
+    if (!anchor || beforeHalfX <= 0 || beforeHalfZ <= 0) return;
+
+    const afterHalfX = this.halfW;
+    const afterHalfZ = this.halfH / Math.sin(this.tilt);
+    // Where the anchor sat in the old frustum, as a fraction of it, is where it
+    // has to sit in the new one.
+    const u = (anchor.x - this.focus.x) / beforeHalfX;
+    const v = (anchor.y - this.focus.z) / beforeHalfZ;
+
+    this.panOffset.x += anchor.x - u * afterHalfX - this.focus.x;
+    this.panOffset.y += anchor.y - v * afterHalfZ - this.focus.z;
+    this.panSnap = true;
   }
 
   /** The visible ground rectangle in gameplay coords (for the minimap viewport). */
@@ -143,11 +225,24 @@ export class CameraController {
   private clampToArena(point: THREE.Vector3): void {
     const arena = this.arena;
     if (!arena) return;
-    const halfViewX = this.halfW;
-    const halfViewZ = this.halfH / Math.sin(this.tilt);
-    const limitX = arena.width / 2 - halfViewX;
-    const limitZ = arena.height / 2 - halfViewZ;
+    const limitX = arena.width / 2 - this.halfW;
+    const limitZ = arena.height / 2 - this.halfH / Math.sin(this.tilt);
     point.x = limitX > 0 ? THREE.MathUtils.clamp(point.x, -limitX, limitX) : 0;
     point.z = limitZ > 0 ? THREE.MathUtils.clamp(point.z, -limitZ, limitZ) : 0;
+  }
+
+  /**
+   * Bounds the stored pan by the same arena limits. Clamping the offset itself
+   * rather than only the resulting focus is what keeps a drag from going sticky:
+   * an offset allowed to run past the edge would have to be dragged all the way
+   * back before the view moved again.
+   */
+  private clampPan(): void {
+    const arena = this.arena;
+    if (!arena) return;
+    const limitX = arena.width / 2 - this.halfW;
+    const limitZ = arena.height / 2 - this.halfH / Math.sin(this.tilt);
+    this.panOffset.x = limitX > 0 ? THREE.MathUtils.clamp(this.panOffset.x, -limitX, limitX) : 0;
+    this.panOffset.y = limitZ > 0 ? THREE.MathUtils.clamp(this.panOffset.y, -limitZ, limitZ) : 0;
   }
 }

@@ -59,6 +59,14 @@ export interface MageSnapshotState {
   hasted: boolean;
   /** Slowed by an ice hit or Maldição da Lentidão (GDD §8.3, §9). */
   slowed: boolean;
+  /** Enemy mages this one put down (GDD §4); see `World.kill` for who gets credited. */
+  kills: number;
+  /** Times this mage was put down. A team's kill total is the enemy's sum of these. */
+  deaths: number;
+  /** Seconds until it returns; 0 while alive. The wire omits it when 0. */
+  respawnRemaining: number;
+  /** Post-respawn damage immunity is running. The wire omits it when false. */
+  immune: boolean;
 }
 
 export interface StructureSnapshotState {
@@ -429,6 +437,10 @@ export class Session {
         shielded: m.shieldAmount > 0,
         hasted: m.speedBuffTimer > 0,
         slowed: m.slowTimer > 0,
+        kills: m.kills,
+        deaths: m.deaths,
+        respawnRemaining: m.respawnTimer,
+        immune: m.immunityTimer > 0,
       })),
       projectiles: [...world.projectiles.values()].map((p) => ({
         id: p.id,

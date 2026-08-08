@@ -287,6 +287,8 @@ export class World {
       health: spec.maxHealth,
       maxHealth: spec.maxHealth,
       alive: true,
+      kills: 0,
+      deaths: 0,
       state: 'idle',
       charge: 0,
       charging: false,
@@ -901,7 +903,7 @@ export class World {
     let dir = target.position.sub(p.position);
     if (dir.lengthSq() < 1e-9) dir = p.velocity;
 
-    this.dealDamage(target, p.damage, dir, p.knockback + (def.knockbackBonus ?? 0));
+    this.dealDamage(target, p.damage, dir, p.knockback + (def.knockbackBonus ?? 0), false, p.ownerId);
 
     if (def.slowFactor && def.slowFactor > 0) {
       target.slowFactor = def.slowFactor;
@@ -924,7 +926,7 @@ export class World {
     for (const m of this.mages.values()) {
       if (m === primary || !m.alive || m.team === p.team || m.immunityTimer > 0) continue;
       if (m.position.distanceTo(p.position) <= splashRadius) {
-        this.dealDamage(m, def.damage * 0.5, m.position.sub(p.position), def.knockback * 0.5);
+        this.dealDamage(m, def.damage * 0.5, m.position.sub(p.position), def.knockback * 0.5, false, p.ownerId);
       }
     }
   }
@@ -964,7 +966,9 @@ export class World {
         for (const m of this.mages.values()) {
           if (!m.alive || m.immunityTimer > 0) continue;
           if (m.position.distanceTo(pu.position) <= pu.radius + MAGE_RADIUS) {
-            this.dealDamage(m, pu.tickDamage, Vec2.zero, 0, pu.bypassShield === true);
+            // `ownerId` is a mage for a poison flask and the literal 'spell' for
+            // a Praga zone; `kill` sorts out which of those can score.
+            this.dealDamage(m, pu.tickDamage, Vec2.zero, 0, pu.bypassShield === true, pu.ownerId);
           }
         }
       }
@@ -977,8 +981,20 @@ export class World {
    * The single seam every damage source (projectiles, puddles) funnels
    * through, so death/respawn stay consistent everywhere. `bypassShield` is
    * for Praga's tick (GDD §9): it ignores Escudo Arcano by design.
+   *
+   * `attackerId` is an optional trailing parameter rather than the options
+   * object it wants to be, purely so the existing positional callers keep
+   * compiling. Pass the id of whatever caused the damage; `kill` decides on its
+   * own whether that earns a kill.
    */
-  dealDamage(m: Mage, amount: number, knockDir: Vec2, knockMag: number, bypassShield = false): void {
+  dealDamage(
+    m: Mage,
+    amount: number,
+    knockDir: Vec2,
+    knockMag: number,
+    bypassShield = false,
+    attackerId: string | null = null,
+  ): void {
     if (!m.alive || m.immunityTimer > 0) return;
 
     let remaining = amount;
@@ -999,10 +1015,23 @@ export class World {
     }
     m.stunTimer = HIT_STUN;
 
-    if (m.health <= 0) this.kill(m);
+    if (m.health <= 0) this.kill(m, attackerId);
   }
 
-  private kill(m: Mage): void {
+  /**
+   * Credit is deliberately narrow. `attackerId` is whatever owned the damage,
+   * which is not always a mage: a Tower bolt carries the structure's id, and a
+   * Praga zone carries the literal `'spell'` — neither is in `mages`, so both
+   * fall through the lookup and score nothing. Poison puddles hurt both teams by
+   * design (GDD §8.5), so the team check is what stops an Alquimista scoring on
+   * his own squad. The victim always takes the death either way.
+   */
+  private kill(m: Mage, attackerId: string | null = null): void {
+    m.deaths++;
+
+    const killer = attackerId === null ? undefined : this.mages.get(attackerId);
+    if (killer && killer !== m && killer.team !== m.team) killer.kills++;
+
     m.health = 0;
     m.alive = false;
     m.charging = false;
@@ -1015,6 +1044,11 @@ export class World {
     m.respawnTimer = RESPAWN_DELAY;
   }
 
+  /**
+   * Note what is *not* reset here: `kills` and `deaths` are a match-long record,
+   * not per-life state. Everything around them is cleared, which makes this the
+   * one place someone would zero them by reflex.
+   */
   private respawn(m: Mage): void {
     m.position = this.freeSpawnFor(m.team);
     m.velocity = Vec2.zero;

@@ -1,0 +1,256 @@
+/*
+ * Docked squad dashboards, one per side, sitting below MatchHUD's `.top` bar.
+ * Same frosted language as MatchHUD.module.css so the two read as one HUD.
+ */
+
+.panel {
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.82);
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 16px;
+  box-shadow: 0 6px 16px rgba(28, 50, 74, 0.18);
+  color: #263343;
+  display: flex;
+  flex-direction: column;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  gap: 6px;
+  padding: 8px;
+  position: absolute;
+  top: 92px;
+  width: 210px;
+}
+
+.left {
+  left: 12px;
+}
+
+.right {
+  right: 12px;
+}
+
+/* The header stays readable when the body is folded away — that is the point. */
+.header {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+  width: 100%;
+}
+
+.headerLabel {
+  flex: 1 1 auto;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headerKills {
+  background: rgba(37, 56, 76, 0.12);
+  border-radius: 999px;
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 900;
+  padding: 2px 8px;
+}
+
+.chevron {
+  color: #5b6b7e;
+  flex: 0 0 auto;
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* The whole header is the collapse control. */
+.toggle {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 6px;
+  padding: 0;
+  width: 100%;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.collapsed .body {
+  display: none;
+}
+
+.row {
+  background: rgba(37, 56, 76, 0.06);
+  border: 2px solid transparent;
+  border-radius: 11px;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  gap: 3px;
+  padding: 5px 7px;
+  pointer-events: auto;
+  text-align: left;
+  transition: background-color 120ms linear;
+  width: 100%;
+}
+
+.row:hover {
+  background: rgba(37, 56, 76, 0.13);
+}
+
+.rowActive {
+  background: rgba(255, 226, 106, 0.4);
+  border-color: rgba(214, 168, 24, 0.85);
+}
+
+/* Down but not out: squads are permanent, so a dead mage keeps its row. */
+.rowDead {
+  opacity: 0.55;
+}
+
+/*
+ * While a card is armed the panel must not eat the click — the arena underneath
+ * is where the spell goes, and the panels cover the lanes the Towers sit in.
+ */
+.armed .row,
+.armed .toggle {
+  pointer-events: none;
+}
+
+.rowTop {
+  align-items: baseline;
+  display: flex;
+  gap: 5px;
+  width: 100%;
+}
+
+.name {
+  flex: 1 1 auto;
+  font-size: 12px;
+  font-weight: 900;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role {
+  color: #5b6b7e;
+  flex: 0 0 auto;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.kd {
+  color: #40506a;
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Both are spans, not divs: a row is a <button>, whose content model is phrasing
+ * content. That makes `display: block` load-bearing here rather than cosmetic —
+ * an inline fill ignores width and height entirely and the bar renders empty.
+ */
+.healthMeter {
+  background: rgba(37, 56, 76, 0.18);
+  border-radius: 999px;
+  display: block;
+  height: 9px;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+}
+
+.healthFill {
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  transition: width 120ms linear;
+  width: 0;
+}
+
+.rowBottom {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 13px;
+  width: 100%;
+}
+
+.healthText {
+  color: #40506a;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  margin-right: auto;
+}
+
+.respawn {
+  color: #a2493c;
+  font-size: 10px;
+  font-weight: 900;
+  margin-right: auto;
+}
+
+.respawn[hidden],
+.chip[hidden] {
+  display: none;
+}
+
+/* Chip colours match the ground rings in PlayerRenderer, so panel and arena agree. */
+.chip {
+  border-radius: 999px;
+  color: #1b2a3a;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  text-transform: uppercase;
+}
+
+.chipShield {
+  background: rgba(125, 211, 252, 0.85);
+}
+
+.chipHaste {
+  background: rgba(255, 209, 102, 0.9);
+}
+
+.chipSlow {
+  background: rgba(142, 202, 230, 0.9);
+}
+
+.chipImmune {
+  background: rgba(210, 216, 226, 0.95);
+}
+
+@media (max-width: 620px) {
+  .panel {
+    gap: 4px;
+    padding: 6px;
+    top: 78px;
+    width: 150px;
+  }
+
+  .role,
+  .healthText {
+    display: none;
+  }
+}
