@@ -43,6 +43,51 @@ export const DECISION_INTERVAL = 0.25;
 /** config.ts AI.retreatHealthFraction */
 export const RETREAT_HEALTH_FRACTION = 0.3;
 
+/**
+ * Under this range a bot stops circling cleanly and leans outward as it goes:
+ * a target in its face is one it cannot throw at comfortably.
+ */
+export const ORBIT_MIN_RANGE = MIN_THROW_RANGE * 1.4;
+
+/** How far ahead steering probes for something solid. */
+const AVOID_LOOKAHEAD = 2.2;
+/** Probes taken along a candidate heading; three is enough at this look-ahead. */
+const AVOID_SAMPLES = 3;
+/** Radius scale used when probing, so a bot rounds a corner wide of it. */
+const AVOID_MARGIN = 1.25;
+/** The shorter look-ahead a sidestep needs — strafing covers far less ground. */
+const ORBIT_LOOKAHEAD = 1.2;
+/**
+ * Deviations from the straight line, tried smallest first, when the direct
+ * route to a destination is closed.
+ */
+const AVOID_ANGLES = [
+  Math.PI / 8,
+  Math.PI / 4,
+  (3 * Math.PI) / 8,
+  Math.PI / 2,
+  (5 * Math.PI) / 8,
+  (3 * Math.PI) / 4,
+];
+
+/** How far ahead another mage counts as standing in the way. */
+const CROWD_LOOKAHEAD = SPACING * 1.6;
+/** How hard a heading leans sideways to pass one. */
+const CROWD_SIDESTEP = 0.9;
+
+/** Below this fraction of its top speed, a bot that asked to move is not moving. */
+const STUCK_SPEED_FRACTION = 0.3;
+/** Seconds of that before a bot abandons its plan and digs itself out. */
+const STUCK_TRIGGER = 0.4;
+/** Seconds an escape move is committed to, so it actually clears the blocker. */
+const UNSTICK_DURATION = 0.65;
+/** How far an escape heading is checked for room. */
+const ESCAPE_REACH = 3.0;
+/** Headings sampled around the bot when looking for a way out. */
+const ESCAPE_DIRECTIONS = 12;
+/** Radius scale used to feel for geometry pressed against a stuck bot. */
+const ESCAPE_PROBE = 2.4;
+
 const EPSILON = 1e-9;
 
 /**
@@ -113,6 +158,20 @@ interface BotState {
    * every tick (the client holds a dodge move target the same way).
    */
   dodgeDir: Vec2;
+  /**
+   * ±1: the side this bot circles a target on and rounds obstacles on. Kept on
+   * the bot rather than recomputed, because a heading that flips every tick
+   * averages out to standing still — which is how a squad ends up grinding
+   * against the same rock forever.
+   */
+  side: number;
+  /** Seconds spent asking to move without actually going anywhere. */
+  stuckTimer: number;
+  /** While positive the bot runs `escapeDir` instead of its decision. */
+  escapeTimer: number;
+  escapeDir: Vec2;
+  /** Position at the previous tick — how actual progress gets measured. */
+  lastPos: Vec2 | null;
 }
 
 interface Perception {
@@ -154,6 +213,13 @@ export class Brain {
         dodgeTimer: 0,
         last: { action: 'wander', targetId: '' },
         dodgeDir: Vec2.zero,
+        // Seeded from the id so two bots on the same target circle it in
+        // opposite directions instead of both crowding the same arc.
+        side: idSign(id),
+        stuckTimer: 0,
+        escapeTimer: 0,
+        escapeDir: Vec2.zero,
+        lastPos: null,
       };
       this.states.set(id, s);
     }
@@ -171,9 +237,14 @@ export class Brain {
   }
 
   /**
-   * Computes the next input for one bot, mirroring AISystem.update's order:
-   * reactive dodge first, then a utility decision refreshed on an interval,
-   * then execution of that decision.
+   * Computes the next input for one bot: a utility decision refreshed on an
+   * interval, executed into a movement direction and an aim point.
+   *
+   * Movement and aiming are two independent channels, exactly as they are for a
+   * human player (GDD §1). Aiming never zeroes the move vector and dodging
+   * never drops a charge, so a mage walks and throws at the same time — the
+   * original game's whole feel, and the reason the squads no longer freeze in
+   * place mid-duel.
    */
   private decide(
     w: World,
@@ -184,17 +255,12 @@ export class Brain {
   ): MageInput {
     const tune = roleTuning(bot, tuningFor(difficulty));
     const st = this.state(bot.id);
+    this.trackProgress(w, bot, st, dt);
 
     // A charge already in flight is finished or released independently of the
     // movement decision below — the two are separate in the client too.
     const charging = bot.charging;
     const input: MageInput = charging ? this.continueOrReleaseCharge(w, bot, tune) : emptyInput();
-
-    const dodge = this.reactiveDodge(w, bot, tune, dt, st);
-    if (dodge) {
-      input.move = dodge;
-      return input;
-    }
 
     const p = this.perceive(w, bot, focus);
 
@@ -204,8 +270,13 @@ export class Brain {
       st.decisionTimer = DECISION_INTERVAL * tune.decisionIntervalScale;
     }
 
-    const { move, aim } = this.execute(w, bot, st.last, p, tune);
-    input.move = move;
+    const { move, aim } = this.execute(w, bot, st.last, p, tune, st);
+    const dodge = this.reactiveDodge(w, bot, tune, dt, st);
+
+    // Being wedged in the scenery is the one thing that overrides the plan:
+    // nothing tactical matters until the bot is free again.
+    input.move = st.escapeTimer > 0 ? st.escapeDir : (dodge ?? move);
+
     if (!charging && aim) {
       input.aim = aim;
       input.charging = true;
@@ -409,9 +480,10 @@ export class Brain {
     d: Decision,
     p: Perception,
     tune: Tuning,
+    st: BotState,
   ): { move: Vec2; aim: Vec2 | null } {
     if (d.action === 'siege' && p.objective) {
-      return this.siege(w, bot, p.objective, p.objectiveDistance);
+      return this.siege(w, bot, p.objective, p.objectiveDistance, st);
     }
 
     let target = p.target;
@@ -421,36 +493,43 @@ export class Brain {
     }
     if (!target) {
       // Nothing left to fight here — push the objective instead of drifting.
-      if (p.objective) return this.siege(w, bot, p.objective, p.objectiveDistance);
-      return { move: this.wander(w, bot), aim: null };
+      if (p.objective) return this.siege(w, bot, p.objective, p.objectiveDistance, st);
+      return { move: this.wander(w, bot, st), aim: null };
     }
 
     switch (d.action) {
       case 'retreat':
-        return { move: this.retreat(w, bot, target), aim: null };
+        return { move: this.retreat(w, bot, target, st), aim: null };
 
       case 'takeCover': {
         const distance = bot.position.distanceTo(target.position);
         if (bot.throwCooldown <= 0 && distance <= ENGAGE_RANGE) {
           if (w.arena.hasLineOfSight(bot.position, target.position)) {
-            return { move: Vec2.zero, aim: this.attackAim(target, distance, tune) };
+            // Leaning out of cover to shoot is a move, not a halt.
+            return {
+              move: this.orbit(w, bot, target.position, distance, st),
+              aim: this.attackAim(target, distance, tune),
+            };
           }
           const peek = this.findPeekSpot(w, bot, target);
-          if (peek) return { move: dirTo(bot.position, peek), aim: null };
+          if (peek) return { move: this.steerTo(w, bot, peek, st), aim: null };
         }
         const cover = this.findCoverSpot(w, bot, target);
-        if (cover) return { move: dirTo(bot.position, cover), aim: null };
-        return { move: strafe(bot, target), aim: null };
+        if (cover) return { move: this.steerTo(w, bot, cover, st), aim: null };
+        return { move: this.orbit(w, bot, target.position, distance, st), aim: null };
       }
 
       case 'attack':
-        return { move: Vec2.zero, aim: this.attackAim(target, p.distance, tune) };
+        return {
+          move: this.orbit(w, bot, target.position, p.distance, st),
+          aim: this.attackAim(target, p.distance, tune),
+        };
 
       case 'advance':
-        return { move: this.advance(w, bot, target), aim: null };
+        return { move: this.advance(w, bot, target, st), aim: null };
 
       default:
-        return { move: this.wander(w, bot), aim: null };
+        return { move: this.wander(w, bot, st), aim: null };
     }
   }
 
@@ -464,16 +543,19 @@ export class Brain {
     bot: Mage,
     objective: Structure,
     distance: number,
+    st: BotState,
   ): { move: Vec2; aim: Vec2 | null } {
     const role = ROLE_BEHAVIOR[bot.role];
-    if (!role.attacks) return { move: this.escort(w, bot), aim: null };
+    if (!role.attacks) return { move: this.escort(w, bot, st), aim: null };
 
     if (
       distance <= ENGAGE_RANGE &&
       bot.throwCooldown <= 0 &&
       w.arena.hasLineOfSight(bot.position, objective.position)
     ) {
-      return { move: Vec2.zero, aim: objective.position };
+      // Circling the Tower while hitting it, rather than parking in front of
+      // it: a Tower shoots back, and a stationary target is a free kill.
+      return { move: this.orbit(w, bot, objective.position, distance, st), aim: objective.position };
     }
 
     const toward = dirTo(bot.position, objective.position);
@@ -481,18 +563,26 @@ export class Brain {
 
     const step = Math.min(MOVE_STEP, Math.max(0.5, distance - role.advanceStopDistance));
     const dest = bot.position.add(toward.scale(step)).add(allySeparation(w, bot));
-    return { move: this.steerTo(w, bot, dest), aim: null };
+    return { move: this.steerTo(w, bot, dest, st), aim: null };
   }
 
   /** Supports have no attack, so they trail the ally pushing hardest (GDD §8). */
-  private escort(w: World, bot: Mage): Vec2 {
+  private escort(w: World, bot: Mage, st: BotState): Vec2 {
     const ally = mostAdvancedAlly(w, bot);
-    if (!ally) return this.wander(w, bot);
+    if (!ally) return this.wander(w, bot, st);
 
     const gap = bot.position.distanceTo(ally.position);
     const keep = ROLE_BEHAVIOR[bot.role].advanceStopDistance;
-    if (gap <= keep) return allySeparation(w, bot);
-    return this.steerTo(w, bot, ally.position);
+    if (gap > keep) return this.steerTo(w, bot, ally.position, st);
+
+    // Already in position: give ground to whoever is crowding — the enemy's
+    // support included, since two of them converging on the same ally ended in
+    // a shoving match that neither could walk out of. An empty move when there
+    // is nothing to give ground to, rather than a near-zero one, so the stuck
+    // detector doesn't read "standing where I want to stand" as being wedged.
+    const spread = crowdSeparation(w, bot);
+    if (spread.lengthSq() <= EPSILON) return Vec2.zero;
+    return this.steerTo(w, bot, bot.position.add(spread), st);
   }
 
   /* ---- actions ---------------------------------------------------------- */
@@ -541,18 +631,42 @@ export class Brain {
     return { move: Vec2.zero, aim, charging: !releasing, release: releasing };
   }
 
-  private retreat(w: World, bot: Mage, target: Mage): Vec2 {
+  /**
+   * The combat step: circle the target while shooting at it, instead of rooting
+   * in place to aim. Deliberately lateral — holding a range band is `advance`'s
+   * job on the ticks between shots, and pulling back here would turn every
+   * trade into a retreat. Only a target too close to throw at pushes the bot
+   * outward as it circles.
+   */
+  private orbit(w: World, bot: Mage, at: Vec2, distance: number, st: BotState): Vec2 {
+    const dir = at.sub(bot.position).normalized();
+    if (dir.lengthSq() === 0) return Vec2.zero;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let move = new Vec2(-dir.y, dir.x).scale(st.side);
+      if (distance < ORBIT_MIN_RANGE) move = move.sub(dir).normalized();
+      if (this.clearanceAhead(w, bot, move, ORBIT_LOOKAHEAD, 1) >= ORBIT_LOOKAHEAD) return move;
+      // Circling into the scenery is what used to grind a bot against a wall;
+      // when that arc is closed, go round the other way.
+      st.side = -st.side;
+    }
+
+    // Boxed in on both sides — give ground rather than lean on the obstacle.
+    return this.steerTo(w, bot, bot.position.sub(dir.scale(RETREAT_DISTANCE)), st);
+  }
+
+  private retreat(w: World, bot: Mage, target: Mage, st: BotState): Vec2 {
     const cover = this.findCoverSpot(w, bot, target);
-    if (cover) return dirTo(bot.position, cover);
+    if (cover) return this.steerTo(w, bot, cover, st);
 
     let away = bot.position.sub(target.position).normalized();
     if (away.lengthSq() === 0) away = new Vec2(1, 0);
-    return this.steerTo(w, bot, bot.position.add(away.scale(RETREAT_DISTANCE)));
+    return this.steerTo(w, bot, bot.position.add(away.scale(RETREAT_DISTANCE)), st);
   }
 
-  private advance(w: World, bot: Mage, target: Mage): Vec2 {
+  private advance(w: World, bot: Mage, target: Mage, st: BotState): Vec2 {
     const toTarget = target.position.sub(bot.position).normalized();
-    if (toTarget.lengthSq() === 0) return this.wander(w, bot);
+    if (toTarget.lengthSq() === 0) return this.wander(w, bot, st);
 
     // Close the gap but stop short, so the bot fights at range rather than
     // walking into its target's face. How short is the role's business: a tank
@@ -565,36 +679,180 @@ export class Brain {
     if (step <= 0) step = MOVE_STEP * 0.5;
 
     const dest = bot.position.add(toTarget.scale(step)).add(allySeparation(w, bot));
-    return this.steerTo(w, bot, dest);
+    return this.steerTo(w, bot, dest, st);
   }
 
-  private wander(w: World, bot: Mage): Vec2 {
+  private wander(w: World, bot: Mage, st: BotState): Vec2 {
     // Drift toward the middle of the arena when idle, with a random bias, so
     // bots without a target don't hug a wall.
-    if (bot.position.length() > SPACING) return this.steerTo(w, bot, Vec2.zero);
+    if (bot.position.length() > SPACING) return this.steerTo(w, bot, Vec2.zero, st);
     const angle = this.rng.float() * 2 * Math.PI;
     return new Vec2(Math.cos(angle), Math.sin(angle));
   }
 
+  /* ---- steering --------------------------------------------------------- */
+
   /**
-   * A unit direction toward `dest`, nudged sideways when the straight line is
-   * blocked. The server has no path planner (the client's MovementSystem does),
-   * so this keeps bots from grinding into obstacles.
+   * A unit direction toward `dest` that stays clear of solid geometry: the
+   * straight line when it is open, otherwise the smallest deviation that is.
+   * The server has no path planner (the client's MovementSystem does), so this
+   * look-ahead sweep is what keeps a squad off the scenery.
+   *
+   * Ties go to the side the bot is already committed to (`st.side`). Without
+   * that hysteresis a bot alternates left and right around the same rock every
+   * tick, which averages out to walking straight into it.
    */
-  private steerTo(w: World, bot: Mage, dest: Vec2): Vec2 {
+  private steerTo(w: World, bot: Mage, dest: Vec2, st: BotState): Vec2 {
     const dir = dirTo(bot.position, dest);
     if (dir.lengthSq() === 0) return Vec2.zero;
 
-    const probe = bot.position.add(dir.scale(MAGE_RADIUS * 2));
-    if (!w.arena.blocksMovementAt(probe, MAGE_RADIUS)) return dir;
+    const reach = Math.min(
+      AVOID_LOOKAHEAD,
+      Math.max(MAGE_RADIUS * 2, bot.position.distanceTo(dest)),
+    );
+    if (this.clearanceAhead(w, bot, dir, reach) >= reach) {
+      return this.avoidCrowd(w, bot, dir, st);
+    }
 
-    for (const angle of [Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2]) {
-      const alt = dir.rotate(angle);
-      if (!w.arena.blocksMovementAt(bot.position.add(alt.scale(MAGE_RADIUS * 2)), MAGE_RADIUS)) {
-        return alt;
+    let best = dir;
+    let bestClearance = -1;
+    for (const angle of AVOID_ANGLES) {
+      for (const sign of [st.side, -st.side]) {
+        const alt = dir.rotate(angle * sign);
+        const clearance = this.clearanceAhead(w, bot, alt, reach);
+        if (clearance >= reach) {
+          st.side = sign;
+          return this.avoidCrowd(w, bot, alt, st);
+        }
+        if (clearance > bestClearance) {
+          bestClearance = clearance;
+          best = alt;
+        }
       }
     }
-    return dir;
+    // Every heading is closed — the stuck detector takes it from here.
+    return best;
+  }
+
+  /**
+   * Slides a heading around a mage standing directly in the way.
+   *
+   * Mages are not solid — the sim pushes overlapping ones apart instead of
+   * blocking them — but two walking head-on still jam against each other for
+   * seconds at a time, which on screen is indistinguishable from being stuck on
+   * scenery. Passing on a consistent side is what unjams them.
+   */
+  private avoidCrowd(w: World, bot: Mage, dir: Vec2, st: BotState): Vec2 {
+    let blocker: Mage | null = null;
+    let blockerAlong = Infinity;
+
+    for (const id of sortedMageIds(w)) {
+      const other = w.mage(id);
+      if (!other || other.id === bot.id || !other.alive) continue;
+
+      const delta = other.position.sub(bot.position);
+      const along = delta.dot(dir);
+      if (along <= 0 || along > CROWD_LOOKAHEAD || along >= blockerAlong) continue;
+      if (Math.abs(delta.x * -dir.y + delta.y * dir.x) > SPACING) continue;
+
+      blockerAlong = along;
+      blocker = other;
+    }
+    if (!blocker) return dir;
+
+    const side = new Vec2(-dir.y, dir.x).scale(st.side);
+    return dir.add(side.scale(CROWD_SIDESTEP)).normalized();
+  }
+
+  /**
+   * How far the bot can walk along `dir` before hitting something solid, capped
+   * at `reach`. `margin` scales the radius it demands: steering asks for extra
+   * so it rounds corners wide, while a bot digging itself out asks for none.
+   */
+  private clearanceAhead(
+    w: World,
+    bot: Mage,
+    dir: Vec2,
+    reach: number,
+    margin = AVOID_MARGIN,
+  ): number {
+    const step = reach / AVOID_SAMPLES;
+    for (let i = 1; i <= AVOID_SAMPLES; i++) {
+      const t = step * i;
+      const point = bot.position.add(dir.scale(t));
+      // The arena edge counts: a heading that leaves the map is no more open
+      // than one into a rock, and a bot cornered against a wall that ignored it
+      // would keep choosing to walk out of bounds.
+      if (!w.arena.contains(point, MAGE_RADIUS) || w.blockedAt(point, MAGE_RADIUS * margin)) {
+        return t - step;
+      }
+    }
+    return reach;
+  }
+
+  /* ---- getting unstuck --------------------------------------------------- */
+
+  /**
+   * Watches whether a bot actually goes where it asked to go.
+   *
+   * Steering can always be fooled — a dead end, the corner between two
+   * blockers, a Tower coming up under its feet — so rather than chase a perfect
+   * planner, a bot that has been pushing into something for STUCK_TRIGGER
+   * seconds drops its plan and walks itself out. This is the backstop behind
+   * every other movement rule here.
+   */
+  private trackProgress(w: World, bot: Mage, st: BotState, dt: number): void {
+    if (st.escapeTimer > 0) st.escapeTimer = Math.max(0, st.escapeTimer - dt);
+
+    const previous = st.lastPos;
+    st.lastPos = bot.position;
+    if (!previous) return;
+
+    const asked = bot.input.move.lengthSq() > 0.04;
+    const progress = bot.position.distanceTo(previous);
+    // Stun means knockback owns the mage's position; that is not being stuck.
+    if (asked && bot.stunTimer <= 0 && progress < bot.moveSpeed * dt * STUCK_SPEED_FRACTION) {
+      st.stuckTimer += dt;
+    } else {
+      st.stuckTimer = Math.max(0, st.stuckTimer - dt * 2);
+    }
+
+    if (st.stuckTimer < STUCK_TRIGGER || st.escapeTimer > 0) return;
+
+    st.stuckTimer = 0;
+    st.escapeTimer = UNSTICK_DURATION;
+    st.escapeDir = this.escapeDirection(w, bot);
+    // Whichever way it was rounding the obstacle plainly did not work.
+    st.side = -st.side;
+  }
+
+  /**
+   * The way out for a bot that has stopped making progress: away from whatever
+   * is pressed against it, or failing that whichever heading has the most room.
+   * Deliberately blind to the tactical picture — being free matters more than
+   * being well placed, and the next decision will sort the placement out.
+   */
+  private escapeDirection(w: World, bot: Mage): Vec2 {
+    const clear = w.arena
+      .pushOutOfObstacles(bot.position, MAGE_RADIUS * ESCAPE_PROBE)
+      .add(w.pushOutOfStructures(bot.position, MAGE_RADIUS * ESCAPE_PROBE));
+
+    let best = clear.lengthSq() > EPSILON ? clear.normalized() : bot.facing.normalized();
+    if (best.lengthSq() === 0) best = new Vec2(1, 0);
+
+    let bestClearance = this.clearanceAhead(w, bot, best, ESCAPE_REACH, 1);
+    if (bestClearance >= ESCAPE_REACH) return best;
+
+    const base = best;
+    for (let i = 1; i < ESCAPE_DIRECTIONS; i++) {
+      const candidate = base.rotate((2 * Math.PI * i) / ESCAPE_DIRECTIONS);
+      const clearance = this.clearanceAhead(w, bot, candidate, ESCAPE_REACH, 1);
+      if (clearance > bestClearance) {
+        bestClearance = clearance;
+        best = candidate;
+      }
+    }
+    return best;
   }
 
   /* ---- cover ------------------------------------------------------------ */
@@ -617,9 +875,7 @@ export class Brain {
       const offset = Math.max(o.radius, o.halfW, o.halfH) + MAGE_RADIUS + 0.25;
       const spot = o.position.add(away.scale(offset));
 
-      if (!w.arena.contains(spot, MAGE_RADIUS) || w.arena.blocksMovementAt(spot, MAGE_RADIUS)) {
-        continue;
-      }
+      if (!w.arena.contains(spot, MAGE_RADIUS) || w.blockedAt(spot)) continue;
       if (w.arena.hasLineOfSight(threat.position, spot)) continue;
 
       const d = bot.position.distanceTo(spot);
@@ -641,9 +897,7 @@ export class Brain {
 
     for (let step = 0.75; step <= 2.25; step += 0.75) {
       const spot = bot.position.add(dir.scale(step));
-      if (!w.arena.contains(spot, MAGE_RADIUS) || w.arena.blocksMovementAt(spot, MAGE_RADIUS)) {
-        continue;
-      }
+      if (!w.arena.contains(spot, MAGE_RADIUS) || w.blockedAt(spot)) continue;
       if (w.arena.hasLineOfSight(spot, target.position)) return spot;
     }
     return null;
@@ -729,8 +983,7 @@ function mostAdvancedAlly(w: World, bot: Mage): Mage | null {
 
 function scoreDodgeSide(w: World, bot: Mage, threat: Mage | null, side: Vec2): number {
   const dest = bot.position.add(side.scale(DODGE_DISTANCE));
-  let score =
-    !w.arena.contains(dest, MAGE_RADIUS) || w.arena.blocksMovementAt(dest, MAGE_RADIUS) ? -10 : 10;
+  let score = !w.arena.contains(dest, MAGE_RADIUS) || w.blockedAt(dest) ? -10 : 10;
   if (threat) score += dest.distanceTo(threat.position);
   return score;
 }
@@ -763,12 +1016,22 @@ function findIncomingThreat(w: World, bot: Mage): Projectile | null {
  * instead of stacking (AISystem.computeAllySeparation).
  */
 function allySeparation(w: World, bot: Mage): Vec2 {
+  return separation(w, bot, true);
+}
+
+/** {@link allySeparation} counting every mage nearby, not only teammates. */
+function crowdSeparation(w: World, bot: Mage): Vec2 {
+  return separation(w, bot, false);
+}
+
+function separation(w: World, bot: Mage, sameTeamOnly: boolean): Vec2 {
   let out = Vec2.zero;
   const spacing = SPACING * 2;
 
   for (const id of sortedMageIds(w)) {
     const ally = w.mage(id);
-    if (!ally || ally.id === bot.id || ally.team !== bot.team || !ally.alive) continue;
+    if (!ally || ally.id === bot.id || !ally.alive) continue;
+    if (sameTeamOnly && ally.team !== bot.team) continue;
 
     const delta = bot.position.sub(ally.position);
     const distSq = delta.lengthSq();
@@ -779,13 +1042,6 @@ function allySeparation(w: World, bot: Mage): Vec2 {
     out = out.add(delta.scale(1 / dist).scale(strength * SPACING));
   }
   return out;
-}
-
-function strafe(bot: Mage, target: Mage): Vec2 {
-  const away = bot.position.sub(target.position);
-  const l = away.length();
-  const side = l > EPSILON ? new Vec2(-away.y / l, away.x / l) : new Vec2(0, 1);
-  return side.scale(idSign(bot.id));
 }
 
 function nearestEnemy(w: World, bot: Mage): Mage | null {
@@ -814,8 +1070,8 @@ function dirTo(from: Vec2, to: Vec2): Vec2 {
 }
 
 /**
- * A stable ±1 derived from a mage id (FNV-1a) so a strafe keeps circling the
- * same way instead of flip-flopping every tick.
+ * A stable ±1 derived from a mage id (FNV-1a). Seeds each bot's circling side,
+ * so two bots on one target split the arc instead of crowding it.
  */
 function idSign(id: string): number {
   let h = 2166136261;

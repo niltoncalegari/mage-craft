@@ -14,7 +14,7 @@ import { EventBus } from '../core/EventBus';
 import { createEmptyArena } from '../game/Arena';
 import { Team } from '../game/types';
 import { World } from '../game/World';
-import type { ProjectileSnapshotDTO, SnapshotMsg, StructureSnapshotDTO } from './protocol';
+import type { MageSnapshotDTO, ProjectileSnapshotDTO, SnapshotMsg, StructureSnapshotDTO } from './protocol';
 import { SnapshotSync } from './SnapshotSync';
 
 const TEAM_A = 0;
@@ -61,6 +61,25 @@ function projectile(over: Partial<ProjectileSnapshotDTO> = {}): ProjectileSnapsh
     velocity: { x: 10, y: 0 },
     height: 1.4,
     radius: 0.22,
+    ...over,
+  };
+}
+
+function mage(over: Partial<MageSnapshotDTO> = {}): MageSnapshotDTO {
+  return {
+    id: 'mage-1',
+    team: TEAM_A,
+    position: { x: 0, y: 0 },
+    facing: { x: 1, y: 0 },
+    health: 100,
+    maxHealth: 100,
+    charging: false,
+    charge: 0,
+    element: 'fire',
+    role: 'damage',
+    shielded: false,
+    hasted: false,
+    slowed: false,
     ...over,
   };
 }
@@ -176,6 +195,41 @@ describe('SnapshotSync — spell casts', () => {
     sync.applySnapshot(snapshot({ tick: 9, spells: [cast] }));
 
     expect(fired).toBe(2);
+  });
+});
+
+describe('SnapshotSync — mage respawn', () => {
+  it('snaps a respawned mage to the spawn pad instead of easing the corpse across the arena', () => {
+    const { sync, world, events } = makeSync(TEAM_A);
+    const respawns: { x: number; y: number }[] = [];
+    events.on('PlayerRespawned', (e) => respawns.push({ x: e.x, y: e.y }));
+
+    sync.applySnapshot(snapshot({ mages: [mage({ position: { x: 4, y: -2 }, health: 100 })] }));
+    sync.applySnapshot(
+      snapshot({ tick: 6, mages: [mage({ position: { x: 4, y: -2 }, health: 0 })] }),
+    );
+    // Leave the corpse where it fell for a few frames of smoothing, then
+    // teleport via respawn — the render pose must jump, not lerp.
+    sync.tick(0.05);
+    sync.applySnapshot(
+      snapshot({
+        tick: 12,
+        mages: [mage({ position: { x: -16, y: 1 }, health: 100, facing: { x: 0, y: 1 } })],
+      }),
+    );
+
+    const player = world.players[0];
+    expect(player.alive).toBe(true);
+    expect(player.position.x).toBeCloseTo(-16);
+    expect(player.position.y).toBeCloseTo(1);
+    expect(player.velocity.x).toBe(0);
+    expect(player.velocity.y).toBe(0);
+    expect(respawns).toEqual([{ x: -16, y: 1 }]);
+
+    // Further smoothing must not pull the mage back toward the death spot.
+    sync.tick(0.1);
+    expect(player.position.x).toBeCloseTo(-16);
+    expect(player.position.y).toBeCloseTo(1);
   });
 });
 

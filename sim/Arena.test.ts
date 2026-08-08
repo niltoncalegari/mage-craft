@@ -207,4 +207,45 @@ describe('World — obstacle collision', () => {
 
     expect(m.position.y).toBeGreaterThan(0.5);
   });
+
+  /*
+   * Movement never walks into a blocker, but knockback, mage separation and
+   * spawning can all leave a mage overlapping one — and from in there every
+   * step is blocked too, so without this it stands inside the rock for the rest
+   * of the match.
+   */
+  it('pushes a mage that ends up inside an obstacle back out of it', () => {
+    const w = new World(wall());
+    const m = w.addMage('p1', TEAM_A, 'fire', false);
+    m.position = new Vec2(2, 0); // dead centre of the wall
+
+    w.step(SIM_DT);
+
+    expect(w.blockedAt(m.position)).toBe(false);
+  });
+
+  it('lets a freed mage walk away instead of staying wedged', () => {
+    const w = new World(wall());
+    const m = w.addMage('p1', TEAM_A, 'fire', false);
+    m.position = new Vec2(2, 0);
+
+    w.setInput('p1', { ...emptyInput(), move: new Vec2(-1, 0) });
+    for (let i = 0; i < 60; i++) w.step(SIM_DT);
+
+    expect(m.position.x).toBeLessThan(0);
+  });
+
+  it('never separates two mages into an obstacle', () => {
+    const w = new World(wall());
+    const a = w.addMage('p1', TEAM_A, 'fire', false);
+    const b = w.addMage('p2', TEAM_A, 'fire', false);
+    // Stacked just clear of the wall: the separation push is straight at it.
+    a.position = new Vec2(2 - 0.6 - MAGE_RADIUS - 0.05, 0);
+    b.position = new Vec2(a.position.x - 0.05, 0);
+
+    for (let i = 0; i < 30; i++) w.step(SIM_DT);
+
+    expect(w.blockedAt(a.position)).toBe(false);
+    expect(w.blockedAt(b.position)).toBe(false);
+  });
 });

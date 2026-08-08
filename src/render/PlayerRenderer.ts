@@ -6,6 +6,15 @@ import { PlayerState, type Player } from '../game/types';
 import type { World } from '../game/World';
 import { toThree } from './coords';
 
+/** Brief hold on the fallen pose before the corpse starts dissolving. */
+const DEATH_FADE_HOLD = 0.35;
+/** Seconds to fade a downed mage out so the body does not clutter the arena. */
+const DEATH_FADE_DURATION = 1.15;
+/** Soft pop-in when a mage returns at the spawn pad. */
+const RESPAWN_FADE_IN = 0.3;
+/** Approximate frame step used by {@link PlayerRenderer.sync}. */
+const RENDER_DT = 1 / 60;
+
 interface PlayerView {
   readonly root: THREE.Group;
   readonly figure: THREE.Group;
@@ -19,6 +28,13 @@ interface PlayerView {
   readonly slowRing: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
   readonly leftArm: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
   readonly rightArm: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+  /**
+   * Per-mage figure materials (cloned from the shared palette). Opacity is
+   * animated on death/respawn; shared AssetManager mats must not be touched.
+   */
+  readonly fadeMaterials: THREE.MeshStandardMaterial[];
+  /** Current figure opacity, 0..1. */
+  opacity: number;
 }
 
 /**
@@ -86,10 +102,12 @@ export class PlayerRenderer implements GameRenderer {
 
     const figure = new THREE.Group();
     const teamColor = TEAM_COLORS[player.team];
-    const bodyMat = this.assets.standardMaterial(teamColor);
-    const accentMat = this.assets.standardMaterial(this.darken(teamColor));
-    const skinMat = this.assets.standardMaterial(0xffd6a5);
-    const bootMat = this.assets.standardMaterial(0x27313d);
+    const bodyMat = this.fadeMaterial(teamColor);
+    const accentMat = this.fadeMaterial(this.darken(teamColor));
+    const skinMat = this.fadeMaterial(0xffd6a5);
+    const bootMat = this.fadeMaterial(0x27313d);
+    const noseMat = this.fadeMaterial(0xff9f43);
+    const fadeMaterials = [bodyMat, accentMat, skinMat, bootMat, noseMat];
 
     const ring = new THREE.Mesh(
       this.assets.geometry('player-selection-ring', () => {
@@ -189,7 +207,7 @@ export class PlayerRenderer implements GameRenderer {
 
     const nose = this.shadowMesh(
       this.assets.geometry('player-nose', () => new THREE.ConeGeometry(0.055, 0.18, 8)),
-      this.assets.standardMaterial(0xff9f43),
+      noseMat,
     );
     nose.position.set(0.26, 0.96, 0);
     nose.rotation.z = -Math.PI / 2;
@@ -218,7 +236,28 @@ export class PlayerRenderer implements GameRenderer {
     figure.add(leftBoot, rightBoot);
 
     root.add(figure);
-    return { root, figure, ring, shieldRing, shieldDome, hasteRing, slowRing, leftArm, rightArm };
+    return {
+      root,
+      figure,
+      ring,
+      shieldRing,
+      shieldDome,
+      hasteRing,
+      slowRing,
+      leftArm,
+      rightArm,
+      fadeMaterials,
+      opacity: 1,
+    };
+  }
+
+  /** Private clone so death/respawn opacity does not tint every mage of that color. */
+  private fadeMaterial(color: number): THREE.MeshStandardMaterial {
+    const mat = this.assets.standardMaterial(color).clone();
+    mat.transparent = false;
+    mat.opacity = 1;
+    mat.depthWrite = true;
+    return mat;
   }
 
   /**
@@ -293,6 +332,7 @@ export class PlayerRenderer implements GameRenderer {
 
     view.ring.visible = player.selected && !defeated;
     this.updateStatusFx(view, player, defeated);
+    this.updateDeathFade(view, player, defeated);
 
     if (defeated) {
       view.figure.position.y = 0.16;
@@ -303,6 +343,35 @@ export class PlayerRenderer implements GameRenderer {
 
     const renderTime = player.animationTime + alpha / 60;
     this.applyAnimation(view, player, renderTime);
+  }
+
+  /**
+   * Dissolves a fallen mage after a short hold, then fades them back in on
+   * respawn. Driven by `animationTime` while defeated (reset when the defeated
+   * clip starts) so online and practice share the same beat.
+   */
+  private updateDeathFade(view: PlayerView, player: Player, defeated: boolean): void {
+    let opacity: number;
+    if (defeated) {
+      const t = Math.max(0, (player.animationTime - DEATH_FADE_HOLD) / DEATH_FADE_DURATION);
+      opacity = 1 - Math.min(1, t);
+    } else if (view.opacity >= 1) {
+      opacity = 1;
+    } else {
+      opacity = Math.min(1, view.opacity + RENDER_DT / RESPAWN_FADE_IN);
+    }
+    this.setFigureOpacity(view, opacity);
+  }
+
+  private setFigureOpacity(view: PlayerView, opacity: number): void {
+    view.opacity = opacity;
+    view.figure.visible = opacity > 0.02;
+    const transparent = opacity < 0.999;
+    for (const mat of view.fadeMaterials) {
+      mat.opacity = opacity;
+      mat.transparent = transparent;
+      mat.depthWrite = !transparent;
+    }
   }
 
   /**
@@ -423,6 +492,7 @@ export class PlayerRenderer implements GameRenderer {
 
   private removeView(id: number, view: PlayerView): void {
     this.group.remove(view.root);
+    for (const mat of view.fadeMaterials) mat.dispose();
     this.views.delete(id);
   }
 

@@ -85,6 +85,50 @@ describe('Brain — decisions', () => {
     expect(input.aim.y).toBeGreaterThan(0);
   });
 
+  /*
+   * The point of the whole move/aim split: you can always walk and throw in the
+   * original game, so a mage that has picked a target must not root itself to
+   * line the shot up. Standing still read as the AI freezing, and it made the
+   * squads free hits.
+   */
+  it('keeps moving while it shoots', () => {
+    const w = combatWorld();
+    const bot = w.addMage('bot1', TEAM_A, 'fire', true);
+    const target = w.addMage('p1', TEAM_B, 'fire', false);
+    bot.position = Vec2.zero;
+    target.position = new Vec2(ENGAGE_RANGE - 2, 0);
+
+    const input = decideOnce(w, 'bot1', 'normal');
+
+    expect(input.charging).toBe(true);
+    expect(input.move.lengthSq()).toBeGreaterThan(0.5);
+  });
+
+  it('circles the target it is shooting at rather than closing on it', () => {
+    const w = combatWorld();
+    const bot = w.addMage('bot1', TEAM_A, 'fire', true);
+    const target = w.addMage('p1', TEAM_B, 'fire', false);
+    bot.position = Vec2.zero;
+    target.position = new Vec2(ENGAGE_RANGE - 2, 0);
+
+    const move = decideOnce(w, 'bot1', 'normal').move.normalized();
+
+    // Perpendicular to the target: neither charging in nor backing off.
+    expect(Math.abs(move.dot(new Vec2(1, 0)))).toBeLessThan(0.35);
+  });
+
+  it('backs off as it circles a target too close to throw at', () => {
+    const w = combatWorld();
+    const bot = w.addMage('bot1', TEAM_A, 'fire', true);
+    const target = w.addMage('p1', TEAM_B, 'fire', false);
+    bot.position = Vec2.zero;
+    target.position = new Vec2(0.8, 0);
+
+    const move = decideOnce(w, 'bot1', 'normal').move;
+
+    expect(move.x).toBeLessThan(0);
+  });
+
   it('advances instead of attacking when the target is out of range', () => {
     const w = combatWorld();
     const bot = w.addMage('bot1', TEAM_A, 'fire', true);
@@ -243,6 +287,83 @@ describe('Brain — difficulty and cover', () => {
     // The only cover sits up and to the left, so the bot should move that way
     // instead of straight along -X.
     expect(decideOnce(w, 'bot1', 'normal').move.y).toBeGreaterThan(0);
+  });
+});
+
+describe('Brain — getting unstuck', () => {
+  const rock = (position: Vec2, radius: number): Obstacle => ({
+    type: 'rock',
+    position,
+    isRect: false,
+    radius,
+    halfW: 0,
+    halfH: 0,
+    blocksSight: true,
+    blocksProjectiles: true,
+    blocksMovement: true,
+    topHeight: 1,
+  });
+
+  /*
+   * The backstop behind every steering rule: a mage that somehow ends up inside
+   * geometry has no clear step in any direction, so it needs to notice it has
+   * stopped moving and walk itself out rather than lean on its plan forever.
+   */
+  it('walks out of an obstacle it is wedged inside instead of pursuing its target', () => {
+    const w = new World(new Arena(24, 16, [rock(Vec2.zero, 1.2)]));
+    const bot = w.addMage('bot1', TEAM_A, 'fire', true);
+    // Inside the rock, offset toward +X — the short way out.
+    bot.position = new Vec2(0.3, 0);
+    // Far off to the left, so the bot's own plan is to walk the other way.
+    w.addMage('p1', TEAM_B, 'fire', false).position = new Vec2(-11, 0);
+
+    const brain = new Brain(rng());
+    const bots = new Map<string, Difficulty>([['bot1', 'normal']]);
+
+    // The world is never stepped, so the bot never moves — which is exactly
+    // what being wedged looks like from the brain's side.
+    let escaped = false;
+    for (let tick = 0; tick < 120 && !escaped; tick++) {
+      brain.step(w, bots, SIM_DT);
+      escaped = bot.input.move.x > 0.5;
+    }
+
+    expect(escaped).toBe(true);
+  });
+
+  /*
+   * Mages don't block each other — the sim pushes overlapping ones apart — but
+   * two walking head-on jam in place for seconds, which looks exactly like
+   * being stuck on scenery. They have to pass on a side.
+   */
+  it('steps around a mage standing directly in its path', () => {
+    const w = combatWorld();
+    const bot = w.addMage('bot1', TEAM_A, 'fire', true);
+    bot.position = new Vec2(-11, 0);
+    // Its target is straight ahead and far off; an ally is parked in between.
+    w.addMage('p1', TEAM_B, 'fire', false).position = new Vec2(11, 0);
+    w.addMage('bot2', TEAM_A, 'fire', true).position = new Vec2(-9.5, 0);
+
+    const move = decideOnce(w, 'bot1', 'normal').move;
+
+    expect(move.x).toBeGreaterThan(0);
+    expect(Math.abs(move.y)).toBeGreaterThan(0.2);
+  });
+
+  it('does not trigger an escape while it is making progress', () => {
+    const w = combatWorld();
+    const bot = w.addMage('bot1', TEAM_A, 'fire', true);
+    w.addMage('p1', TEAM_B, 'fire', false).position = new Vec2(11, 0);
+    bot.position = new Vec2(-11, 0);
+
+    const brain = new Brain(rng());
+    const bots = new Map<string, Difficulty>([['bot1', 'normal']]);
+
+    for (let tick = 0; tick < 90; tick++) {
+      brain.step(w, bots, SIM_DT);
+      w.step(SIM_DT);
+      expect(bot.input.move.x, `tick ${tick}`).toBeGreaterThan(0);
+    }
   });
 });
 

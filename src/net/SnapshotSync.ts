@@ -86,10 +86,10 @@ interface MageTrack {
  * for ~60fps rendering. Runs no simulation — the server is authoritative.
  *
  * Also emits the same {@link GameEvents} the offline sim's systems emit
- * (`PlayerHit`, `PlayerDefeated`, `SnowballThrown`, `SnowballImpact`) —
- * inferred from snapshot deltas, since the wire protocol has no discrete
- * event messages — so `AudioManager` and the particle/pickup renderers work
- * unmodified against online matches.
+ * (`PlayerHit`, `PlayerDefeated`, `PlayerRespawned`, `SnowballThrown`,
+ * `SnowballImpact`) — inferred from snapshot deltas, since the wire protocol
+ * has no discrete event messages — so `AudioManager` and the particle/pickup
+ * renderers work unmodified against online matches.
  */
 export class SnapshotSync {
   private readonly mageTracks = new Map<string, MageTrack>();
@@ -238,19 +238,33 @@ export class SnapshotSync {
     const player = this.world.getPlayer(track.entityId);
     if (!player) return;
 
+    // Respawn teleports the sim mage to a spawn pad; easing that jump would
+    // drag the fallen body across the arena. Snap pose + zero velocity instead.
+    const respawned = track.prevHealth <= 0 && m.health > 0;
+
     player.team = this.teamOf(m.team);
     player.health = m.health;
     player.shielded = m.shielded;
     player.hasted = m.hasted;
     player.slowed = m.slowed;
     player.alive = m.health > 0;
-    if (dtSim > 0) {
-      player.velocity.set((m.position.x - track.prevX) / dtSim, (m.position.y - track.prevY) / dtSim);
-    }
 
     track.targetX = m.position.x;
     track.targetY = m.position.y;
     track.targetRotation = Math.atan2(m.facing.y, m.facing.x);
+
+    if (respawned) {
+      player.position.set(m.position.x, m.position.y);
+      player.rotation = track.targetRotation;
+      player.velocity.set(0, 0);
+      this.events.emit('PlayerRespawned', {
+        playerId: player.id,
+        x: m.position.x,
+        y: m.position.y,
+      });
+    } else if (dtSim > 0) {
+      player.velocity.set((m.position.x - track.prevX) / dtSim, (m.position.y - track.prevY) / dtSim);
+    }
 
     if (!player.alive) {
       if (track.prevHealth > 0) {

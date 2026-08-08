@@ -5,7 +5,7 @@
  * obstacle collision, projectile blocking and line of sight included.
  */
 
-import { Arena } from './Arena';
+import { Arena, pushOutOfCircle } from './Arena';
 import { rosterFor, type RosterId } from './cards';
 import {
   ACCELERATION,
@@ -32,6 +32,7 @@ import {
   SPACING,
   SPAWN_MARGIN,
   SPELL_CAST_FX_DURATION,
+  SQUAD_SIZE,
   STRUCTURE_TOP_HEIGHT,
   SUDDEN_DEATH_DURATION,
   SUDDEN_DEATH_MANA_MULTIPLIER,
@@ -65,6 +66,9 @@ import { Vec2 } from './Vec2';
 export type CastRejection = 'unknown_card' | 'not_enough_mana' | 'out_of_bounds' | 'match_over';
 
 export type CastResult = { ok: true } | { ok: false; reason: CastRejection };
+
+/** Relaxation passes used to free a mage overlapping solid geometry. */
+const DEPENETRATION_PASSES = 4;
 
 /**
  * A cast that just happened, kept around only long enough for clients to see
@@ -435,6 +439,7 @@ export class World {
     for (const m of this.mages.values()) this.updateMage(m, dt);
     this.applySupportHealing(dt);
     this.separateMages();
+    this.freeTrappedMages();
     this.updateStructures(dt);
     this.updateProjectiles(dt);
     this.updatePuddles(dt);
@@ -587,10 +592,52 @@ export class World {
         const dist = Math.sqrt(distSq);
         const push = (minDist - dist) / 2;
         const n = delta.scale(1 / dist);
-        a.position = this.arena.clamp(a.position.add(n.scale(push)), MAGE_RADIUS);
-        b.position = this.arena.clamp(b.position.sub(n.scale(push)), MAGE_RADIUS);
+        // Routed through resolveMove rather than a bare clamp: shoving two
+        // mages apart must not shove either of them into a rock, which is one
+        // of the ways they used to end up wedged inside the scenery.
+        a.position = this.resolveMove(a.position, n.scale(push));
+        b.position = this.resolveMove(b.position, n.scale(-push));
       }
     }
+  }
+
+  /**
+   * Nudges any mage that ended up overlapping solid geometry back out of it.
+   *
+   * Movement itself never walks into a blocker, but knockback stacking, mage
+   * separation and a spawn under a Tower all can — and once a mage is inside an
+   * obstacle it is stuck for good, because `resolveMove` rejects every step out
+   * of there too. This is the escape hatch, applied after the pushes that can
+   * cause the overlap in the first place.
+   */
+  private freeTrappedMages(): void {
+    for (const id of sortedMageIds(this)) {
+      const m = this.mages.get(id);
+      if (!m?.alive) continue;
+
+      let p = m.position;
+      // A few relaxation passes: leaving one obstacle can enter the next one,
+      // which is exactly what happens in the corner between two blockers.
+      for (let pass = 0; pass < DEPENETRATION_PASSES; pass++) {
+        const push = this.arena
+          .pushOutOfObstacles(p, MAGE_RADIUS)
+          .add(this.pushOutOfStructures(p, MAGE_RADIUS));
+        if (push.lengthSq() <= 1e-12) break;
+        p = this.arena.clamp(p.add(push), MAGE_RADIUS);
+      }
+
+      if (p !== m.position) m.position = p;
+    }
+  }
+
+  /** {@link Arena.pushOutOfObstacles} for the live structures on the field. */
+  pushOutOfStructures(p: Vec2, radius: number): Vec2 {
+    let push = Vec2.zero;
+    for (const s of this.structures.values()) {
+      if (!s.alive) continue;
+      push = push.add(pushOutOfCircle(s.position, s.radius, p, radius));
+    }
+    return push;
   }
 
   /**
@@ -613,11 +660,15 @@ export class World {
     return from;
   }
 
-  /** Obstacles plus live structures — a Tower is a solid body, not decoration. */
-  private blockedAt(p: Vec2): boolean {
-    if (this.arena.blocksMovementAt(p, MAGE_RADIUS)) return true;
+  /**
+   * Obstacles plus live structures — a Tower is a solid body, not decoration.
+   * Public because bot steering has to avoid exactly what movement rejects; a
+   * planner that only knew about obstacles would walk squads into Towers.
+   */
+  blockedAt(p: Vec2, radius: number = MAGE_RADIUS): boolean {
+    if (this.arena.blocksMovementAt(p, radius)) return true;
     for (const s of this.structures.values()) {
-      if (s.alive && s.position.distanceTo(p) < s.radius + MAGE_RADIUS) return true;
+      if (s.alive && s.position.distanceTo(p) < s.radius + radius) return true;
     }
     return false;
   }
@@ -965,7 +1016,7 @@ export class World {
   }
 
   private respawn(m: Mage): void {
-    m.position = this.arena.spawnFor(m.team, 0);
+    m.position = this.freeSpawnFor(m.team);
     m.velocity = Vec2.zero;
     m.health = m.maxHealth;
     m.alive = true;
@@ -982,6 +1033,29 @@ export class World {
     m.castBuffTimer = 0;
     m.shieldAmount = 0;
     m.shieldTimer = 0;
+  }
+
+  /**
+   * A spawn slot for `team` that is clear and that nobody is already standing
+   * on. Everyone used to come back on slot 0, so a wiped squad respawned in a
+   * single pile that `separateMages` then shoved outward — straight into
+   * whatever obstacle happened to be next to the spawn.
+   */
+  private freeSpawnFor(team: Team): Vec2 {
+    for (let idx = 0; idx < SQUAD_SIZE; idx++) {
+      const p = this.arena.spawnFor(team, idx);
+      if (this.blockedAt(p)) continue;
+
+      let taken = false;
+      for (const m of this.mages.values()) {
+        if (m.alive && m.team === team && m.position.distanceTo(p) < SPACING) {
+          taken = true;
+          break;
+        }
+      }
+      if (!taken) return p;
+    }
+    return this.arena.spawnFor(team, 0);
   }
 
   /**

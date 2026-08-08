@@ -13,7 +13,7 @@
 
 import { MAGE_RADIUS, OBSTACLE_TOP_HEIGHT } from './config';
 import { TEAM_A, TEAM_B, type Team } from './entities';
-import { Vec2 } from './Vec2';
+import { clamp, Vec2 } from './Vec2';
 
 export type ObstacleType = 'tree' | 'rock' | 'fort' | 'fence' | 'prop';
 
@@ -266,6 +266,25 @@ export class Arena {
   }
 
   /**
+   * The offset that moves a circle of `radius` at `p` clear of every
+   * movement-blocking obstacle, or a zero vector when it already is.
+   *
+   * A mage that ends up *inside* an obstacle can never walk out on its own —
+   * every step from in there is blocked too, so it stands there for the rest of
+   * the match. This is what gets it out. Inflating `radius` past MAGE_RADIUS
+   * also turns it into a "which way is open" probe, which is how bot steering
+   * uses it.
+   */
+  pushOutOfObstacles(p: Vec2, radius: number): Vec2 {
+    let push = Vec2.zero;
+    for (const o of this.obstacles) {
+      if (!o.blocksMovement) continue;
+      push = push.add(pushOutOf(o, p, radius));
+    }
+    return push;
+  }
+
+  /**
    * Whether a projectile of the given radius flying at the given height would
    * hit a projectile-blocking obstacle. Shots arcing above an obstacle's
    * `topHeight` pass over it (mirrors the client's CollisionSystem).
@@ -297,6 +316,59 @@ export class Arena {
     }
     return true;
   }
+}
+
+/**
+ * The smallest offset that moves a circle of `radius` at `p` clear of `o`, or a
+ * zero vector when the two do not overlap. Mirrors the client's
+ * `computeCircleCirclePushout` / `computeCircleRectPushout` in MovementSystem.
+ */
+export function pushOutOf(o: Obstacle, p: Vec2, radius: number): Vec2 {
+  if (!o.isRect) return pushOutOfCircle(o.position, o.radius, p, radius);
+
+  const closestX = clamp(p.x, o.position.x - o.halfW, o.position.x + o.halfW);
+  const closestY = clamp(p.y, o.position.y - o.halfH, o.position.y + o.halfH);
+  const dx = p.x - closestX;
+  const dy = p.y - closestY;
+  const distSq = dx * dx + dy * dy;
+
+  if (distSq > 1e-12) {
+    if (distSq >= radius * radius) return Vec2.zero;
+    const dist = Math.sqrt(distSq);
+    return new Vec2((dx / dist) * (radius - dist), (dy / dist) * (radius - dist));
+  }
+
+  // The centre is inside the rectangle: leave by whichever face is nearest.
+  const left = p.x - (o.position.x - o.halfW);
+  const right = o.position.x + o.halfW - p.x;
+  const down = p.y - (o.position.y - o.halfH);
+  const up = o.position.y + o.halfH - p.y;
+  const min = Math.min(left, right, down, up);
+
+  if (min === left) return new Vec2(-(radius + left), 0);
+  if (min === right) return new Vec2(radius + right, 0);
+  if (min === down) return new Vec2(0, -(radius + down));
+  return new Vec2(0, radius + up);
+}
+
+/** {@link pushOutOf} for a bare circle — Towers and Cores are not obstacles. */
+export function pushOutOfCircle(
+  centre: Vec2,
+  centreRadius: number,
+  p: Vec2,
+  radius: number,
+): Vec2 {
+  const delta = p.sub(centre);
+  const min = centreRadius + radius;
+  const distSq = delta.lengthSq();
+
+  if (distSq >= min * min) return Vec2.zero;
+  // Exactly concentric: any direction will do, and one has to be chosen
+  // deterministically or two servers would push the same mage different ways.
+  if (distSq <= 1e-12) return new Vec2(min, 0);
+
+  const dist = Math.sqrt(distSq);
+  return delta.scale((min - dist) / dist);
 }
 
 /** Whether a circle at `p` overlaps this obstacle's footprint. */
