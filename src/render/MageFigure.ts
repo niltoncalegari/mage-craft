@@ -6,7 +6,16 @@ export interface MageFigureParts {
   readonly leftArm: THREE.Mesh;
   readonly rightArm: THREE.Mesh;
   readonly staff: THREE.Group;
+  /**
+   * Named rather than reached through `staff.children[1]`, which is how the
+   * idle used to find it — adding any child to the staff silently animated the
+   * wrong mesh.
+   */
+  readonly gem: THREE.Mesh;
 }
+
+/** Resting height of the staff crystal; the idle bobs around it. */
+const GEM_REST_Y = 1.75;
 
 /**
  * Lightweight procedural mage for menu / portal scenes (not tied to World).
@@ -23,6 +32,10 @@ export function createMageFigure(color: number, options?: { scale?: number }): M
   const bootMat = mat(0x1c2430);
   const staffMat = mat(0x6b4f2a);
   const gemMat = mat(lighten(color, 0.25));
+  const bandMat = mat(0xd4af37);
+  const buckleMat = mat(0xe5e5e5);
+  buckleMat.metalness = 0.9;
+  buckleMat.roughness = 0.2;
 
   const robe = mesh(new THREE.CylinderGeometry(0.28, 0.42, 0.95, 12), bodyMat);
   robe.position.y = 0.55;
@@ -37,14 +50,28 @@ export function createMageFigure(color: number, options?: { scale?: number }): M
   head.position.y = 1.35;
   figure.add(head);
 
-  const hatBrim = mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.04, 16), accentMat);
-  hatBrim.position.y = 1.5;
-  figure.add(hatBrim);
+  // Same hat the in-match mage wears (see PlayerRenderer.buildHat), scaled to
+  // this taller figure — menu and arena used to show two different wizards.
+  const hatGroup = new THREE.Group();
+  hatGroup.position.y = 1.48;
+  figure.add(hatGroup);
 
-  const hat = mesh(new THREE.ConeGeometry(0.2, 0.55, 12), accentMat);
-  hat.position.y = 1.78;
-  hat.rotation.z = 0.12;
-  figure.add(hat);
+  const hatBrim = mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.03, 20), accentMat);
+  hatBrim.position.y = 0.015;
+  hatGroup.add(hatBrim);
+
+  const hatCone = mesh(bentCone(0.6), accentMat);
+  hatCone.position.y = 0.3;
+  hatGroup.add(hatCone);
+
+  const hatBand = mesh(new THREE.CylinderGeometry(0.275, 0.275, 0.055, 20, 1, true), bandMat);
+  hatBand.position.y = 0.05;
+  hatGroup.add(hatBand);
+
+  const hatBuckle = mesh(new THREE.BoxGeometry(0.07, 0.07, 0.02), buckleMat);
+  hatBuckle.position.set(0.275, 0.05, 0);
+  hatBuckle.rotation.y = Math.PI / 2;
+  hatGroup.add(hatBuckle);
 
   const leftArm = mesh(new THREE.CylinderGeometry(0.05, 0.065, 0.45, 8), bodyMat);
   leftArm.position.set(0.05, 0.95, -0.34);
@@ -71,7 +98,7 @@ export function createMageFigure(color: number, options?: { scale?: number }): M
   pole.position.y = 0.85;
   staff.add(pole);
   const gem = mesh(new THREE.IcosahedronGeometry(0.12, 0), gemMat);
-  gem.position.y = 1.75;
+  gem.position.y = GEM_REST_Y;
   staff.add(gem);
   staff.position.set(0.15, 0.1, 0.42);
   staff.rotation.z = -0.15;
@@ -79,7 +106,26 @@ export function createMageFigure(color: number, options?: { scale?: number }): M
 
   root.add(figure);
   root.scale.setScalar(scale);
-  return { root, figure, leftArm, rightArm, staff };
+  return { root, figure, leftArm, rightArm, staff, gem };
+}
+
+/**
+ * Cone with a curled tip — the vertex pass from the `sim/test.html` study, and
+ * the same bend {@link PlayerRenderer.hatConeGeometry} applies in the arena.
+ * Six height segments so the point curves rather than shearing straight.
+ */
+function bentCone(height: number): THREE.BufferGeometry {
+  const geo = new THREE.CylinderGeometry(0.012, 0.26, height, 16, 6);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    if (y <= 0) continue;
+    const factor = ((y + height / 2) / height) ** 2;
+    pos.setX(i, pos.getX(i) - factor * height * 0.5);
+    pos.setZ(i, pos.getZ(i) + factor * height * 0.16);
+  }
+  geo.computeVertexNormals();
+  return geo;
 }
 
 /** Gentle breathing idle for portal / character-select staging. */

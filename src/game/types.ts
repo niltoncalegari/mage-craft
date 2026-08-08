@@ -2,6 +2,7 @@ import type { Vector2 } from '../utils/Vector2';
 import type { Health, Transform2D } from '../ecs/Component';
 import type { EntityId } from '../ecs/Entity';
 import type { ElementId } from './elements';
+import type { Role } from '../../sim/roles';
 import type { Shape } from '../physics/shapes';
 
 /** The two opposing squads (design §2). */
@@ -64,6 +65,17 @@ export interface Player extends Transform2D, Health {
   hasted?: boolean;
   /** Slowed by ice or Maldição da Lentidão (GDD §8.3, §9); only set online. */
   slowed?: boolean;
+  /**
+   * Which spell this mage throws (GDD §8). Fixed for the mage's whole life, so
+   * the renderer reads it once when it builds the figure. Only set online —
+   * practice/offline mages have no element and fall back to the team color.
+   */
+  element?: ElementId;
+  /**
+   * Identity: tank, damage or support (GDD §8). Drives the silhouette so the
+   * four mages of a squad are tellable apart. Only set online.
+   */
+  role?: Role;
 }
 
 /**

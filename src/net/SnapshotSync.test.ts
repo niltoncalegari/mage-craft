@@ -235,6 +235,42 @@ describe('SnapshotSync — mage respawn', () => {
   });
 });
 
+/**
+ * The renderer draws the hat band, staff gem and silhouette from these two
+ * fields. They travel as bare strings, so an unknown value must land as
+ * `undefined` — the figure then falls back to the team look. Anything else
+ * (passing the raw string through) would index a palette with a missing key and
+ * crash the whole render loop on one bad mage.
+ */
+describe('SnapshotSync — mage identity', () => {
+  it('carries element and role onto the rendered mage', () => {
+    const { sync, world } = makeSync(TEAM_A);
+    sync.applySnapshot(snapshot({ mages: [mage({ element: 'ice', role: 'tank' })] }));
+
+    expect(world.players[0].element).toBe('ice');
+    expect(world.players[0].role).toBe('tank');
+  });
+
+  it('drops values it does not recognize instead of passing them to the renderer', () => {
+    const { sync, world } = makeSync(TEAM_A);
+    sync.applySnapshot(snapshot({ mages: [mage({ element: 'plasma', role: 'necromancer' })] }));
+
+    expect(world.players[0].element).toBeUndefined();
+    expect(world.players[0].role).toBeUndefined();
+  });
+
+  it('reads identity once — a later snapshot cannot swap a mage mid-match', () => {
+    const { sync, world } = makeSync(TEAM_A);
+    sync.applySnapshot(snapshot({ mages: [mage({ element: 'fire', role: 'damage' })] }));
+    sync.applySnapshot(
+      snapshot({ tick: 6, mages: [mage({ element: 'poison', role: 'support' })] }),
+    );
+
+    expect(world.players[0].element).toBe('fire');
+    expect(world.players[0].role).toBe('damage');
+  });
+});
+
 describe('SnapshotSync — projectiles', () => {
   it('flies at the height the server sent instead of sliding along the ground', () => {
     const { sync, world } = makeSync(TEAM_A);

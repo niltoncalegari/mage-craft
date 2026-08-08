@@ -3,6 +3,7 @@ import type { EventBus } from '../core/EventBus';
 import { DAMAGE, SIM } from '../game/config';
 import { isElementId, type ElementId } from '../game/elements';
 import { launchSnowball } from '../game/Snowball';
+import { isRole } from '../../sim/roles';
 import { type AnimationName, PlayerState, Team, type Player, type Structure } from '../game/types';
 import type { World } from '../game/World';
 import { rotateTowards } from '../utils/math';
@@ -288,6 +289,13 @@ export class SnapshotSync {
     player.rotation = Math.atan2(m.facing.y, m.facing.x);
     player.selected = m.id === this.localPlayerId;
     if (player.selected) this.localEntity = player.id;
+
+    // Identity, not state: a mage's element and role never change, so they are
+    // read once here rather than every snapshot. Both arrive as bare strings on
+    // the wire; anything the client does not recognize stays undefined and the
+    // renderer falls back to the team look instead of throwing.
+    player.element = isElementId(m.element) ? m.element : undefined;
+    player.role = isRole(m.role) ? m.role : undefined;
 
     const view: SquadMemberView = {
       wireId: m.id,

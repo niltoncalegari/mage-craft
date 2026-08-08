@@ -8,6 +8,7 @@ import type { ElementId } from '../game/elements';
 import type { Player, Puddle, Snowball } from '../game/types';
 import type { World } from '../game/World';
 import { toThree } from './coords';
+import { ELEMENT_TINT } from './elementPalette';
 import { LightningBolt } from './LightningBolt';
 
 const SNOWBALL_POOL_SIZE = 64;
@@ -82,7 +83,7 @@ interface ElementVfx {
    * a recolored sphere never read as a bolt.
    */
   shape: 'orb' | 'bolt';
-  /** Projectile body color + emissive glow. */
+  /** Projectile body color + emissive glow. Shared with the caster's gem and hat band via {@link ELEMENT_TINT}. */
   core: number;
   glow: number;
   /** Particles shed continuously along the flight path. */
@@ -125,8 +126,7 @@ const DEFAULT_VFX: ElementVfx = {
 const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
   fire: {
     shape: 'orb',
-    core: 0xffb238,
-    glow: 0xff5a1f,
+    ...ELEMENT_TINT.fire,
     trailColor: 0xff7a1a,
     trailSize: 0.11,
     trailRate: 30,
@@ -141,8 +141,7 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
   },
   ice: {
     shape: 'orb',
-    core: 0xd8f7ff,
-    glow: 0x4cc9f0,
+    ...ELEMENT_TINT.ice,
     trailColor: 0x8fe3ff,
     trailSize: 0.08,
     trailRate: 24,
@@ -157,8 +156,7 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
   },
   lightning: {
     shape: 'bolt',
-    core: 0xffffff,
-    glow: 0xffe066,
+    ...ELEMENT_TINT.lightning,
     trailColor: 0xfff275,
     trailSize: 0.06,
     trailRate: 44,
@@ -173,8 +171,7 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
   },
   poison: {
     shape: 'orb',
-    core: 0xcdf27a,
-    glow: 0x80b918,
+    ...ELEMENT_TINT.poison,
     trailColor: 0x9bd63d,
     trailSize: 0.09,
     trailRate: 20,
@@ -189,8 +186,7 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
   },
   stone: {
     shape: 'orb',
-    core: 0xc7cdd6,
-    glow: 0x8d99ae,
+    ...ELEMENT_TINT.stone,
     trailColor: 0x9aa4b2,
     trailSize: 0.1,
     trailRate: 10,
@@ -205,8 +201,7 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
   },
   arcane: {
     shape: 'orb',
-    core: 0xe6d1ff,
-    glow: 0x9b5de5,
+    ...ELEMENT_TINT.arcane,
     trailColor: 0xc9a6f5,
     trailSize: 0.1,
     trailRate: 26,
@@ -221,8 +216,7 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
   },
   wind: {
     shape: 'orb',
-    core: 0xf3fbfb,
-    glow: 0xa8dadc,
+    ...ELEMENT_TINT.wind,
     trailColor: 0xd7f1f2,
     trailSize: 0.07,
     trailRate: 22,
