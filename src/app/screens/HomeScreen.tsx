@@ -25,10 +25,8 @@ export function HomeScreen(props: {
   const [serverStats, setServerStats] = useState<UserSummary | null>(null);
 
   useEffect(() => {
-    const token = props.user.token;
-    if (!token) return;
     let cancelled = false;
-    ApiClient.me(token)
+    ApiClient.me(props.user.token)
       .then((me) => {
         if (!cancelled) setServerStats(me.stats);
       })
@@ -81,11 +79,6 @@ export function HomeScreen(props: {
               </div>
             ) : null}
           </div>
-          {!props.user.token ? (
-            <p class={styles.panelHint} style={{ marginTop: 14 }}>
-              Playing as guest — create an account to keep KDR, match history and a ranking spot across devices.
-            </p>
-          ) : null}
           <p class={styles.panelHint} style={{ marginTop: 14 }}>
             Favorite element
           </p>

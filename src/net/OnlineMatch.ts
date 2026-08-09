@@ -132,6 +132,10 @@ export class OnlineMatch {
    */
   private readonly onTick: ((dt: number) => void) | null;
 
+  /** Which wire team the player commands; null while spectating. See {@link teamName}. */
+  private readonly localTeam: number | null;
+  private readonly getTeamName: ((wireTeam: number) => string | null) | null;
+
   constructor(
     container: HTMLElement,
     private readonly net: MatchTransport,
@@ -145,10 +149,18 @@ export class OnlineMatch {
       onTick?: (dt: number) => void;
       /** Draw the match HUD and squad panels. Defaults to true; false gives a bare arena. */
       chrome?: boolean;
+      /**
+       * Who is commanding a *wire* team (0/1), for the HUD's side boxes. Omitted
+       * by callers that have nobody to name — the firing range, and practice
+       * against a local bot — and the HUD falls back to "You"/"Opponent".
+       */
+      getTeamName?: (wireTeam: number) => string | null;
     },
   ) {
     this.spectating = opts.spectating;
     this.onTick = opts.onTick ?? null;
+    this.localTeam = opts.localTeam;
+    this.getTeamName = opts.getTeamName ?? null;
 
     // Same construction order as Game.init: obstacles share the world's id
     // space so nothing collides with mage/projectile ids.
@@ -192,6 +204,7 @@ export class OnlineMatch {
           isVisible: () => !this.paused,
           isSpectating: () => this.spectating,
           getMySide: () => this.sync.mySide,
+          getSideName: (team) => this.teamName(team),
         }),
         new SquadPanel(container, {
           getSquad: () => this.sync.squad,
@@ -200,6 +213,7 @@ export class OnlineMatch {
           onSelect: (wireId) => this.watchMage(wireId),
           isVisible: () => !this.paused,
           isCardArmed: () => this.selectedCardId !== null,
+          getSideName: (team) => this.teamName(team),
         }),
       );
     }
@@ -309,6 +323,21 @@ export class OnlineMatch {
     this.statusEl.textContent = this.spectating
       ? 'Spectating — you play the next match'
       : '';
+  }
+
+  /**
+   * The nick on a POV team, or null when the match never named it.
+   *
+   * Teams are mirrored by POV — yours is always `Team.Player` — but names are
+   * keyed by wire team, so this undoes the mirror. A spectator has no team of
+   * their own, and `SnapshotSync.teamOf` resolves `Team.Player` to wire team 0
+   * for them; the `?? 0` here is that same convention, so both sides agree on
+   * which box belongs to which roster.
+   */
+  private teamName(team: Team): string | null {
+    if (!this.getTeamName) return null;
+    const mine = this.localTeam ?? 0;
+    return this.getTeamName(team === Team.Player ? mine : 1 - mine);
   }
 
   /** Arms a card; the next click on the arena summons it there. */

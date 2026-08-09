@@ -14,6 +14,7 @@ const ROLE_LABEL: Readonly<Record<string, string>> = {
   support: 'Suporte',
 };
 
+/** Used when the match never named a commander — a bare local session. */
 const SIDE_LABEL = ['Your squad', 'Opponent'] as const;
 
 export interface SquadPanelDeps {
@@ -28,6 +29,8 @@ export interface SquadPanelDeps {
   isVisible: () => boolean;
   /** With a card armed the panel stops taking clicks — see `.armed` in the CSS. */
   isCardArmed: () => boolean;
+  /** The nick commanding a side, or null when the match never named them. */
+  getSideName: (team: Team) => string | null;
 }
 
 interface ChipRefs {
@@ -240,7 +243,7 @@ export class SquadPanel implements GameRenderer {
     refs.root.classList.toggle(styles.left, onLeft);
     refs.root.classList.toggle(styles.right, !onLeft);
 
-    refs.label.textContent = SIDE_LABEL[side];
+    refs.label.textContent = this.deps.getSideName(team) ?? SIDE_LABEL[side];
     refs.label.style.color = teamInk(team);
     // Kills this side has scored = bodies the other side has lost.
     const kills = opponents.reduce((n, m) => n + m.deaths, 0);

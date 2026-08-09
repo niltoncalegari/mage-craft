@@ -8,8 +8,9 @@ import type { MatchFoundMsg, QueueStatusMsg } from '../net/protocol';
 import { recordFor, reportFor } from '../net/SiegeMatchReporter';
 import { PortalScene } from '../render/PortalScene';
 import styles from './App.module.css';
-import { clearSession, getSession, type UserProfile } from './auth';
+import { clearSession, getSession, restoreSession, type UserProfile } from './auth';
 import { loadLoadout } from './loadout';
+import { matchTeamNames } from './matchNames';
 import { recordMatch } from './matchHistory';
 import {
   createLocalRoom,
@@ -49,6 +50,12 @@ export type AppScreen =
   | 'ranking'
   /** Dev surface: the whole roster firing at a wall, for judging spell VFX. */
   | 'range';
+
+/**
+ * The firing range is a tool for tuning VFX, not a game mode — it bypasses the
+ * account, the queue and the ranking. Production builds do not offer it.
+ */
+const SHOW_RANGE = import.meta.env.DEV;
 
 interface AppProps {
   stats?: { wins: number; losses: number };
@@ -104,6 +111,20 @@ function AppShell(props: AppProps): JSX.Element {
   const [claimNotice, setClaimNotice] = useState<string | null>(null);
   const [queueStatus, setQueueStatus] = useState<QueueStatusMsg | null>(null);
   const [queueFound, setQueueFound] = useState<MatchFoundMsg | null>(null);
+
+  /**
+   * Who is commanding each wire team, for the match HUD. Kept in a ref because
+   * the match view outlives the render that created it and reads this every
+   * frame — a captured value would still say "Opponent" after the roster that
+   * names them arrives.
+   */
+  const teamNamesRef = useRef<Record<number, string>>({});
+  teamNamesRef.current = matchTeamNames({
+    room,
+    found: queueFound,
+    localTeam: metaRef.current.localTeam,
+    myName: user?.name ?? '',
+  });
 
   metaRef.current = {
     isHost,
@@ -202,6 +223,35 @@ function AppShell(props: AppProps): JSX.Element {
     return () => portal.dispose();
   }, []);
 
+  /**
+   * The stored session is trusted for the first paint — re-authenticating before
+   * showing anything would put a spinner in front of every reload — and checked
+   * immediately after. An expired JWT drops the player back to the title screen
+   * instead of onto a home screen where every server-backed panel 401s.
+   */
+  useEffect(() => {
+    if (!getSession()) return;
+    let cancelled = false;
+    void restoreSession().then((profile) => {
+      if (cancelled) return;
+      setUser(profile);
+      if (!profile) setScreen('title');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /**
+   * No screen past the front door works without an account any more, so a
+   * signed-out shell that somehow lands on one goes back rather than rendering
+   * nothing at all.
+   */
+  useEffect(() => {
+    if (user || screen === 'title' || screen === 'login' || screen === 'range') return;
+    setScreen('title');
+  }, [user, screen]);
+
   useEffect(() => {
     if (screen !== 'onlineMatch' || !matchHostRef.current || !bridgeRef.current) return;
     const host = matchHostRef.current;
@@ -223,6 +273,7 @@ function AppShell(props: AppProps): JSX.Element {
           localPlayerId,
           localTeam: metaRef.current.localTeam,
           mapData,
+          getTeamName: (wireTeam) => teamNamesRef.current[wireTeam] ?? null,
           onLeaveMatch: (reason) => {
             metaRef.current.awaitingResultDismiss = false;
             onlineMatchRef.current?.dispose();
@@ -402,8 +453,8 @@ function AppShell(props: AppProps): JSX.Element {
         {screen === 'title' ? (
           <TitleScreen
             onEnter={() => setScreen(user ? 'home' : 'login')}
-            onPractice={() => setScreen('practice')}
             onOpenRange={() => setScreen('range')}
+            showRange={SHOW_RANGE}
           />
         ) : null}
         {screen === 'login' ? <LoginScreen onBack={() => setScreen('title')} onSignedIn={signIn} /> : null}
@@ -422,10 +473,10 @@ function AppShell(props: AppProps): JSX.Element {
             onSignOut={signOut}
           />
         ) : null}
-        {screen === 'range' ? <RangeScreen onExit={() => setScreen(user ? 'home' : 'title')} /> : null}
+        {screen === 'range' && SHOW_RANGE ? <RangeScreen onExit={() => setScreen(user ? 'home' : 'title')} /> : null}
         {screen === 'dashboard' && user ? <DashboardScreen user={user} onBack={() => setScreen('home')} /> : null}
-        {screen === 'practice' ? (
-          <PracticeScreen token={user?.token} onExit={() => setScreen(user ? 'home' : 'title')} />
+        {screen === 'practice' && user ? (
+          <PracticeScreen token={user.token} playerName={user.name} onExit={() => setScreen('home')} />
         ) : null}
         {screen === 'queue' && user ? (
           <QueueScreen status={queueStatus} found={queueFound} netError={netError} onCancel={leaveQueue} />

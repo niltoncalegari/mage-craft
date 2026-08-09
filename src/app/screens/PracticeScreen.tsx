@@ -21,7 +21,7 @@ const DIFFICULTIES: readonly (readonly [Difficulty, string])[] = [
  * ranked match, minus the server. That is the point: the old practice mode was
  * a different game, so what it taught did not transfer.
  */
-export function PracticeScreen(props: { onExit(): void; token?: string }): JSX.Element {
+export function PracticeScreen(props: { onExit(): void; token?: string; playerName: string }): JSX.Element {
   const [difficulty, setDifficulty] = useState<Difficulty>('normal');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +78,10 @@ export function PracticeScreen(props: { onExit(): void; token?: string }): JSX.E
           localPlayerId: 'local',
           localTeam: LOCAL_PLAYER_TEAM,
           mapData,
+          // Practice has no roster to read names off, but the HUD is the same
+          // one a ranked match uses — so it gets the same two labels.
+          getTeamName: (wireTeam) =>
+            wireTeam === LOCAL_PLAYER_TEAM ? props.playerName : 'AI Commander',
           onTick: (dt) => session.tick(dt),
           onLeaveMatch: () => {
             setRunning(false);

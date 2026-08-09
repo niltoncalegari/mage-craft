@@ -32,7 +32,6 @@ export function HistoryPanel(props: { user: UserProfile }): JSX.Element {
 
   useEffect(() => {
     const token = props.user.token;
-    if (!token) return;
     let cancelled = false;
     Promise.all([ApiClient.myElementStats(token), ApiClient.mySquadStats(token), ApiClient.myCardStats(token)])
       .then(([elements, squads, cards]) => {
@@ -50,7 +49,7 @@ export function HistoryPanel(props: { user: UserProfile }): JSX.Element {
   }, [props.user.token]);
 
   // The account's aggregates cover every device and every match ever logged;
-  // the local computation is the guest path and the offline fallback.
+  // the local computation is the offline fallback while they load or fail.
   const comps: CompStat[] =
     serverComps.length > 0
       ? serverComps.map((s) => ({
@@ -75,15 +74,11 @@ export function HistoryPanel(props: { user: UserProfile }): JSX.Element {
         <p class={appStyles.panelHint}>
           No matches recorded yet. Play a practice run or queue for a match — every result lands here, comp and all.
         </p>
-        {props.user.token ? (
-          <>
-            <p class={appStyles.panelHint} style={{ margin: '18px 0 10px' }}>
-              Skills used (all matches)
-            </p>
-            {loadError ? <p class={appStyles.error}>{loadError}</p> : null}
-            <ElementUsageChart stats={elementStats} />
-          </>
-        ) : null}
+        <p class={appStyles.panelHint} style={{ margin: '18px 0 10px' }}>
+          Skills used (all matches)
+        </p>
+        {loadError ? <p class={appStyles.error}>{loadError}</p> : null}
+        <ElementUsageChart stats={elementStats} />
       </div>
     );
   }
@@ -162,15 +157,11 @@ export function HistoryPanel(props: { user: UserProfile }): JSX.Element {
         ))}
       </div>
 
-      {props.user.token ? (
-        <>
-          <p class={appStyles.panelHint} style={{ margin: '18px 0 10px' }}>
-            Skills used (all matches)
-          </p>
-          {loadError ? <p class={appStyles.error}>{loadError}</p> : null}
-          <ElementUsageChart stats={elementStats} />
-        </>
-      ) : null}
+      <p class={appStyles.panelHint} style={{ margin: '18px 0 10px' }}>
+        Skills used (all matches)
+      </p>
+      {loadError ? <p class={appStyles.error}>{loadError}</p> : null}
+      <ElementUsageChart stats={elementStats} />
     </div>
   );
 }

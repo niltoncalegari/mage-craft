@@ -1,10 +1,11 @@
 /**
  * What the player brings to a match: a 4-mage squad and an 8-card spell deck.
  *
- * Stored locally rather than on the account because guests have no token
- * (`loginGuest` in ./auth), and a builder half the players cannot use is not a
- * builder. The server is still the authority — it re-validates everything in
- * `resolveDeck`/`resolveSquad` — this store only decides what we *offer*.
+ * Stored locally rather than on the account: it is a per-device preference the
+ * server does not need to remember, and it has to be readable before the first
+ * queue message goes out. The server is still the authority — it re-validates
+ * everything in `resolveDeck`/`resolveSquad` — this store only decides what we
+ * *offer*.
  *
  * Validation happens on read, not just on write, so a hand-edited localStorage
  * degrades to the defaults instead of shipping an illegal loadout at the wire.

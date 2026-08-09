@@ -27,11 +27,24 @@ export type NetworkHandlers = {
   onClose?(): void;
 };
 
+/**
+ * Same-origin `/ws`, mirroring how `/api` is reached (see ./ApiClient).
+ *
+ * This used to hard-code `:8080`, the port the game server listens on inside
+ * its container. That only ever worked when the server happened to be
+ * published on the host at that exact port — which the compose deployment does
+ * not do: Nginx is the single published entrypoint and proxies `/ws` onward
+ * (nginx.conf). Vite proxies it the same way in dev (vite.config.ts), so one
+ * rule now covers both. `VITE_WS_URL` still overrides for split-host setups.
+ *
+ * `location.host` rather than `hostname`: it carries the port, which a VPS
+ * served on something other than :80 needs.
+ */
 function defaultWsUrl(): string {
   const fromEnv = import.meta.env.VITE_WS_URL as string | undefined;
   if (fromEnv) return fromEnv;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${location.hostname}:8080/ws`;
+  return `${proto}://${location.host}/ws`;
 }
 
 /**
