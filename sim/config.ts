@@ -107,9 +107,21 @@ export const SUDDEN_DEATH_DURATION = S.suddenDeathDuration;
 
 /*
  * Structure health + siege scaling are the dials on how offensive the game is.
- * Raw Tower HP of 400 with no multiplier left human PvP without a convert in
- * three minutes; these values (and the ramp in World.siegeMultiplier) make a
- * committed flank break a Tower inside the first minute.
+ *
+ * They were briefly tuned twice in the same direction — Tower HP cut 400 -> 72
+ * *and* a 5.5x siege multiplier added on top — because the pre-pathfinding bots
+ * could not reach a Tower at all. Compounded, that made a single stone bolt
+ * (32 raw x 14.3) delete a Tower, and AI-vs-AI matches ended in ~17s. Now that
+ * the bots path to structures, the multiplier is back to 1.0 and Tower HP does
+ * the work, measured against the ~10 raw dmg/s a committed push actually lands:
+ * the first Tower falls around 35s of a 180s match.
+ *
+ * Note the dials are not independent of GDD §14's difficulty problem. Measured
+ * hard-vs-easy win rate over 40 seeds rises as matches get shorter (48% at
+ * Tower 550, 50% at 400, 55% at 250, 63% at the 17s-match values) — with
+ * mirrored squads, a shorter match just means the opening cast decides more.
+ * That is not a reason to keep Towers cheap: closing the skill gap is spell
+ * design (§13 step 9), not a structure-HP dial.
  */
 export const CORE_HEALTH = ST.coreHealth;
 export const TOWER_HEALTH = ST.towerHealth;

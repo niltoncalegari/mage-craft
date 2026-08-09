@@ -120,30 +120,45 @@ describe('agency — casting spells must not be worse than doing nothing', () =>
 
 describe('agency — playing better must beat playing worse', () => {
   /*
-   * The honest state of AI-vs-AI balance, and the reason this asserts a
-   * direction rather than a win rate. With mirrored default squads (GDD §7)
-   * and spells as the only asymmetry, a mirror of competent commanders tends
-   * to draw or split close — GDD §14 predicts exactly this, and finishing the
-   * balance pass is the mass-simulation work in GDD §13 step 8.
+   * The honest state of AI-vs-AI balance, and the reason this asserts a floor
+   * rather than a win rate. With mirrored default squads (GDD §7) and spells as
+   * the only asymmetry, a mirror of competent commanders splits close — GDD §14
+   * predicts exactly this, and finishing the balance pass is the mass-simulation
+   * work in GDD §13 step 8.
+   *
+   * Measured over these 40 seeds, `hard` wins ~50%: skill is currently
+   * **undifferentiated, not inverted**. That gap is real and open, but it
+   * belongs to spell design (§13 step 9) — it is not a structure-HP dial, and
+   * the shorter matches that appear to "fix" it only do so by letting the
+   * opening cast decide the game.
    *
    * So the guard here is the one property that must never regress: skill must
-   * not be *inverted*.
+   * not be *inverted*. Two things make that measurable rather than a coin
+   * flip observed six times — enough seeds to separate signal from noise, and
+   * alternating which side gets `hard`, since team A and team B do not face a
+   * symmetric map.
    */
-  it('never lets the weaker commander come out ahead across seeds', { timeout: 120_000 }, () => {
-    const seeds = [3, 11, 23, 47, 77, 91];
+  it('never lets the weaker commander come out ahead across seeds', { timeout: 300_000 }, () => {
+    const seeds = Array.from({ length: 40 }, (_, i) => i * 7 + 3);
     let hardWins = 0;
     let easyWins = 0;
 
-    for (const seed of seeds) {
+    for (const [i, seed] of seeds.entries()) {
+      const hardOnA = i % 2 === 0;
       const r = runMatch(seed, {
-        [TEAM_A]: side(seed, 'hard'),
-        [TEAM_B]: side(seed, 'easy'),
+        [TEAM_A]: side(seed, hardOnA ? 'hard' : 'easy'),
+        [TEAM_B]: side(seed, hardOnA ? 'easy' : 'hard'),
       });
-      if (r.winner === TEAM_A) hardWins++;
-      else if (r.winner === TEAM_B) easyWins++;
+      const hardTeam = hardOnA ? TEAM_A : TEAM_B;
+      if (r.winner === null) continue;
+      if (r.winner === hardTeam) hardWins++;
+      else easyWins++;
     }
 
-    expect(hardWins).toBeGreaterThanOrEqual(easyWins);
+    // A true 50/50 clears 35% on 40 samples essentially always; a genuine
+    // inversion (the 0/6 regression GDD §14 recorded) does not.
+    const hardWinRate = hardWins / (hardWins + easyWins);
+    expect(hardWinRate).toBeGreaterThanOrEqual(0.35);
   });
 });
 

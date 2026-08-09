@@ -52,18 +52,18 @@
   },
 
   "structures": {
-    "coreHealth": 200,
-    "towerHealth": 72,
+    "coreHealth": 320,
+    "towerHealth": 400,
     "coreRadius": 1.6,
     "towerRadius": 1.1,
     "towerRange": 9,
     "towerAttackInterval": 1.2,
-    "towerDamage": 4,
+    "towerDamage": 10,
     "topHeight": 2.6,
-    "siegeDamageMultiplier": 5.5,
-    "siegeRampStart": 2.6,
-    "siegeRampEnd": 4.0,
-    "siegeRampSuddenDeath": 4.5,
+    "siegeDamageMultiplier": 1.0,
+    "siegeRampStart": 1.0,
+    "siegeRampEnd": 2.0,
+    "siegeRampSuddenDeath": 2.5,
     "suddenDeathStructureDecay": 10
   },
 
