@@ -20,5 +20,13 @@ export default defineConfig({
     // Node game server. Both are covered by the same run as the client.
     include: ['src/**/*.test.ts', 'sim/**/*.test.ts', 'server/**/*.test.ts'],
     globals: true,
+    /*
+     * A handful of suites (matchStats, LocalSession, agency, siege) play whole
+     * headless matches — up to 15000 ticks of the real sim with both sides
+     * commanded. Those were already brushing the 5s default, and giving the
+     * two supports an attack (GDD §8) added a fourth shooter per team, which
+     * tipped them over. They are slow by design, not hung.
+     */
+    testTimeout: 30000,
   },
 });

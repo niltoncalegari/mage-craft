@@ -12,6 +12,7 @@ import { ParticleRenderer } from '../render/ParticleRenderer';
 import { PickupRenderer } from '../render/PickupRenderer';
 import { PlayerRenderer } from '../render/PlayerRenderer';
 import { PuddleRenderer } from '../render/PuddleRenderer';
+import { SupportRenderer } from '../render/SupportRenderer';
 import { SquadHighlightRenderer } from '../render/SquadHighlightRenderer';
 import { StructureRenderer } from '../render/StructureRenderer';
 import { IdAllocator } from '../ecs/Entity';
@@ -168,6 +169,7 @@ export class OnlineMatch {
       new ParticleRenderer(this.renderer.scene, this.assets, this.world, this.events),
       new PickupRenderer(this.renderer.scene, this.assets, this.world, this.events),
       new PuddleRenderer(this.renderer.scene, this.assets, this.world),
+      new SupportRenderer(this.renderer.scene, this.assets, this.world, this.events),
       new SquadHighlightRenderer(this.renderer.scene, this.world, () =>
         this.sync.entityIdFor(this.highlightedMageId),
       ),

@@ -32,6 +32,14 @@ export interface GameEvents {
    * Bênção you cast and one the enemy cast do not read the same.
    */
   SpellCast: { spellId: string; x: number; y: number; radius: number; friendly: boolean };
+  /**
+   * A mage gained health this snapshot (GDD §8 — the Cleric's heal). Derived
+   * on the client from the health delta the same way `PlayerHit` is, because
+   * the wire carries health but never says who topped whom up. `healerId` is
+   * the Cleric the client believes is responsible, or null when none is in
+   * range — pickups and spells heal too.
+   */
+  MageHealed: { playerId: EntityId; healerId: EntityId | null; x: number; y: number };
   PlayerDefeated: { playerId: EntityId; team: Team };
   PlayerRespawned: { playerId: EntityId; x: number; y: number };
   BuffPickedUp: { playerId: EntityId; buff: BuffType; x: number; y: number };

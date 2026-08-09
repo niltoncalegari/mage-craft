@@ -10,7 +10,16 @@
  * joined by `ElementId`, and `elements.test.ts` asserts the two lists agree.
  */
 
-export type ElementId = 'fire' | 'ice' | 'lightning' | 'poison' | 'stone' | 'arcane' | 'wind';
+export type ElementId =
+  | 'fire'
+  | 'ice'
+  | 'lightning'
+  | 'poison'
+  | 'stone'
+  | 'arcane'
+  | 'wind'
+  | 'holy'
+  | 'sonic';
 
 export interface ElementDef {
   readonly id: ElementId;
@@ -136,11 +145,37 @@ const CATALOG: Readonly<Record<ElementId, ElementDef>> = {
     knockback: 4.0,
     knockbackBonus: 4.5,
   },
+  holy: {
+    id: 'holy',
+    name: 'Lança de luz',
+    minSpeed: 7,
+    projectileSpeed: 16,
+    launchArc: 4.0,
+    gravity: 18,
+    radius: 0.2,
+    damage: 8,
+    knockback: 1.0,
+    splashRadius: 1.2,
+  },
+  sonic: {
+    id: 'sonic',
+    name: 'Onda sonora',
+    minSpeed: 9,
+    projectileSpeed: 20,
+    launchArc: 2.8,
+    gravity: 14,
+    radius: 0.22,
+    damage: 6,
+    knockback: 2.0,
+    // Dissonance nags rather than kills — a third of an Ice Sentinel's slow,
+    // for half its duration.
+    slowFactor: 0.15,
+    slowDuration: 0.6,
+  },
 };
 
 /**
- * Full catalog in GDD §8.1 display order. Room selection (GDD §7) uses all 7 so
- * a team of up to 6 mages always has a free element left to pick.
+ * Full catalog in GDD §8.1 display order, including the two support attacks.
  */
 export const ALL_ELEMENTS: readonly ElementId[] = [
   'fire',
@@ -150,7 +185,31 @@ export const ALL_ELEMENTS: readonly ElementId[] = [
   'stone',
   'arcane',
   'wind',
+  'holy',
+  'sonic',
 ];
+
+/**
+ * The elements a lobby seat may be assigned (GDD §7). `holy` and `sonic` are
+ * *class* attacks — they belong to the Cleric and the Bard and arrive with the
+ * squad, so auto-filling a bot seat with one would hand a Pyromancer a
+ * support's spell. All 7 offensive elements stay pickable, which still leaves a
+ * team of up to 6 mages a free one.
+ */
+export const PICKABLE_ELEMENTS: readonly ElementId[] = [
+  'fire',
+  'ice',
+  'lightning',
+  'poison',
+  'stone',
+  'arcane',
+  'wind',
+];
+
+/** Whether a lobby seat may select this element (see {@link PICKABLE_ELEMENTS}). */
+export function isPickableElement(value: string): value is ElementId {
+  return (PICKABLE_ELEMENTS as readonly string[]).includes(value);
+}
 
 export function elementDefFor(id: ElementId): ElementDef | undefined {
   return CATALOG[id];

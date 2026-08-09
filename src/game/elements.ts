@@ -4,7 +4,16 @@
  * until the elemental projectile pipeline lands.
  */
 
-export type ElementId = 'fire' | 'ice' | 'lightning' | 'poison' | 'stone' | 'arcane' | 'wind';
+export type ElementId =
+  | 'fire'
+  | 'ice'
+  | 'lightning'
+  | 'poison'
+  | 'stone'
+  | 'arcane'
+  | 'wind'
+  | 'holy'
+  | 'sonic';
 
 export interface ElementInfo {
   id: ElementId;
@@ -18,7 +27,10 @@ export interface ElementInfo {
   selectable: boolean;
 }
 
-/** Full catalog — all 7 elements are selectable in the Alpha menu. */
+/**
+ * Full catalog. The 7 offensive elements are selectable in the Alpha menu; the
+ * two support attacks are not — they come attached to the Cleric and the Bard.
+ */
 export const ELEMENTS: ReadonlyArray<ElementInfo> = [
   {
     id: 'fire',
@@ -68,6 +80,20 @@ export const ELEMENTS: ReadonlyArray<ElementInfo> = [
     role: 'Utility — low damage, strong shove.',
     color: 0xa8dadc,
     selectable: true,
+  },
+  {
+    id: 'holy',
+    name: 'Holy',
+    role: 'Cleric only — weak lance of light with a small blast.',
+    color: 0xffc93c,
+    selectable: false,
+  },
+  {
+    id: 'sonic',
+    name: 'Sonic',
+    role: 'Bard only — weak wave that shoves and nags with a short slow.',
+    color: 0xf72585,
+    selectable: false,
   },
 ] as const;
 

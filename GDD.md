@@ -280,8 +280,22 @@ de custo de mana morreu — escolher o esquadrão não gasta mana.
 | Arqueiro Arcano | Dano | 70 | 5.5 | `arcane` | Splash 2.0. Contra de grupo |
 | Alquimista | Dano | 70 | 5.0 | `poison` | Poça de 4 s nega terreno. Zoning, não burst |
 | Dervixe do Vento | Dano | 65 | 7.0 | `wind` | Dano baixo, knockback alto. Empurra tank para fora da cobertura |
-| Clérigo | Suporte | 95 | 5.0 | — | Cura o aliado ferido mais próximo, 8 HP/s, alcance 5 |
-| Bardo Arcano | Suporte | 70 | 5.0 | — | Aura: +25% velocidade de conjuração aos aliados em raio 4 |
+| Clérigo | Suporte | 95 | 5.0 | `holy` | Cura o aliado ferido mais próximo, 8 HP/s, alcance 5. Ataque fraco (dano 8, splash 1.2) |
+| Bardo Arcano | Suporte | 70 | 5.0 | `sonic` | Aura: +25% velocidade de conjuração aos aliados em raio 4. Ataque fraco (dano 6, lentidão 15% por 0.6 s) |
+
+> **Suporte passou a atacar.** Até aqui `ROLE_BEHAVIOR.support.attacks` era `false` e
+> os dois suportes ficavam parados no meio de um tiroteio, sem nada saindo do cajado —
+> o papel não *lia* como um mago. Agora cada um tem um elemento próprio, fraco de
+> propósito: os dois estão entre os quatro menores danos do catálogo, e a vontade de
+> atirar (`attackUrge` 0.45 contra 0.95) perde para escoltar e buscar cobertura na
+> maioria dos estados. Um suporte atira da posição que já estava segurando; ele não
+> larga o time para trocar tiro com uma Torre.
+>
+> O elemento próprio também resolve leitura: `holy` e `sonic` tingem chapéu e gema
+> pelo `ELEMENT_TINT`, então o Clérigo é o mago dourado e o Bardo o rosa da arena.
+> Antes os dois usavam `arcane`, indistinguíveis do Arqueiro Arcano.
+> Nenhum dos dois é selecionável no lobby (`PICKABLE_ELEMENTS`): são ataques de
+> classe, chegam com o esquadrão.
 
 ### Cartas — buffs e maldições (a mão)
 
@@ -527,7 +541,7 @@ As três primeiras são consequência direta da v1.1 e estão em ordem de gravid
 4. **Qual a regra de construção do baralho?** A da v1.0 morreu com a invocação (§7). Sem regra, o baralho degenerado provável é só maldição, ou só o efeito mais barato para ciclar rápido. Depende das 4 cartas que faltam (§9).
 5. **Assíncrono depois?** Real-time foi escolhido e é o que está sendo construído. Assíncrono continua possível *sem retrabalho*: a sim é determinística e headless, então "lutar contra o esquadrão e o baralho gravados de outro jogador" é rodar o mesmo `World` sem socket. Decisão adiada de propósito, não esquecida.
 6. **Duas Torres ou uma?** A §5 propõe duas + imunidade do Núcleo, e o mapa `siege1.json` foi construído assim. Duas dão forma de flanco à partida; uma é mais simples de balancear.
-7. **O Suporte é legível?** É o papel com maior risco de o jogador não perceber o efeito. Piora na v1.1: agora o Clérigo cura *e* o jogador joga cura, e os dois precisam ser distinguíveis na tela.
+7. **O Suporte é legível?** É o papel com maior risco de o jogador não perceber o efeito. Piora na v1.1: agora o Clérigo cura *e* o jogador joga cura, e os dois precisam ser distinguíveis na tela. **Atacado, não fechado:** o suporte agora tem ataque próprio (§9), anel de área no chão marcando o alcance real e feixe do Clérigo até quem ele curou (`SupportRenderer`). Falta medir se o jogador atribui o efeito ao mago certo quando uma Bênção jogada e um Clérigo agem no mesmo aglomerado.
 8. **Practice mode.** Continua congelado em `src/systems/**` com o modelo antigo. Descreve um jogo que não existe mais há duas versões — decidir se vira tutorial do modelo novo ou se sai.
 
 ---
@@ -543,6 +557,7 @@ não controla ninguém — se ele não consegue ler o campo, ele não tem jogo.
 - **Chão: gramado com trilhas de terra.** Era neve. A terra marca as rotas por onde as unidades andam, o que dá referência espacial num campo aberto. Pintado proceduralmente num canvas — grama mosqueada em três tons, trilhas com bordas que desbotam. **Grama volumétrica animada por shader foi tentada e descartada**: 13 mil lâminas com vento no vertex shader leem como sujeira tremendo numa câmera afastada, não como grama.
 - **Identidade do mago, em três camadas** (implementa a linha "Legibilidade" da §2): **time pela cor do corpo** (nunca perder "quem é meu"), **papel pela silhueta** conforme a §8 (tank grande e pesado, dano magro e alto, suporte pequeno e curvado), **elemento pelo acento** (chapéu, cajado, gema). O fio já carrega `role`, `element` e `cardId` por mago — é trabalho de render, não de protocolo.
 - **Efeito ativo tem que ser visível no mago.** Na v1.1 o jogo inteiro é aplicar efeito; buff invisível é carta que o jogador não sabe se funcionou.
+- **Cada elemento tem silhueta, não só cor.** Todo projétil já foi a mesma `SphereGeometry` recolorida, e o resultado foi que o pedregulho do Golem lia como bola de neve e só o raio — o único com malha própria — lia como feitiço. A cor não sobrevive à distância da câmera de partida; a forma sobrevive. Cada elemento tem corpo próprio em `src/render/projectileGeometry.ts` (rocha facetada que tomba, estilhaço que aponta para onde vai, gosma que se deforma, orbe com anel de runas, lâmina em meia-lua, sigilo, onda concêntrica) e giro próprio. Continua tudo primitiva de Three.js gerada em código, conforme a regra acima.
 - **Estruturas:** Núcleo e Torre compartilham a linguagem de cristal sobre pedra, com escudo visível enquanto o Núcleo é imune.
 
 ### Áudio

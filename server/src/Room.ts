@@ -9,7 +9,7 @@
  * those stay independently testable and are wired together in App.ts.
  */
 
-import { ALL_ELEMENTS, elementDefFor, type ElementId } from '../../sim/elements';
+import { isPickableElement, PICKABLE_ELEMENTS, type ElementId } from '../../sim/elements';
 import { TEAM_A, TEAM_B, type Team } from '../../sim/entities';
 import { World } from '../../sim/World';
 
@@ -198,7 +198,10 @@ export class Room {
     if (mem.team === null) {
       throw new Error(`room: player ${playerId} must select a team before an element`);
     }
-    if (!elementDefFor(element as ElementId)) {
+    // Not merely "is this an element": `holy` and `sonic` are the Cleric's and
+    // the Bard's own attacks and arrive with the squad, so a seat may not claim
+    // one (GDD §7).
+    if (!isPickableElement(element)) {
       throw new Error(`room: unknown element ${JSON.stringify(element)}`);
     }
     if (!this.canSelectElement(mem.team, element as ElementId)) {
@@ -440,7 +443,7 @@ export class Room {
   }
 
   private firstFreeElement(team: Team): ElementId | null {
-    return ALL_ELEMENTS.find((id) => this.canSelectElement(team, id)) ?? null;
+    return PICKABLE_ELEMENTS.find((id) => this.canSelectElement(team, id)) ?? null;
   }
 
   /** Exposed for tests; App goes through slots(). */

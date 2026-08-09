@@ -3,6 +3,7 @@ import type { EventBus } from '../core/EventBus';
 import { DAMAGE, SIM } from '../game/config';
 import { isElementId, type ElementId } from '../game/elements';
 import { launchSnowball } from '../game/Snowball';
+import { rosterFor } from '../../sim/cards';
 import { isRole } from '../../sim/roles';
 import { type AnimationName, PlayerState, Team, type Player, type Structure } from '../game/types';
 import type { World } from '../game/World';
@@ -378,6 +379,21 @@ export class SnapshotSync {
       player.velocity.set((m.position.x - track.prevX) / dtSim, (m.position.y - track.prevY) / dtSim);
     }
 
+    // Deliberately outside the animation chain below: being healed is not a
+    // pose, and folding it in there would cost the mage its walk/charge
+    // animation for the tick it happened to be topped up on.
+    if (player.alive && !respawned && m.health > track.prevHealth) {
+      // Health only ever goes up from a heal, and the wire never says who did
+      // it — the healer is inferred the way the sim picks its target, so the
+      // beam lands on the pair a player would have guessed anyway.
+      this.events.emit('MageHealed', {
+        playerId: player.id,
+        healerId: this.findHealerFor(player),
+        x: m.position.x,
+        y: m.position.y,
+      });
+    }
+
     if (!player.alive) {
       if (track.prevHealth > 0) {
         this.events.emit('PlayerDefeated', { playerId: player.id, team: player.team });
@@ -408,6 +424,35 @@ export class SnapshotSync {
     track.prevHealth = m.health;
     track.prevX = m.position.x;
     track.prevY = m.position.y;
+  }
+
+  /**
+   * The Cleric most likely responsible for topping `target` up: the closest
+   * living ally carrying the holy element, within its heal range. Mirrors
+   * `World.healPulse`'s range check rather than its "most hurt ally" pick,
+   * because from here the *healed* mage is the known end of the pair.
+   *
+   * Returns null when nothing qualifies — a pickup or a cast spell also raises
+   * health, and drawing a beam from nobody would be a lie.
+   */
+  private findHealerFor(target: Player): EntityId | null {
+    const range = rosterFor('cleric')?.healRange ?? 0;
+    if (range <= 0) return null;
+
+    let best: EntityId | null = null;
+    let bestDistanceSq = range * range;
+    for (const other of this.world.players) {
+      if (other === target || !other.alive || other.team !== target.team) continue;
+      if (other.element !== 'holy') continue;
+
+      const dx = other.position.x - target.position.x;
+      const dy = other.position.y - target.position.y;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq > bestDistanceSq) continue;
+      bestDistanceSq = distanceSq;
+      best = other.id;
+    }
+    return best;
   }
 
   private setAnimation(player: Player, state: PlayerState, animation: AnimationName): void {

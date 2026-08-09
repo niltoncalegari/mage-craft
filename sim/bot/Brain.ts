@@ -416,8 +416,9 @@ export class Brain {
     else if (cooldownReady) takeCover = 0.48;
     else takeCover = 0.72;
 
-    // Supports never throw, so attacking is not on their menu at all (GDD §8).
-    const attack = role.attacks && p.hasLos && inRange && cooldownReady ? 0.95 : 0;
+    // A support throws too, but its urge is low enough that escorting and
+    // taking cover routinely outscore it (GDD §8).
+    const attack = role.attacks && p.hasLos && inRange && cooldownReady ? role.attackUrge : 0;
 
     let advance = 0;
     if (hasTarget) {
@@ -546,7 +547,9 @@ export class Brain {
     st: BotState,
   ): { move: Vec2; aim: Vec2 | null } {
     const role = ROLE_BEHAVIOR[bot.role];
-    if (!role.attacks) return { move: this.escort(w, bot, st), aim: null };
+    // A support can shoot, but it must not walk off alone to trade with a
+    // Tower — the escort is the job, so it keeps that even holding an attack.
+    if (role.escorts) return { move: this.escort(w, bot, st), aim: null };
 
     if (
       distance <= ENGAGE_RANGE &&
@@ -971,7 +974,9 @@ function mostAdvancedAlly(w: World, bot: Mage): Mage | null {
   for (const id of sortedMageIds(w)) {
     const m = w.mage(id);
     if (!m || m === bot || !m.alive || m.team !== bot.team) continue;
-    if (!ROLE_BEHAVIOR[m.role].attacks) continue;
+    // Whoever escorts is not escorted: two supports following each other would
+    // leave the line they exist to hold up.
+    if (ROLE_BEHAVIOR[m.role].escorts) continue;
     const reach = m.position.x * forward;
     if (reach > bestReach) {
       bestReach = reach;

@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { defaultSquad } from './cards';
 import {
+  CHARGE_TIME,
   MANA_MAX,
   MANA_REGEN_INTERVAL,
   MANA_START,
@@ -18,13 +19,21 @@ import {
   SQUAD_SIZE,
   TOWER_RANGE,
 } from './config';
-import { TEAM_A, TEAM_B, type Structure } from './entities';
+import { emptyInput, TEAM_A, TEAM_B, type Structure } from './entities';
 import { spellFor } from './spells';
 import { Vec2 } from './Vec2';
 import { World } from './World';
 
 function stepN(w: World, n: number): void {
   for (let i = 0; i < n; i++) w.step(SIM_DT);
+}
+
+/** Drives a mage through a full charge and a release, as World.test.ts does. */
+function fullyChargeAndRelease(w: World, id: string, target: Vec2): void {
+  w.setInput(id, { ...emptyInput(), aim: target, charging: true });
+  stepN(w, Math.floor(CHARGE_TIME / SIM_DT) + 5);
+  w.setInput(id, { ...emptyInput(), aim: target, release: true });
+  w.step(SIM_DT);
 }
 
 function towersOf(w: World, team: number): Structure[] {
@@ -350,5 +359,41 @@ describe('supports', () => {
     w.step(SIM_DT);
 
     expect(solo.chargeRateBonus).toBeGreaterThan(0);
+  });
+
+  /**
+   * Supports throw now (GDD §8) — a weak attack of their own, so a Cleric
+   * standing behind the line is not a spectator. Each carries its *own*
+   * element, which is what makes the two of them tellable apart on the field
+   * from the Arcane Archer they used to share `arcane` with.
+   */
+  it('gives each support its own attack', () => {
+    const w = new World();
+    const cleric = w.summon(TEAM_A, 'cleric', new Vec2(-10, 0));
+    const bard = w.summon(TEAM_A, 'arcane_bard', new Vec2(-10, 4));
+
+    // Read each shot right after its own release: a support's projectile is a
+    // slow lob, and it has already landed by the time the other has charged.
+    fullyChargeAndRelease(w, cleric.id, new Vec2(10, 0));
+    const clericShots = [...w.projectiles.values()].map((p) => p.element);
+
+    fullyChargeAndRelease(w, bard.id, new Vec2(10, 4));
+    const bardShots = [...w.projectiles.values()].map((p) => p.element);
+
+    expect(clericShots).toContain('holy');
+    expect(bardShots).toContain('sonic');
+  });
+
+  /** Throwing must not cost the Cleric the thing it is actually for. */
+  it('keeps healing while it attacks', () => {
+    const w = new World();
+    const hurt = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    hurt.health = 20;
+    const cleric = w.summon(TEAM_A, 'cleric', new Vec2(-10, 1.6));
+
+    fullyChargeAndRelease(w, cleric.id, new Vec2(10, 0));
+
+    expect([...w.projectiles.values()].some((p) => p.element === 'holy')).toBe(true);
+    expect(hurt.health).toBeGreaterThan(20);
   });
 });

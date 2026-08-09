@@ -29,8 +29,9 @@ export interface RosterEntry {
   readonly health: number;
   readonly moveSpeed: number;
   /**
-   * The attack this mage throws. Supports carry an element that is never
-   * fired (their `ROLE_BEHAVIOR.attacks` is false) — they win fights by
+   * The attack this mage throws — one element per roster entry, so a mage is
+   * identifiable by the spell leaving its staff. Supports throw too, but weakly
+   * and reluctantly (`ROLE_BEHAVIOR.attackUrge`): they still win fights by
    * multiplying whoever stands next to them, per GDD §8.
    */
   readonly element: ElementId;
@@ -105,7 +106,7 @@ const CATALOG: Readonly<Record<RosterId, RosterEntry>> = {
     role: 'support',
     health: 95,
     moveSpeed: 5.0,
-    element: 'arcane',
+    element: 'holy',
     healPerSecond: 8,
     healRange: 5,
   },
@@ -115,7 +116,7 @@ const CATALOG: Readonly<Record<RosterId, RosterEntry>> = {
     role: 'support',
     health: 70,
     moveSpeed: 5.0,
-    element: 'arcane',
+    element: 'sonic',
     auraChargeBonus: 0.25,
     auraRadius: 4,
   },

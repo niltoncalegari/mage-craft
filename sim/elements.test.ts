@@ -4,14 +4,16 @@ import {
   ALL_ELEMENTS,
   elementDefFor,
   isElementId,
+  isPickableElement,
+  PICKABLE_ELEMENTS,
   type ElementDef,
   type ElementId,
 } from './elements';
 
 describe('element catalog', () => {
-  it('has 7 unique ids, each resolving to a definition', () => {
-    expect(ALL_ELEMENTS).toHaveLength(7);
-    expect(new Set(ALL_ELEMENTS).size).toBe(7);
+  it('has 9 unique ids, each resolving to a definition', () => {
+    expect(ALL_ELEMENTS).toHaveLength(9);
+    expect(new Set(ALL_ELEMENTS).size).toBe(9);
     for (const id of ALL_ELEMENTS) {
       expect(elementDefFor(id), id).toBeDefined();
       expect(isElementId(id)).toBe(true);
@@ -20,9 +22,26 @@ describe('element catalog', () => {
   });
 
   /**
+   * The Cleric's and the Bard's attacks are theirs — they arrive with the
+   * squad, so a lobby seat must not be able to claim one and neither may the
+   * bot auto-fill (see `Room.firstFreeElement`).
+   */
+  it('keeps the two support attacks out of lobby selection', () => {
+    expect(PICKABLE_ELEMENTS).toHaveLength(7);
+    expect(PICKABLE_ELEMENTS).not.toContain('holy');
+    expect(PICKABLE_ELEMENTS).not.toContain('sonic');
+    for (const id of PICKABLE_ELEMENTS) expect(isPickableElement(id)).toBe(true);
+    expect(isPickableElement('holy')).toBe(false);
+    expect(isPickableElement('sonic')).toBe(false);
+    // Still real elements, just not selectable ones.
+    expect(elementDefFor('holy')).toBeDefined();
+    expect(elementDefFor('sonic')).toBeDefined();
+  });
+
+  /**
    * The combat half of the catalog lives here; the presentation half (display
    * name, role blurb, UI colour) lives in `src/game/elements.ts`. They're joined
-   * by id, so they have to list the same 7 in the same order.
+   * by id, so they have to list the same ones in the same order.
    */
   it('agrees with the client’s presentation catalog', () => {
     expect(ELEMENTS.map((e) => e.id)).toEqual([...ALL_ELEMENTS]);
@@ -57,5 +76,34 @@ describe('element catalog', () => {
     expect(poison.puddleDuration).toBeGreaterThan(0);
     expect(arcane.splashRadius).toBeGreaterThan(0);
     expect(wind.knockbackBonus).toBeGreaterThan(0);
+  });
+
+  /**
+   * A support that out-trades a damage dealer is not a support. These are the
+   * numbers that keep the Cleric's and the Bard's new attacks (GDD §8) a
+   * nuisance rather than a second damage role.
+   */
+  it('keeps the support attacks weaker than every offensive element', () => {
+    const def = (id: ElementId): ElementDef => {
+      const d = elementDefFor(id);
+      if (!d) throw new Error(`missing element ${id}`);
+      return d;
+    };
+    // Not "weaker than everything": wind already trades nearly all its damage
+    // for knockback (§8.7), so the floor is not the bar. The bar is the
+    // reference damage dealer — a support must never trade like a Pyromancer.
+    expect(def('holy').damage).toBeLessThan(def('fire').damage);
+    expect(def('sonic').damage).toBeLessThan(def('fire').damage);
+    // And both sit among the four softest hits in the game, alongside the two
+    // offensive elements that already trade damage away (wind's shove, poison's
+    // puddle) rather than anywhere near the elements that exist to kill.
+    const byDamage = [...ALL_ELEMENTS].sort((a, b) => def(a).damage - def(b).damage);
+    expect(byDamage.slice(0, 4)).toContain('holy');
+    expect(byDamage.slice(0, 4)).toContain('sonic');
+    // Both still do something on impact, or they would be worse than silence.
+    expect(def('holy').splashRadius).toBeGreaterThan(0);
+    expect(def('sonic').slowFactor).toBeGreaterThan(0);
+    // ...but the Bard nags where the Sentinel controls (§8.3).
+    expect(def('sonic').slowFactor ?? 0).toBeLessThan(def('ice').slowFactor ?? 0);
   });
 });

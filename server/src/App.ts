@@ -8,7 +8,7 @@ import { isRosterId, type RosterId } from '../../sim/cards';
 import type { Team } from '../../sim/entities';
 import { TEAM_A, TEAM_B } from '../../sim/entities';
 import { defaultDeck, validateDeck } from '../../sim/Deck';
-import { ALL_ELEMENTS } from '../../sim/elements';
+import { PICKABLE_ELEMENTS } from '../../sim/elements';
 import type { MatchSummary } from '../../sim/matchStats';
 import { validateSquad } from '../../sim/squad';
 import { isSpellId, type CardId } from '../../sim/spells';
@@ -42,7 +42,7 @@ import { Session, type Snapshot } from './Session';
 const MATCHMAKING_INTERVAL_MS = 1000;
 
 /** Element assigned to a queued seat; vestigial lobby state, see startQueuedMatch. */
-const QUEUE_ELEMENT = ALL_ELEMENTS[0];
+const QUEUE_ELEMENT = PICKABLE_ELEMENTS[0];
 
 /** How hard the queue's fallback commander plays (GDD §10). */
 const QUEUE_BOT_DIFFICULTY = 'normal';

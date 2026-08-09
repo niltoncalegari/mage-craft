@@ -11,8 +11,15 @@
 export type Role = 'tank' | 'damage' | 'support';
 
 export interface RoleBehavior {
-  /** Supports never throw; they win by multiplying whoever stands with them. */
+  /** Whether this role throws at all. */
   readonly attacks: boolean;
+  /**
+   * How badly it wants to throw when it has a target, line of sight and a
+   * ready cooldown. This is what keeps a support a support now that it *can*
+   * shoot: at 0.45 the urge loses to escorting and taking cover in most
+   * states, so a Cleric only fires from a position it was already holding.
+   */
+  readonly attackUrge: number;
   /** How close the unit closes on its target before holding position. */
   readonly advanceStopDistance: number;
   /** Tanks walk past skirmishes and go for the structure — that's their job. */
@@ -28,6 +35,7 @@ export interface RoleBehavior {
 export const ROLE_BEHAVIOR: Readonly<Record<Role, RoleBehavior>> = {
   tank: {
     attacks: true,
+    attackUrge: 0.95,
     advanceStopDistance: 2.0,
     prefersStructures: true,
     escorts: false,
@@ -36,6 +44,7 @@ export const ROLE_BEHAVIOR: Readonly<Record<Role, RoleBehavior>> = {
   },
   damage: {
     attacks: true,
+    attackUrge: 0.95,
     advanceStopDistance: 6.5,
     prefersStructures: false,
     escorts: false,
@@ -43,7 +52,8 @@ export const ROLE_BEHAVIOR: Readonly<Record<Role, RoleBehavior>> = {
     retreatHealthFraction: 0.3,
   },
   support: {
-    attacks: false,
+    attacks: true,
+    attackUrge: 0.45,
     advanceStopDistance: 4.0,
     prefersStructures: false,
     escorts: true,

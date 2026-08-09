@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapéu de Mago no Three.js</title>
+  <style>
+    body { margin: 0; overflow: hidden; background-color: #1a1a2e; }
+    canvas { display: block; }
+  </style>
+  <!-- Import Map para carregar o Three.js via CDNs -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+
+<script type="module">
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+  // 1. Configuração da Cena, Câmera e Renderizador
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 3, 7);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  // Controles de Órbita (Mouse)
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+
+  // 2. Iluminação
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+  scene.add(ambientLight);
+
+  const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+  dirLight.position.set(5, 10, 7);
+  dirLight.castShadow = true;
+  scene.add(dirLight);
+
+  // 3. Função para Criar o Chapéu de Mago
+  function createWizardHat() {
+    const hatGroup = new THREE.Group();
+
+    // Materiais
+    const hatMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x2b1055, // Roxo escuro
+      roughness: 0.8,
+      metalness: 0.1
+    });
+
+    const ribbonMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xd4af37, // Dourado
+      roughness: 0.4,
+      metalness: 0.6
+    });
+
+    const buckleMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xe5e5e5, // Prata metálico
+      roughness: 0.2,
+      metalness: 0.9
+    });
+
+    // --- A. Aba do Chapéu (Cilindro muito fino) ---
+    const brimGeo = new THREE.CylinderGeometry(2.2, 2.2, 0.08, 32);
+    const brim = new THREE.Mesh(brimGeo, hatMaterial);
+    brim.position.y = 0.04;
+    brim.castShadow = true;
+    brim.receiveShadow = true;
+    hatGroup.add(brim);
+
+    // --- B. Cone Principal (Cilindro cônico) ---
+    // CylinderGeometry(raioTopo, raioBase, altura, segmentos)
+    const coneGeo = new THREE.CylinderGeometry(0.05, 1.3, 3, 32);
+    const cone = new THREE.Mesh(coneGeo, hatMaterial);
+    cone.position.y = 1.5;
+    cone.castShadow = true;
+
+    // Entortar a ponta do chapéu para um visual mágico
+    const positionAttribute = coneGeo.attributes.position;
+    for (let i = 0; i < positionAttribute.count; i++) {
+      const y = positionAttribute.getY(i);
+      // Quanto mais alto o vértice, mais ele se desloca no eixo Z e X
+      if (y > 0) {
+        const factor = Math.pow((y + 1.5) / 3, 2);
+        positionAttribute.setZ(i, positionAttribute.getZ(i) - factor * 0.4);
+        positionAttribute.setX(i, positionAttribute.getX(i) + factor * 0.2);
+      }
+    }
+    coneGeo.computeVertexNormals(); // Recalcula iluminação após deformação
+    hatGroup.add(cone);
+
+    // --- C. Fita/Cinto Dourado ---
+    const ribbonGeo = new THREE.CylinderGeometry(1.32, 1.32, 0.25, 32, 1, true);
+    const ribbon = new THREE.Mesh(ribbonGeo, ribbonMaterial);
+    ribbon.position.y = 0.18;
+    hatGroup.add(ribbon);
+
+    // --- D. Fivela do Cinto ---
+    const buckleGeo = new THREE.BoxGeometry(0.35, 0.35, 0.08);
+    const buckle = new THREE.Mesh(buckleGeo, buckleMaterial);
+    buckle.position.set(0, 0.18, 1.32);
+    hatGroup.add(buckle);
+
+    return hatGroup;
+  }
+
+  // Adicionar o chapéu na cena
+  const wizardHat = createWizardHat();
+  scene.add(wizardHat);
+
+  // Chão simples para receber sombra
+  const floorGeo = new THREE.PlaneGeometry(10, 10);
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0x111122, roughness: 0.9 });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // Redimensionamento de Tela
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // Loop de Animação
+  function animate() {
+    requestAnimationFrame(animate);
+    
+    // Rotação suave do chapéu
+    wizardHat.rotation.y += 0.005;
+    
+    controls.update();
+    renderer.render(scene, camera);
+  }
+
+  animate();
+</script>
+</body>
+</html>

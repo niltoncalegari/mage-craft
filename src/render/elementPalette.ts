@@ -29,6 +29,12 @@ export const ELEMENT_TINT: Readonly<Record<ElementId, ElementTint>> = {
   stone: { core: 0xc7cdd6, glow: 0x8d99ae },
   arcane: { core: 0xe6d1ff, glow: 0x9b5de5 },
   wind: { core: 0xf3fbfb, glow: 0xa8dadc },
+  // The two support attacks. Gold and magenta are the only hues left that no
+  // offensive element already owns, which is the point: a Cleric and a Bard
+  // have to be findable in a melee, and the hat/gem tint from here is what
+  // does that (see PlayerRenderer).
+  holy: { core: 0xfff3c4, glow: 0xffc93c },
+  sonic: { core: 0xffd9f0, glow: 0xf72585 },
 };
 
 /**

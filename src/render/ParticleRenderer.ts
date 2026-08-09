@@ -3,13 +3,21 @@ import type { EventBus } from '../core/EventBus';
 import type { GameRenderer } from '../core/Game';
 import type { EntityId } from '../ecs/Entity';
 import type { AssetManager } from '../engine/AssetManager';
-import { PLAYER, SNOWBALL, TEAM_COLORS, BUFF_COLORS } from '../game/config';
+import { PLAYER, SNOWBALL, BUFF_COLORS } from '../game/config';
 import type { ElementId } from '../game/elements';
 import type { Player, Puddle, Snowball } from '../game/types';
 import type { World } from '../game/World';
 import { toThree } from './coords';
 import { ELEMENT_TINT } from './elementPalette';
 import { LightningBolt } from './LightningBolt';
+import {
+  AXIAL_SHAPES,
+  FACING_SHAPES,
+  projectileGeometry,
+  runeRingGeometry,
+  UPRIGHT_SPIN_SHAPES,
+  type ProjectileShape,
+} from './projectileGeometry';
 
 const SNOWBALL_POOL_SIZE = 64;
 const PARTICLE_POOL_SIZE = 900;
@@ -70,6 +78,37 @@ const BOLT = {
 } as const;
 
 /**
+ * How fast a projectile turns over in flight, in radians per second. Spin is
+ * what separates a thrown *object* from a conjured light: a boulder tumbles,
+ * a shard rolls around its point, a blade whirls. Anything conjured (orb,
+ * glob, sigil) turns slowly or not at all.
+ */
+const SPIN_RATE: Readonly<Record<ProjectileShape, number>> = {
+  orb: 0,
+  bolt: 0,
+  rock: 4.2,
+  shard: 9.0,
+  glob: 1.4,
+  runeOrb: 0,
+  blade: 16.0,
+  sigil: 2.2,
+  wave: 0,
+};
+
+/** Model-space axes the oriented shapes are built along; see `projectileGeometry`. */
+const UNIT_Y = new THREE.Vector3(0, 1, 0);
+const UNIT_Z = new THREE.Vector3(0, 0, 1);
+
+/** How fast the Archer's rune band turns around its orb, in rad/s. */
+const RUNE_RING_SPIN = 3.4;
+/** Peak extra scale of the Bard's wave as it breathes, and how fast it breathes. */
+const WAVE_PULSE = 0.22;
+const WAVE_PULSE_HZ = 6.5;
+/** How far the Alchemist's glob squashes and stretches, and how fast. */
+const GLOB_WOBBLE = 0.18;
+const GLOB_WOBBLE_HZ = 3.2;
+
+/**
  * Per-element look (GDD §17: "efeito ativo tem que ser visível"). One entry
  * drives the projectile's own material, the particle tail it sheds in
  * flight, and its impact burst/shockwave — so a fireball, a frost shard and
@@ -78,11 +117,23 @@ const BOLT = {
  */
 interface ElementVfx {
   /**
-   * What the projectile *is*. Most elements are a conjured ball; lightning is
-   * a discharge and gets a jagged arc instead (see {@link LightningBolt}) —
-   * a recolored sphere never read as a bolt.
+   * What the projectile *is* — its silhouette, built in
+   * {@link projectileGeometry}. This is the element's primary identity: at
+   * match zoom a recolored sphere reads as the same spell for everyone, so
+   * fire keeps the conjured ball and everything else gets its own body.
    */
-  shape: 'orb' | 'bolt';
+  shape: ProjectileShape;
+  /**
+   * Facet the body instead of smoothing it. What makes a rock look chipped
+   * rather than inflated; wrong for anything conjured.
+   */
+  flatShading?: boolean;
+  /**
+   * A thrown object lit by the arena rather than a spell lighting itself.
+   * Kills the emissive glow and roughens the surface — a boulder that glowed
+   * read as a magic orb painted grey, which is exactly the bug this fixes.
+   */
+  matte?: boolean;
   /** Projectile body color + emissive glow. Shared with the caster's gem and hat band via {@link ELEMENT_TINT}. */
   core: number;
   glow: number;
@@ -140,7 +191,8 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     smoke: true,
   },
   ice: {
-    shape: 'orb',
+    shape: 'shard',
+    flatShading: true,
     ...ELEMENT_TINT.ice,
     trailColor: 0x8fe3ff,
     trailSize: 0.08,
@@ -149,7 +201,9 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     impactCount: 14,
     impactSpeed: 2.2,
     gravityScale: 0.8,
-    visualScale: 0.95,
+    // A dart is read by its length, not its girth: the shard geometry is
+    // already 2.2 long, so the scale here only has to keep it slim.
+    visualScale: 0.9,
     ring: true,
     ringScale: 1.8,
     smoke: false,
@@ -170,11 +224,13 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     smoke: false,
   },
   poison: {
-    shape: 'orb',
+    shape: 'glob',
     ...ELEMENT_TINT.poison,
     trailColor: 0x9bd63d,
     trailSize: 0.09,
-    trailRate: 20,
+    // Lowered to pay for the drips below: the particle pool is fixed, so a new
+    // effect has to come out of an existing one rather than on top of it.
+    trailRate: 14,
     impactColors: [0xb6e84a, 0x80b918, 0x5c8a12],
     impactCount: 12,
     impactSpeed: 1.6,
@@ -185,13 +241,16 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     smoke: false,
   },
   stone: {
-    shape: 'orb',
+    shape: 'rock',
+    flatShading: true,
+    // The one projectile that is not magic — it is a rock someone threw.
+    matte: true,
     ...ELEMENT_TINT.stone,
     trailColor: 0x9aa4b2,
-    trailSize: 0.1,
-    trailRate: 10,
+    trailSize: 0.12,
+    trailRate: 8,
     impactColors: [0xdbe6f2, 0x8d99ae, 0x6b7480],
-    impactCount: 14,
+    impactCount: 16,
     impactSpeed: 2.1,
     gravityScale: 1.4,
     visualScale: 1.35,
@@ -200,7 +259,7 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     smoke: true,
   },
   arcane: {
-    shape: 'orb',
+    shape: 'runeOrb',
     ...ELEMENT_TINT.arcane,
     trailColor: 0xc9a6f5,
     trailSize: 0.1,
@@ -209,13 +268,15 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     impactCount: 16,
     impactSpeed: 2.4,
     gravityScale: 0.7,
-    visualScale: 1.05,
+    // Smaller than it was: the rune band around it now carries the size.
+    visualScale: 0.85,
     ring: true,
     ringScale: 2.0,
     smoke: false,
   },
   wind: {
-    shape: 'orb',
+    shape: 'blade',
+    flatShading: true,
     ...ELEMENT_TINT.wind,
     trailColor: 0xd7f1f2,
     trailSize: 0.07,
@@ -224,9 +285,40 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     impactCount: 14,
     impactSpeed: 3.0,
     gravityScale: 0.4,
-    visualScale: 0.85,
+    visualScale: 1.1,
     ring: true,
     ringScale: 2.6,
+    smoke: false,
+  },
+  holy: {
+    shape: 'sigil',
+    ...ELEMENT_TINT.holy,
+    trailColor: 0xffe9a8,
+    trailSize: 0.075,
+    trailRate: 18,
+    impactColors: [0xfff8e1, 0xffc93c, 0xff9e00],
+    impactCount: 12,
+    impactSpeed: 2.0,
+    gravityScale: 0.5,
+    visualScale: 1.15,
+    ring: true,
+    ringScale: 1.9,
+    smoke: false,
+  },
+  sonic: {
+    shape: 'wave',
+    ...ELEMENT_TINT.sonic,
+    trailColor: 0xff8fd0,
+    trailSize: 0.06,
+    trailRate: 16,
+    impactColors: [0xffd9f0, 0xf72585, 0xb5179e],
+    impactCount: 12,
+    impactSpeed: 2.8,
+    gravityScale: 0.4,
+    visualScale: 1.0,
+    // A wide, thin shockwave: the Bard's hit shoves, so the ring is the tell.
+    ring: true,
+    ringScale: 2.8,
     smoke: false,
   },
 };
@@ -307,8 +399,19 @@ interface SnowballSlot {
   /** Built on demand: only lightning needs these, and most matches never field it. */
   bolt: LightningBolt | null;
   boltGlow: LightningBolt | null;
+  /** Built on demand too: the rune band only the Archer's orb wears. */
+  runeRing: THREE.Mesh<THREE.BufferGeometry, THREE.Material> | null;
   snowballId: number;
   lastTrailTick: number;
+  /**
+   * Tumble axis and phase, re-rolled for every projectile that lands in this
+   * slot. Slots are handed out by index each frame, so without a reset the next
+   * boulder would inherit the last one's rotation and pop.
+   */
+  spinAxisX: number;
+  spinAxisY: number;
+  spinAxisZ: number;
+  spinPhase: number;
 }
 
 interface ParticleSlot {
@@ -394,6 +497,9 @@ interface PlayerFxState {
 export class ParticleRenderer implements GameRenderer {
   private readonly group = new THREE.Group();
   private readonly tmp = new THREE.Vector3();
+  /** Scratch heading + roll for {@link orientBody}; reused so flight allocates nothing. */
+  private readonly tmpDir = new THREE.Vector3();
+  private readonly tmpSpin = new THREE.Quaternion();
   private readonly snowballSlots: SnowballSlot[] = [];
   private readonly particleSlots: ParticleSlot[] = [];
   private readonly footprintSlots: FootprintSlot[] = [];
@@ -420,10 +526,9 @@ export class ParticleRenderer implements GameRenderer {
     this.group.name = 'ParticleRenderer';
     this.scene.add(this.group);
 
-    const snowballGeometry = assets.geometry(
-      'particle-renderer-snowball-sphere',
-      () => new THREE.SphereGeometry(1, 12, 10),
-    );
+    // Slots open on the plain orb; `applySlotElement` swaps in the shape the
+    // element actually wants the moment a projectile claims the slot.
+    const snowballGeometry = projectileGeometry(assets, 'orb');
     this.defaultBallMaterial = assets.standardMaterial(WHITE, false);
     const particleGeometry = assets.geometry(
       'particle-renderer-puff-sphere',
@@ -453,7 +558,18 @@ export class ParticleRenderer implements GameRenderer {
       mesh.visible = false;
       this.group.add(mesh);
 
-      this.snowballSlots.push({ mesh, bolt: null, boltGlow: null, snowballId: -1, lastTrailTick: -1 });
+      this.snowballSlots.push({
+        mesh,
+        bolt: null,
+        boltGlow: null,
+        runeRing: null,
+        snowballId: -1,
+        lastTrailTick: -1,
+        spinAxisX: 0,
+        spinAxisY: 1,
+        spinAxisZ: 0,
+        spinPhase: 0,
+      });
     }
 
     for (let i = 0; i < PARTICLE_POOL_SIZE; i++) {
@@ -601,7 +717,16 @@ export class ParticleRenderer implements GameRenderer {
       if (cfg.ring) this.spawnRing(event.x, event.y, cfg.glow, cfg.ringScale);
     });
     this.offPlayerHit = events.on('PlayerHit', (event) => {
-      this.spawnBurst(event.x, event.y, 0.55, this.teamColorForPlayer(event.attackerId), 9);
+      /*
+       * A neutral flash, not a team-colored one. This used to burst in the
+       * attacker's team color, which fought the element burst `SnowballImpact`
+       * already threw at the same spot — and online it was wrong outright,
+       * because the snapshot derives a hit from a health drop and has no
+       * attacker to name (SnapshotSync passes the victim). Colour now belongs
+       * to whatever *caused* the damage: the element on a spell hit, this bare
+       * flash for a puddle, a Tower or a curse.
+       */
+      this.spawnBurst(event.x, event.y, 0.55, WHITE, 6);
       this.spawnRing(event.x, event.y, WHITE, 1.1, 0.16);
     });
     this.offSnowballThrown = events.on('SnowballThrown', (event) => {
@@ -656,6 +781,7 @@ export class ParticleRenderer implements GameRenderer {
       const slot = this.snowballSlots[i];
       slot.mesh.visible = false;
       this.hideBolt(slot);
+      this.hideRuneRing(slot);
       slot.snowballId = -1;
       slot.lastTrailTick = -1;
     }
@@ -708,6 +834,7 @@ export class ParticleRenderer implements GameRenderer {
     if (slot.snowballId !== snowball.id) {
       slot.snowballId = snowball.id;
       slot.lastTrailTick = -1;
+      this.rollSpin(slot);
       this.applySlotElement(slot, snowball.element);
     }
 
@@ -722,13 +849,149 @@ export class ParticleRenderer implements GameRenderer {
       slot.mesh.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
       slot.mesh.scale.setScalar(scale);
       slot.mesh.visible = true;
+      this.orientBody(slot, snowball, cfg);
+
+      if (cfg.shape === 'runeOrb') this.updateRuneRing(slot, snowball, cfg, scale);
+      else this.hideRuneRing(slot);
     }
 
     const trailTick = Math.floor(snowball.age * cfg.trailRate);
     if (snowball.height > SNOWBALL.radius * 0.5 && trailTick > slot.lastTrailTick) {
       slot.lastTrailTick = trailTick;
       this.spawnTrail(snowball, cfg);
+      if (cfg.shape === 'glob') this.spawnDrip(snowball, cfg);
     }
+  }
+
+  /**
+   * Re-rolls the tumble for a projectile that just took over this slot. Slots
+   * are assigned by index every frame, so a fresh boulder would otherwise
+   * continue the rotation of whatever flew here last.
+   */
+  private rollSpin(slot: SnowballSlot): void {
+    const theta = Math.random() * Math.PI * 2;
+    const z = Math.random() * 2 - 1;
+    const r = Math.sqrt(1 - z * z);
+    slot.spinAxisX = r * Math.cos(theta);
+    slot.spinAxisY = r * Math.sin(theta);
+    slot.spinAxisZ = z;
+    slot.spinPhase = Math.random() * Math.PI * 2;
+  }
+
+  /**
+   * Turns and spins the body according to its shape. A shard has to point
+   * where it is going or it reads as a floating crystal; a blade has to face
+   * the flight path or it reads as a hoop; a rock only has to tumble.
+   */
+  private orientBody(slot: SnowballSlot, snowball: Snowball, cfg: ElementVfx): void {
+    const spin = SPIN_RATE[cfg.shape];
+    const angle = slot.spinPhase + snowball.age * spin;
+    const alongFlight = AXIAL_SHAPES.has(cfg.shape) || FACING_SHAPES.has(cfg.shape);
+
+    if (alongFlight) {
+      // Render space per coords.ts: gameplay x/y become world x/z and height
+      // becomes world y. The vertical component matters — an arcing shard that
+      // stays level looks like it is sliding, not flying.
+      this.tmpDir.set(snowball.velocity.x, snowball.heightVelocity, snowball.velocity.y);
+      if (this.tmpDir.lengthSq() < 1e-8) this.tmpDir.set(1, 0, 0);
+      this.tmpDir.normalize();
+
+      const modelAxis = AXIAL_SHAPES.has(cfg.shape) ? UNIT_Y : UNIT_Z;
+      slot.mesh.quaternion.setFromUnitVectors(modelAxis, this.tmpDir);
+      // Roll around the heading itself, so the spin never fights the aim.
+      this.tmpSpin.setFromAxisAngle(this.tmpDir, angle);
+      slot.mesh.quaternion.premultiply(this.tmpSpin);
+    } else if (UPRIGHT_SPIN_SHAPES.has(cfg.shape)) {
+      // These are already modelled in the attitude they should fly in — the
+      // sigil pre-tilted toward the camera, the blade laid flat. Tumbling them
+      // on a random axis would throw that away, so they only turn about up.
+      slot.mesh.quaternion.setFromAxisAngle(UNIT_Y, angle);
+    } else if (spin > 0) {
+      this.tmpDir.set(slot.spinAxisX, slot.spinAxisY, slot.spinAxisZ);
+      slot.mesh.quaternion.setFromAxisAngle(this.tmpDir, angle);
+    }
+
+    if (cfg.shape === 'glob') {
+      // Squash and stretch on top of the tumble: a flask of something viscous
+      // is the one projectile that should not hold its shape in the air.
+      const wobble = Math.sin(slot.spinPhase + snowball.age * GLOB_WOBBLE_HZ * Math.PI * 2);
+      const scale = slot.mesh.scale.x;
+      slot.mesh.scale.set(
+        scale * (1 - wobble * GLOB_WOBBLE * 0.5),
+        scale * (1 + wobble * GLOB_WOBBLE),
+        scale * (1 - wobble * GLOB_WOBBLE * 0.5),
+      );
+    } else if (cfg.shape === 'wave') {
+      const pulse = 1 + Math.sin(snowball.age * WAVE_PULSE_HZ * Math.PI * 2) * WAVE_PULSE;
+      slot.mesh.scale.multiplyScalar(pulse);
+    }
+  }
+
+  /**
+   * The band of runes turning around the Archer's orb. Built lazily on the
+   * slot, like {@link LightningBolt} — most matches field no Arcane Archer.
+   */
+  private updateRuneRing(
+    slot: SnowballSlot,
+    snowball: Snowball,
+    cfg: ElementVfx,
+    bodyScale: number,
+  ): void {
+    slot.runeRing ??= this.createRuneRing(cfg.glow);
+    const ring = slot.runeRing;
+    ring.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
+    ring.scale.setScalar(bodyScale * 2.1);
+    // Two axes, not one: a ring turning about a single axis reads as a disc
+    // seen edge-on half the time and vanishes.
+    ring.rotation.set(
+      slot.spinPhase + snowball.age * RUNE_RING_SPIN,
+      snowball.age * RUNE_RING_SPIN * 0.6,
+      0,
+    );
+    ring.visible = true;
+  }
+
+  private createRuneRing(color: number): THREE.Mesh<THREE.BufferGeometry, THREE.Material> {
+    const material = this.assets.material(
+      'particle-renderer-rune-ring',
+      () =>
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.75,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+    );
+    const mesh = new THREE.Mesh(runeRingGeometry(this.assets), material);
+    mesh.visible = false;
+    this.group.add(mesh);
+    return mesh;
+  }
+
+  private hideRuneRing(slot: SnowballSlot): void {
+    if (slot.runeRing) slot.runeRing.visible = false;
+  }
+
+  /**
+   * A drop of the Alchemist's flask falling out of the arc. Paid for by the
+   * lowered `trailRate` on poison — the particle pool is fixed and silently
+   * drops anything past its 900th live particle.
+   */
+  private spawnDrip(snowball: Snowball, cfg: ElementVfx): void {
+    toThree(this.tmp, snowball.position.x, snowball.position.y, snowball.height);
+    this.spawnParticle(
+      this.tmp.x + (Math.random() - 0.5) * cfg.trailSize,
+      this.tmp.y - cfg.trailSize,
+      this.tmp.z + (Math.random() - 0.5) * cfg.trailSize,
+      0,
+      -0.4,
+      0,
+      cfg.trailSize * 0.7,
+      TRAIL_LIFE * 1.6,
+      cfg.trailColor,
+      2.0,
+    );
   }
 
   /**
@@ -766,11 +1029,21 @@ export class ParticleRenderer implements GameRenderer {
     return bolt;
   }
 
-  /** Swaps the pooled projectile's material for the element now occupying this slot. */
+  /**
+   * Rebinds the pooled projectile to the element now occupying this slot —
+   * both its body geometry and its material. The geometry used to be bound
+   * once at construction, which is why every element flew as the same sphere.
+   * Both sides come from the {@link AssetManager} cache, so a swap is a
+   * pointer assignment, not an allocation.
+   */
   private applySlotElement(slot: SnowballSlot, element: ElementId | undefined): void {
+    const cfg = vfxFor(element);
+    slot.mesh.geometry = projectileGeometry(this.assets, cfg.shape);
     slot.mesh.material = element ? this.ballMaterialFor(element) : this.defaultBallMaterial;
-    // A slot that just stopped being a bolt must not leave the old arc on screen.
-    if (vfxFor(element).shape !== 'bolt') this.hideBolt(slot);
+    // A slot that just stopped being a bolt (or an Archer's orb) must not leave
+    // the old arc or rune band on screen.
+    if (cfg.shape !== 'bolt') this.hideBolt(slot);
+    if (cfg.shape !== 'runeOrb') this.hideRuneRing(slot);
   }
 
   private hideBolt(slot: SnowballSlot): void {
@@ -786,9 +1059,12 @@ export class ParticleRenderer implements GameRenderer {
         new THREE.MeshStandardMaterial({
           color: cfg.core,
           emissive: cfg.glow,
-          emissiveIntensity: 0.85,
-          roughness: 0.3,
+          // A matte projectile is an object the arena lights, not a spell that
+          // lights itself: a boulder with a spell's glow reads as a grey orb.
+          emissiveIntensity: cfg.matte ? 0.12 : 0.85,
+          roughness: cfg.matte ? 0.95 : 0.3,
           metalness: 0.05,
+          flatShading: cfg.flatShading ?? false,
         }),
     );
   }
@@ -1369,10 +1645,4 @@ export class ParticleRenderer implements GameRenderer {
     return null;
   }
 
-  private teamColorForPlayer(playerId: number): number {
-    for (const player of this.world.players) {
-      if (player.id === playerId) return TEAM_COLORS[player.team];
-    }
-    return WHITE;
-  }
 }
