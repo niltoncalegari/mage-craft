@@ -158,7 +158,7 @@ describe('Session — ticking', () => {
     const [victim] = [...world.mages.values()];
     const enemy = [...world.mages.values()].find((m) => m.team !== victim.team)!;
 
-    world.dealDamage(victim, victim.maxHealth * 2, Vec2.zero, 0, false, enemy.id);
+    world.dealDamage(victim, victim.maxHealth * 2, { attackerId: enemy.id });
     for (let i = 0; i < SNAPSHOT_EVERY_N_TICKS; i++) s.tick();
 
     const wired = snapshots.at(-1)!.mages;

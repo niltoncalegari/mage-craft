@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { magnitudeOf } from './effects';
 import { defaultSquad } from './cards';
 import {
   CHARGE_TIME,
@@ -207,7 +208,7 @@ describe('squad (GDD §4, §7)', () => {
     const [mage] = [...w.mages.values()];
 
     mage.health = 1;
-    w.dealDamage(mage, 999, new Vec2(1, 0), 0);
+    w.dealDamage(mage, 999, { knockDir: new Vec2(1, 0) });
     expect(mage.alive).toBe(false);
 
     stepN(w, 60 * 30);
@@ -227,9 +228,9 @@ describe('spells (GDD §9)', () => {
 
     expect(result).toEqual({ ok: true });
     expect(w.manaOf(TEAM_A)).toBe(MANA_START - spellFor('blessing')!.cost);
-    expect(ally.speedBuffFactor).toBeGreaterThan(0);
-    expect(ally.castBuffFactor).toBeGreaterThan(0);
-    expect(enemy.speedBuffFactor).toBe(0);
+    expect(magnitudeOf(ally, 'haste')).toBeGreaterThan(0);
+    expect(magnitudeOf(ally, 'cast_haste')).toBeGreaterThan(0);
+    expect(magnitudeOf(enemy, 'haste')).toBe(0);
   });
 
   it('curses enemies in radius, not the caster’s own team', () => {
@@ -239,8 +240,8 @@ describe('spells (GDD §9)', () => {
 
     w.castSpell(TEAM_A, 'slow_curse', enemy.position);
 
-    expect(enemy.slowFactor).toBeGreaterThan(0);
-    expect(ally.slowFactor).toBe(0);
+    expect(magnitudeOf(enemy, 'slow')).toBeGreaterThan(0);
+    expect(magnitudeOf(ally, 'slow')).toBe(0);
   });
 
   it('shields absorb damage before health', () => {
@@ -248,26 +249,26 @@ describe('spells (GDD §9)', () => {
     const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
 
     w.castSpell(TEAM_A, 'arcane_shield', ally.position);
-    expect(ally.shieldAmount).toBe(SHIELD_AMOUNT);
+    expect(magnitudeOf(ally, 'shield')).toBe(SHIELD_AMOUNT);
 
-    w.dealDamage(ally, 20, Vec2.zero, 0);
+    w.dealDamage(ally, 20);
 
     expect(ally.health).toBe(ally.maxHealth);
-    expect(ally.shieldAmount).toBe(SHIELD_AMOUNT - 20);
+    expect(magnitudeOf(ally, 'shield')).toBe(SHIELD_AMOUNT - 20);
   });
 
   it('plague ticks damage on anyone standing in the zone, bypassing shield', () => {
     const w = new World();
     const target = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
     w.castSpell(TEAM_A, 'arcane_shield', target.position);
-    expect(target.shieldAmount).toBeGreaterThan(0);
+    expect(magnitudeOf(target, 'shield')).toBeGreaterThan(0);
 
     w.castSpell(TEAM_B, 'plague', target.position);
     stepN(w, Math.ceil(PLAGUE_TICK_INTERVAL / SIM_DT) + 2);
 
     expect(target.health).toBeLessThan(target.maxHealth);
     // Praga ignores the shield entirely — it is not merely absorbed.
-    expect(target.shieldAmount).toBeGreaterThan(0);
+    expect(magnitudeOf(target, 'shield')).toBeGreaterThan(0);
   });
 
   it('refuses a spell the team cannot afford', () => {

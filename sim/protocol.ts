@@ -124,6 +124,9 @@ export type RoomSummaryDTO = {
 
 export type RoomListMsg = { type: 'room_list'; rooms: RoomSummaryDTO[] };
 
+/** One status effect on the wire: `k` is the {@link EffectKind}, `s` the stacks. */
+export type MageFxDTO = { k: string; s?: number };
+
 export type MageSnapshotDTO = {
   id: string;
   team: number;
@@ -139,12 +142,17 @@ export type MageSnapshotDTO = {
   role: string;
   /** Which roster entry this mage is, omitted for legacy/bare mages. */
   rosterId?: string;
-  /** True while Escudo Arcano still has damage to absorb (GDD §9), for a minimal client indicator. */
-  shielded: boolean;
-  /** Bênção de Ímpeto is running on this mage (GDD §9) — drives its aura VFX. */
-  hasted: boolean;
-  /** Slowed by Maldição da Lentidão or an ice hit (GDD §8.3, §9). */
-  slowed: boolean;
+  /**
+   * Status effects running on this mage (GDD §9), in `EFFECT_ORDER`. Omitted
+   * entirely when there are none, which is the common case. `s` is the stack
+   * count, omitted when 1.
+   *
+   * This replaced the `shielded`/`hasted`/`slowed` booleans. Those cost three
+   * fields per mage per snapshot whether or not anything was happening, and
+   * every new effect cost a protocol change; a list costs nothing when idle and
+   * never needs another field.
+   */
+  fx?: MageFxDTO[];
   /**
    * Enemy mages this one has personally put down (GDD §4). A team's total is
    * *not* the sum of these — see `World.kill` — it is the opposing team's

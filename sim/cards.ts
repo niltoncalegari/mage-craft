@@ -8,6 +8,7 @@
  * has no cost — the cost of picking one was the squad slot itself.
  */
 
+import { BALANCE } from './balance';
 import { ROLE_BEHAVIOR, type Role } from './roles';
 import type { ElementId } from './elements';
 
@@ -43,84 +44,23 @@ export interface RosterEntry {
   readonly auraRadius?: number;
 }
 
-const CATALOG: Readonly<Record<RosterId, RosterEntry>> = {
-  stone_golem: {
-    id: 'stone_golem',
-    name: 'Stone Golem',
-    role: 'tank',
-    health: 280,
-    moveSpeed: 3.5,
-    element: 'stone',
-  },
-  ice_sentinel: {
-    id: 'ice_sentinel',
-    name: 'Ice Sentinel',
-    role: 'tank',
-    health: 200,
-    moveSpeed: 4.0,
-    element: 'ice',
-  },
-  pyromancer: {
-    id: 'pyromancer',
-    name: 'Pyromancer',
-    role: 'damage',
-    health: 80,
-    moveSpeed: 5.0,
-    element: 'fire',
-  },
-  stormcaller: {
-    id: 'stormcaller',
-    name: 'Stormcaller',
-    role: 'damage',
-    health: 60,
-    moveSpeed: 5.0,
-    element: 'lightning',
-  },
-  arcane_archer: {
-    id: 'arcane_archer',
-    name: 'Arcane Archer',
-    role: 'damage',
-    health: 70,
-    moveSpeed: 5.5,
-    element: 'arcane',
-  },
-  alchemist: {
-    id: 'alchemist',
-    name: 'Alchemist',
-    role: 'damage',
-    health: 70,
-    moveSpeed: 5.0,
-    element: 'poison',
-  },
-  wind_dervish: {
-    id: 'wind_dervish',
-    name: 'Wind Dervish',
-    role: 'damage',
-    health: 65,
-    moveSpeed: 7.0,
-    element: 'wind',
-  },
-  cleric: {
-    id: 'cleric',
-    name: 'Cleric',
-    role: 'support',
-    health: 95,
-    moveSpeed: 5.0,
-    element: 'holy',
-    healPerSecond: 8,
-    healRange: 5,
-  },
-  arcane_bard: {
-    id: 'arcane_bard',
-    name: 'Arcane Bard',
-    role: 'support',
-    health: 70,
-    moveSpeed: 5.0,
-    element: 'sonic',
-    auraChargeBonus: 0.25,
-    auraRadius: 4,
-  },
-};
+const CATALOG: Readonly<Record<RosterId, RosterEntry>> = Object.fromEntries(
+  Object.entries(BALANCE.roster).map(([id, r]) => [
+    id,
+    {
+      id: id as RosterId,
+      name: r.name,
+      role: r.role as Role,
+      health: r.health,
+      moveSpeed: r.moveSpeed,
+      element: r.element as ElementId,
+      ...(r.healPerSecond !== undefined ? { healPerSecond: r.healPerSecond } : {}),
+      ...(r.healRange !== undefined ? { healRange: r.healRange } : {}),
+      ...(r.auraChargeBonus !== undefined ? { auraChargeBonus: r.auraChargeBonus } : {}),
+      ...(r.auraRadius !== undefined ? { auraRadius: r.auraRadius } : {}),
+    },
+  ]),
+) as Readonly<Record<RosterId, RosterEntry>>;
 
 /** Full catalog in GDD §9 display order. */
 export const ALL_ROSTER: readonly RosterId[] = [

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { applyEffect, hasEffect, magnitudeOf } from './effects';
 import { Arena } from './Arena';
-import { CHARGE_TIME, RESPAWN_DELAY, SIM_DT } from './config';
+import { CHARGE_TIME, HIT_STUN, RESPAWN_DELAY, SIM_DT } from './config';
 import { elementDefFor } from './elements';
-import { emptyInput, TEAM_A, TEAM_B, type MageInput } from './entities';
+import { emptyInput, TEAM_A, TEAM_B, type Mage, type MageInput } from './entities';
 import { Vec2 } from './Vec2';
 import { World } from './World';
 
@@ -28,6 +29,27 @@ function fullyChargeAndRelease(w: World, id: string, target: Vec2): void {
   stepN(w, Math.floor(CHARGE_TIME / SIM_DT) + 5);
   w.setInput(id, input({ aim: target, release: true }));
   w.step(SIM_DT);
+}
+
+/**
+ * One full-charge shot from `id` that actually connects, for the tests about
+ * what an element does *on hit*. Throwing through the normal pipeline (rather
+ * than calling the applier) is what keeps these honest about charge, flight and
+ * collision; the loop just waits for the projectile to land.
+ *
+ * The target is pinned in place and stripped of respawn immunity first: these
+ * are tests of an element's rider, not of whether a stationary mage can dodge.
+ */
+function hitWith(w: World, id: string, target: Mage): void {
+  target.immunityTimer = 0;
+  const at = target.position;
+  fullyChargeAndRelease(w, id, at);
+  for (let i = 0; i < 200 && w.projectiles.size > 0; i++) {
+    target.position = at;
+    w.step(SIM_DT);
+  }
+  target.position = at;
+  w.setInput(id, input());
 }
 
 describe('World — movement', () => {
@@ -149,10 +171,10 @@ describe('World — combat', () => {
     target.position = new Vec2(2, 0);
 
     fullyChargeAndRelease(w, 'atk', target.position);
-    for (let i = 0; i < 120 && target.slowTimer <= 0; i++) w.step(SIM_DT);
+    for (let i = 0; i < 120 && !hasEffect(target, 'slow'); i++) w.step(SIM_DT);
 
-    expect(target.slowTimer).toBeGreaterThan(0);
-    expect(target.slowFactor).toBeGreaterThan(0);
+    expect(hasEffect(target, 'slow')).toBe(true);
+    expect(magnitudeOf(target, 'slow')).toBeGreaterThan(0);
   });
 
   it('spawns a poison puddle that ticks damage on whoever stands in it', () => {
@@ -168,9 +190,175 @@ describe('World — combat', () => {
 
     const healthAfterImpact = target.health;
     const def = elementDefFor('poison');
-    stepN(w, Math.floor((def?.puddleTickInterval ?? 0.3) / SIM_DT) + 5);
+    const puddleRule = def?.onHit.find((r) => r.effect === 'puddle');
+    stepN(w, Math.floor((puddleRule?.tickInterval ?? 0.3) / SIM_DT) + 5);
 
     expect(target.health).toBeLessThan(healthAfterImpact);
+  });
+
+  /**
+   * The streak riders (GDD §8) are the reason a squad wants two mages of the
+   * same element: the payoff only exists if the target keeps getting hit.
+   * These tests fire volleys by hand rather than through the bot, so the
+   * element's threshold is what is under test, not the AI's aim.
+   */
+  it('sets a target alight only on the second consecutive fire hit', () => {
+    const w = combatWorld();
+    const attacker = w.addMage('atk', TEAM_A, 'fire', false);
+    const target = w.addMage('def', TEAM_B, 'ice', false);
+    attacker.position = new Vec2(-2, 0);
+    target.position = new Vec2(2, 0);
+
+    hitWith(w, 'atk', target);
+    expect(hasEffect(target, 'burn'), 'one fireball must not ignite').toBe(false);
+
+    hitWith(w, 'atk', target);
+    expect(hasEffect(target, 'burn'), 'the second must').toBe(true);
+  });
+
+  it('keeps burning a target after the attacker stops, then stops', () => {
+    const w = combatWorld();
+    const attacker = w.addMage('atk', TEAM_A, 'fire', false);
+    const target = w.addMage('def', TEAM_B, 'ice', false);
+    attacker.position = new Vec2(-2, 0);
+    target.position = new Vec2(2, 0);
+
+    hitWith(w, 'atk', target);
+    hitWith(w, 'atk', target);
+    const lit = target.health;
+
+    stepN(w, Math.floor(1.0 / SIM_DT));
+    expect(target.health, 'the burn keeps eating health with nothing else landing').toBeLessThan(lit);
+
+    stepN(w, Math.floor(4.0 / SIM_DT));
+    const cold = target.health;
+    stepN(w, Math.floor(1.0 / SIM_DT));
+    expect(hasEffect(target, 'burn')).toBe(false);
+    expect(target.health, 'and stops when it expires').toBe(cold);
+  });
+
+  /**
+   * A DoT lands several times a second. If each tick reset HIT_STUN the way a
+   * projectile does, standing in fire (or in poison, which had this bug all
+   * along) would be a silent, permanent root.
+   */
+  it('never re-stuns a mage with damage over time', () => {
+    const w = combatWorld();
+    const attacker = w.addMage('atk', TEAM_A, 'fire', false);
+    const target = w.addMage('def', TEAM_B, 'ice', false);
+    attacker.position = new Vec2(-2, 0);
+    target.position = new Vec2(2, 0);
+
+    hitWith(w, 'atk', target);
+    hitWith(w, 'atk', target);
+    expect(hasEffect(target, 'burn')).toBe(true);
+
+    // Well past HIT_STUN but well inside the burn.
+    stepN(w, Math.floor(1.5 / SIM_DT));
+    expect(hasEffect(target, 'burn'), 'still burning').toBe(true);
+    expect(target.stunTimer, 'but free to act').toBe(0);
+  });
+
+  it('stuns on the third consecutive lightning hit, then makes it be re-earned', () => {
+    const w = combatWorld();
+    const attacker = w.addMage('atk', TEAM_A, 'lightning', false);
+    const target = w.addMage('def', TEAM_B, 'ice', false);
+    attacker.position = new Vec2(-2, 0);
+    target.position = new Vec2(2, 0);
+    target.maxHealth = 10000;
+    target.health = 10000;
+
+    hitWith(w, 'atk', target);
+    hitWith(w, 'atk', target);
+    expect(hasEffect(target, 'stun'), 'two bolts are not a stun').toBe(false);
+
+    hitWith(w, 'atk', target);
+    expect(hasEffect(target, 'stun')).toBe(true);
+    // The stun outlasts the ordinary hit flinch, or it would be invisible.
+    expect(target.stunTimer).toBeGreaterThan(HIT_STUN);
+
+    // Streak reset: the fourth bolt is the start of a new count, not a re-stun.
+    stepN(w, Math.floor(1.2 / SIM_DT));
+    expect(hasEffect(target, 'stun')).toBe(false);
+    hitWith(w, 'atk', target);
+    expect(hasEffect(target, 'stun')).toBe(false);
+  });
+
+  it('restarts the streak when a different element interrupts it', () => {
+    const w = combatWorld();
+    const pyro = w.addMage('fire1', TEAM_A, 'fire', false);
+    const sentinel = w.addMage('ice1', TEAM_A, 'ice', false);
+    const target = w.addMage('def', TEAM_B, 'stone', false);
+    pyro.position = new Vec2(-2, 1);
+    sentinel.position = new Vec2(-2, -1);
+    target.position = new Vec2(2, 0);
+
+    hitWith(w, 'fire1', target);
+    hitWith(w, 'ice1', target);
+    hitWith(w, 'fire1', target);
+    expect(hasEffect(target, 'burn'), 'the ice shard broke the fire streak').toBe(false);
+
+    hitWith(w, 'fire1', target);
+    expect(hasEffect(target, 'burn')).toBe(true);
+  });
+
+  it('makes an arcane-marked target take more from the next hit', () => {
+    /** Damage one fireball does, with the arcane mark applied first or not. */
+    const fireballDamage = (mark: boolean): number => {
+      const w = combatWorld();
+      const archer = w.addMage('arc', TEAM_A, 'arcane', false);
+      const pyro = w.addMage('fire1', TEAM_A, 'fire', false);
+      const target = w.addMage('def', TEAM_B, 'stone', false);
+      archer.position = new Vec2(-2, 1);
+      pyro.position = new Vec2(-2, -1);
+      target.position = new Vec2(2, 0);
+      // Deep enough to survive both hits, so nothing is clipped by death.
+      target.maxHealth = 10000;
+      target.health = 10000;
+
+      if (mark) {
+        hitWith(w, 'arc', target);
+        expect(hasEffect(target, 'vulnerable'), 'the orb must land to mark').toBe(true);
+      }
+      const before = target.health;
+      hitWith(w, 'fire1', target);
+      const dealt = before - target.health;
+      expect(dealt, 'the fireball must land').toBeGreaterThan(0);
+      return dealt;
+    };
+
+    const marked = fireballDamage(true);
+    const plain = fireballDamage(false);
+    // balance.json puts the mark at +25%.
+    expect(marked).toBeCloseTo(plain * 1.25, 5);
+  });
+
+  it('strips Escudo Arcano with a holy hit instead of chipping it', () => {
+    const w = combatWorld();
+    const cleric = w.addMage('cle', TEAM_A, 'holy', false);
+    const target = w.addMage('def', TEAM_B, 'stone', false);
+    cleric.position = new Vec2(-2, 0);
+    target.position = new Vec2(2, 0);
+    applyEffect(target, { kind: 'shield', magnitude: 60, duration: 6 });
+
+    hitWith(w, 'cle', target);
+    expect(hasEffect(target, 'shield')).toBe(false);
+  });
+
+  it('drags a target’s casting under sonic dissonance', () => {
+    const w = combatWorld();
+    const bard = w.addMage('brd', TEAM_A, 'sonic', false);
+    const target = w.addMage('def', TEAM_B, 'stone', false);
+    bard.position = new Vec2(-2, 0);
+    target.position = new Vec2(2, 0);
+
+    hitWith(w, 'brd', target);
+    expect(hasEffect(target, 'cast_slow')).toBe(true);
+
+    // Charge for half the nominal charge time; dissonance must leave it short.
+    w.setInput('def', input({ aim: bard.position, charging: true }));
+    stepN(w, Math.floor(CHARGE_TIME / 2 / SIM_DT));
+    expect(target.charge).toBeLessThan(0.5);
   });
 
   it('interrupts the target’s charge on a stone hit', () => {
@@ -201,7 +389,7 @@ describe('World — respawn and round end', () => {
     const m = w.addMage('p1', TEAM_A, 'fire', false);
     m.health = 1;
 
-    w.dealDamage(m, 999, new Vec2(1, 0), 0);
+    w.dealDamage(m, 999, { knockDir: new Vec2(1, 0) });
 
     expect(m.alive).toBe(false);
     expect(m.respawnTimer).toBeGreaterThan(0);
@@ -217,7 +405,7 @@ describe('World — respawn and round end', () => {
     const w = combatWorld();
     const m = w.addMage('p1', TEAM_A, 'fire', false);
 
-    w.dealDamage(m, 999, new Vec2(1, 0), 0);
+    w.dealDamage(m, 999, { knockDir: new Vec2(1, 0) });
     expect(w.mage('p1')).toBeDefined();
 
     // Long past the respawn delay: the mage should be back, not gone.

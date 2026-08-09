@@ -40,6 +40,13 @@ export interface GameEvents {
    * range — pickups and spells heal too.
    */
   MageHealed: { playerId: EntityId; healerId: EntityId | null; x: number; y: number };
+  /**
+   * An Escudo Arcano came down while its mage was still standing (GDD §8.7,
+   * §9) — either drained by damage or stripped by a Cleric's light. Derived
+   * from the falling edge of the shield effect, for the same reason
+   * `MageHealed` is derived: the wire carries state, never events.
+   */
+  ShieldBroken: { playerId: EntityId; x: number; y: number };
   PlayerDefeated: { playerId: EntityId; team: Team };
   PlayerRespawned: { playerId: EntityId; x: number; y: number };
   BuffPickedUp: { playerId: EntityId; buff: BuffType; x: number; y: number };

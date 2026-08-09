@@ -77,9 +77,6 @@ function mage(over: Partial<MageSnapshotDTO> = {}): MageSnapshotDTO {
     charge: 0,
     element: 'fire',
     role: 'damage',
-    shielded: false,
-    hasted: false,
-    slowed: false,
     kills: 0,
     deaths: 0,
     ...over,
@@ -268,6 +265,67 @@ describe('SnapshotSync — mage identity', () => {
 
     expect(world.players[0].element).toBe('fire');
     expect(world.players[0].role).toBe('damage');
+  });
+});
+
+describe('SnapshotSync — status effects', () => {
+  it('carries the whole effect list onto the rendered mage, stacks included', () => {
+    const { sync, world } = makeSync(TEAM_A);
+    sync.applySnapshot(snapshot({ mages: [mage({ fx: [{ k: 'burn', s: 3 }, { k: 'slow' }] })] }));
+
+    expect(world.players[0].fx).toEqual([
+      { kind: 'burn', stacks: 3 },
+      // Omitted `s` means one stack — the wire's cheapest common case.
+      { kind: 'slow', stacks: 1 },
+    ]);
+  });
+
+  it('derives the three legacy booleans the older renderers read', () => {
+    const { sync, world } = makeSync(TEAM_A);
+    sync.applySnapshot(snapshot({ mages: [mage({ fx: [{ k: 'haste' }, { k: 'shield' }] })] }));
+
+    const p = world.players[0];
+    expect(p.hasted).toBe(true);
+    expect(p.shielded).toBe(true);
+    expect(p.slowed).toBe(false);
+  });
+
+  it('clears an effect that stopped being sent', () => {
+    const { sync, world } = makeSync(TEAM_A);
+    sync.applySnapshot(snapshot({ mages: [mage({ fx: [{ k: 'slow' }] })] }));
+    expect(world.players[0].slowed).toBe(true);
+
+    sync.applySnapshot(snapshot({ tick: 6, mages: [mage()] }));
+    expect(world.players[0].slowed).toBe(false);
+    expect(world.players[0].fx).toEqual([]);
+  });
+
+  /**
+   * The wire carries state, never events, so a broken shield has to be spotted
+   * as a falling edge — the same trick `PlayerHit` plays with health. Without
+   * it a Cleric stripping Escudo Arcano would produce no VFX at all.
+   */
+  it('emits ShieldBroken when a shield disappears off a living mage', () => {
+    const { sync, events } = makeSync(TEAM_A);
+    let fired = 0;
+    events.on('ShieldBroken', () => fired++);
+
+    sync.applySnapshot(snapshot({ mages: [mage({ fx: [{ k: 'shield' }] })] }));
+    expect(fired).toBe(0);
+
+    sync.applySnapshot(snapshot({ tick: 6, mages: [mage()] }));
+    expect(fired).toBe(1);
+  });
+
+  it('stays quiet when the shield goes down with the mage', () => {
+    const { sync, events } = makeSync(TEAM_A);
+    let fired = 0;
+    events.on('ShieldBroken', () => fired++);
+
+    sync.applySnapshot(snapshot({ mages: [mage({ fx: [{ k: 'shield' }] })] }));
+    sync.applySnapshot(snapshot({ tick: 6, mages: [mage({ health: 0 })] }));
+
+    expect(fired).toBe(0);
   });
 });
 

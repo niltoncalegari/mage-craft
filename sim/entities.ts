@@ -1,6 +1,7 @@
 /** Simulation entity types (GDD §5, §8, §9). */
 
 import type { RosterId } from './cards';
+import type { ActiveEffect } from './effects';
 import type { ElementId } from './elements';
 import type { Role } from './roles';
 import { Vec2 } from './Vec2';
@@ -82,12 +83,13 @@ export interface Mage {
   throwCooldown: number;
   recoveryTimer: number;
 
+  /**
+   * Rooted. Every hit sets this to `HIT_STUN`; a lightning `stun` effect sets
+   * it longer. Kept as a plain timer rather than read off `effects` because it
+   * is impact physics — the knockback slide runs off the same window.
+   */
   stunTimer: number;
   knockbackVelocity: Vec2;
-
-  /** Set by an ice hit or the Maldição da Lentidão curse, whichever is stronger (GDD §9). */
-  slowFactor: number;
-  slowTimer: number;
 
   immunityTimer: number;
   respawnTimer: number;
@@ -95,16 +97,23 @@ export interface Mage {
   /** Recomputed every tick from nearby friendly support auras (GDD §9). */
   chargeRateBonus: number;
 
-  /** Bênção de Ímpeto — a temporary move-speed multiplier, on top of the aura's cast bonus (GDD §9). */
-  speedBuffFactor: number;
-  speedBuffTimer: number;
-  /** Bênção de Ímpeto's cast-speed half; merges with `chargeRateBonus` by taking the larger. */
-  castBuffFactor: number;
-  castBuffTimer: number;
+  /**
+   * Everything temporary that is true of this mage — slow, haste, burn,
+   * shield, vulnerability, stun (GDD §9). Owned by `sim/effects.ts`: mutate it
+   * through `applyEffect`/`tickEffects`, never directly, or the list stops
+   * being canonically ordered.
+   */
+  effects: ActiveEffect[];
 
-  /** Escudo Arcano — absorbs damage before health, except a curse zone's tick (GDD §9). */
-  shieldAmount: number;
-  shieldTimer: number;
+  /**
+   * Consecutive hits of one element on this mage, for the riders that only
+   * fire on a streak (fire's burn, lightning's stun). Tracked per victim, not
+   * per attacker: two Pyromancers focusing one target feed the same streak,
+   * which is exactly the teamwork the squad builder should reward.
+   */
+  streakElement: ElementId | null;
+  streakCount: number;
+  streakTimer: number;
 
   input: MageInput;
 }

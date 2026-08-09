@@ -42,7 +42,7 @@ function totalKills(w: World): number {
 
 /** Drops `victim` with a single blow attributed to `attackerId`. */
 function finishOff(w: World, victim: Mage, attackerId: string | null): void {
-  w.dealDamage(victim, victim.maxHealth * 2, Vec2.zero, 0, false, attackerId);
+  w.dealDamage(victim, victim.maxHealth * 2, { attackerId });
 }
 
 /**

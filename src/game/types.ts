@@ -1,6 +1,7 @@
 import type { Vector2 } from '../utils/Vector2';
 import type { Health, Transform2D } from '../ecs/Component';
 import type { EntityId } from '../ecs/Entity';
+import type { MageFx } from './effects';
 import type { ElementId } from './elements';
 import type { Role } from '../../sim/roles';
 import type { Shape } from '../physics/shapes';
@@ -59,11 +60,17 @@ export interface Player extends Transform2D, Health {
   speedTimer: number;
   /** Lives remaining; only set by the online snapshot sync (unused offline). */
   lives?: number;
+  /**
+   * Every status effect on this mage (GDD §9); only set online. Read it with
+   * `hasFx`/`fxStacks` from `game/effects.ts`. The three booleans below are
+   * derived from it for the renderers that only ever cared about those three.
+   */
+  fx?: MageFx[];
   /** Escudo Arcano still has damage to absorb (GDD §9); only set online. */
   shielded?: boolean;
   /** Bênção de Ímpeto is running (GDD §9); only set online. */
   hasted?: boolean;
-  /** Slowed by ice or Maldição da Lentidão (GDD §8.3, §9); only set online. */
+  /** Slowed by ice, sonic or Maldição da Lentidão (GDD §8.3, §9); only set online. */
   slowed?: boolean;
   /**
    * Which spell this mage throws (GDD §8). Fixed for the mage's whole life, so

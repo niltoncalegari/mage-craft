@@ -6,7 +6,12 @@
  * it throws. The numbers here are what the bot AI reads to behave differently
  * per role (GDD §11) — they are behavioural, not combat stats (those come from
  * the card in `cards.ts` and the element in `elements.ts`).
+ *
+ * The numbers themselves come from `public/data/balance.json`; this module owns
+ * the type and the vocabulary.
  */
+
+import { BALANCE } from './balance';
 
 export type Role = 'tank' | 'damage' | 'support';
 
@@ -32,35 +37,9 @@ export interface RoleBehavior {
   readonly retreatHealthFraction: number;
 }
 
-export const ROLE_BEHAVIOR: Readonly<Record<Role, RoleBehavior>> = {
-  tank: {
-    attacks: true,
-    attackUrge: 0.95,
-    advanceStopDistance: 2.0,
-    prefersStructures: true,
-    escorts: false,
-    seeksCover: false,
-    retreatHealthFraction: 0,
-  },
-  damage: {
-    attacks: true,
-    attackUrge: 0.95,
-    advanceStopDistance: 6.5,
-    prefersStructures: false,
-    escorts: false,
-    seeksCover: true,
-    retreatHealthFraction: 0.3,
-  },
-  support: {
-    attacks: true,
-    attackUrge: 0.45,
-    advanceStopDistance: 4.0,
-    prefersStructures: false,
-    escorts: true,
-    seeksCover: true,
-    retreatHealthFraction: 0.45,
-  },
-};
+export const ROLE_BEHAVIOR: Readonly<Record<Role, RoleBehavior>> = BALANCE.roles as Readonly<
+  Record<Role, RoleBehavior>
+>;
 
 export const ALL_ROLES: readonly Role[] = ['tank', 'damage', 'support'];
 

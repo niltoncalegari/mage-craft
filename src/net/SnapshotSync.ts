@@ -1,6 +1,7 @@
 import type { EntityId } from '../ecs/Entity';
 import type { EventBus } from '../core/EventBus';
 import { DAMAGE, SIM } from '../game/config';
+import type { FxKind } from '../game/effects';
 import { isElementId, type ElementId } from '../game/elements';
 import { launchSnowball } from '../game/Snowball';
 import { rosterFor } from '../../sim/cards';
@@ -29,6 +30,11 @@ const ROTATION_SMOOTHING_RATE = 12;
 const HEIGHT_SMOOTHING_RATE = 22;
 /** Speed (world units/sec) above which a mage is considered "moving" for animation purposes. */
 const MOVE_SPEED_THRESHOLD = 0.15;
+
+/** Whether a wire mage carries an effect of this kind (see `sim/effects.ts`). */
+function hasWireFx(m: MageSnapshotDTO, kind: FxKind): boolean {
+  return m.fx?.some((f) => f.k === kind) ?? false;
+}
 
 /**
  * The per-player state a siege match is played from (GDD §6, §7): everything
@@ -310,9 +316,9 @@ export class SnapshotSync {
       kills: m.kills,
       deaths: m.deaths,
       respawnRemaining: m.respawnRemaining ?? 0,
-      shielded: m.shielded,
-      hasted: m.hasted,
-      slowed: m.slowed,
+      shielded: hasWireFx(m, 'shield'),
+      hasted: hasWireFx(m, 'haste'),
+      slowed: hasWireFx(m, 'slow'),
       immune: m.immune ?? false,
     };
     this.squadViews.push(view);
@@ -342,10 +348,23 @@ export class SnapshotSync {
 
     player.team = this.teamOf(m.team);
     player.health = m.health;
-    player.shielded = m.shielded;
-    player.hasted = m.hasted;
-    player.slowed = m.slowed;
+    // The three booleans are derived rather than sent: the wire carries the
+    // whole effect list now, and the renderers that predate it still only ask
+    // about these three.
+    player.fx = (m.fx ?? []).map((f) => ({ kind: f.k, stacks: f.s ?? 1 }));
+    const wasShielded = player.shielded === true;
+    player.shielded = hasWireFx(m, 'shield');
+    player.hasted = hasWireFx(m, 'haste');
+    player.slowed = hasWireFx(m, 'slow');
     player.alive = m.health > 0;
+
+    // Falling edge: a shield that vanished while the mage is still standing was
+    // broken (a Cleric's light, or absorbed through), not expired with it. The
+    // wire has no event channel, so the client infers it the same way it infers
+    // a hit from a health drop.
+    if (wasShielded && !player.shielded && player.alive) {
+      this.events.emit('ShieldBroken', { playerId: player.id, x: m.position.x, y: m.position.y });
+    }
 
     const view = track.view;
     view.team = player.team;
@@ -357,9 +376,9 @@ export class SnapshotSync {
     view.kills = m.kills;
     view.deaths = m.deaths;
     view.respawnRemaining = m.respawnRemaining ?? 0;
-    view.shielded = m.shielded;
-    view.hasted = m.hasted;
-    view.slowed = m.slowed;
+    view.shielded = player.shielded;
+    view.hasted = player.hasted;
+    view.slowed = player.slowed;
     view.immune = m.immune ?? false;
 
     track.targetX = m.position.x;

@@ -4,6 +4,7 @@ import type { GameRenderer } from '../core/Game';
 import type { EntityId } from '../ecs/Entity';
 import type { AssetManager } from '../engine/AssetManager';
 import { PLAYER, SNOWBALL, BUFF_COLORS } from '../game/config';
+import { fxStacks, hasFx } from '../game/effects';
 import type { ElementId } from '../game/elements';
 import type { Player, Puddle, Snowball } from '../game/types';
 import type { World } from '../game/World';
@@ -61,6 +62,24 @@ const BUBBLE_POP_COLOR = 0xa6ff5c;
 const MIST_COLOR = 0x3f7d20;
 /** Fraction of bubbles that come up as a slow, wide drifting mist puff instead. */
 const MIST_CHANCE = 0.22;
+
+/* ---- Status effect emission (GDD §8) --------------------------------------- */
+/*
+ * The particle pool is a shared 900 slots and `spawnParticle` silently drops a
+ * request when it is full, so a continuous per-mage effect has to be cheap: a
+ * burning squad of four must not starve the impact bursts of their own fight.
+ * These rates are the budget — one flame every ~55ms per stack, three stacks
+ * max, is at worst ~55 particles/sec across a whole team.
+ */
+const FLAME_INTERVAL = 0.055;
+const FLAME_COLORS = [0xffb238, 0xff5a1f, 0xffe9a8];
+/** Flames rise, so gravity works against them rather than for them. */
+const FLAME_GRAVITY_SCALE = -0.35;
+const FLAME_LIFE = 0.42;
+/** Dissonance is a nag, not a fire — one mote every third of a second. */
+const DISSONANCE_INTERVAL = 0.34;
+const DISSONANCE_COLOR = 0xf72585;
+const SHIELD_BREAK_COLOR = 0xfff3c4;
 
 /**
  * Lightning's arc, in world units — see {@link LightningBolt}. The glow is a
@@ -489,6 +508,9 @@ interface PlayerFxState {
   wasMoving: boolean;
   lastVx: number;
   lastVy: number;
+  /** Accumulators for the continuous status emissions; see updateStatusEmission. */
+  flameTimer: number;
+  dissonanceTimer: number;
 }
 
 /**
@@ -520,6 +542,7 @@ export class ParticleRenderer implements GameRenderer {
   private readonly offBuffPickedUp: () => void;
   private readonly offPlayerRespawned: () => void;
   private readonly offSpellCast: () => void;
+  private readonly offShieldBroken: () => void;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -703,6 +726,8 @@ export class ParticleRenderer implements GameRenderer {
         wasMoving: false,
         lastVx: 0,
         lastVy: 0,
+        flameTimer: 0,
+        dissonanceTimer: 0,
       });
     }
 
@@ -768,6 +793,12 @@ export class ParticleRenderer implements GameRenderer {
     this.offSpellCast = events.on('SpellCast', (event) => {
       this.spawnSpellCast(event.spellId, event.x, event.y, event.radius, event.friendly);
     });
+    // A shield coming down is the Cleric's whole contribution to a fight
+    // (GDD §8.7); without a burst it happens in complete silence.
+    this.offShieldBroken = events.on('ShieldBroken', (event) => {
+      this.spawnBurst(event.x, event.y, 1.0, SHIELD_BREAK_COLOR, 12);
+      this.spawnRing(event.x, event.y, SHIELD_BREAK_COLOR, 1.5, 0.28);
+    });
   }
 
   sync(alpha: number): void {
@@ -807,6 +838,7 @@ export class ParticleRenderer implements GameRenderer {
     this.offBuffPickedUp();
     this.offPlayerRespawned();
     this.offSpellCast();
+    this.offShieldBroken();
     this.scene.remove(this.group);
 
     for (const slot of this.snowballSlots) {
@@ -1298,7 +1330,82 @@ export class ParticleRenderer implements GameRenderer {
       }
 
       state.wasMoving = moving;
+      this.updateStatusEmission(state, player);
     }
+  }
+
+  /**
+   * The continuous per-mage effect emissions (GDD §8): flames off a burning
+   * mage, motes off one under a Bard's dissonance.
+   *
+   * Same accumulator shape as {@link ParticleRenderer.updatePuddleBubbles} —
+   * count down by the frame step, spawn, add the interval back — because the
+   * pool cannot take a spawn-per-frame and the interval is what caps the cost.
+   */
+  private updateStatusEmission(state: PlayerFxState, player: Player): void {
+    if (!player.alive) {
+      state.flameTimer = 0;
+      state.dissonanceTimer = 0;
+      return;
+    }
+
+    const burnStacks = fxStacks(player, 'burn');
+    if (burnStacks > 0) {
+      // Deeper stacks burn harder, which is the only cue that a mage is on
+      // three stacks rather than one.
+      state.flameTimer -= PARTICLE_DT * burnStacks;
+      while (state.flameTimer <= 0) {
+        this.spawnFlame(player);
+        state.flameTimer += FLAME_INTERVAL * (0.7 + Math.random() * 0.6);
+      }
+    } else {
+      state.flameTimer = 0;
+    }
+
+    if (hasFx(player, 'cast_slow')) {
+      state.dissonanceTimer -= PARTICLE_DT;
+      while (state.dissonanceTimer <= 0) {
+        this.spawnDissonanceMote(player);
+        state.dissonanceTimer += DISSONANCE_INTERVAL * (0.6 + Math.random() * 0.8);
+      }
+    } else {
+      state.dissonanceTimer = 0;
+    }
+  }
+
+  /** One ember licking up off the mage's body. */
+  private spawnFlame(player: Player): void {
+    const angle = Math.random() * SPARKLE_TWO_PI;
+    const radius = 0.1 + Math.random() * 0.28;
+    this.spawnParticle(
+      player.position.x + Math.cos(angle) * radius,
+      player.position.y + Math.sin(angle) * radius,
+      0.15 + Math.random() * 0.7,
+      Math.cos(angle) * 0.25,
+      Math.sin(angle) * 0.25,
+      0.9 + Math.random() * 0.7,
+      0.07 + Math.random() * 0.05,
+      FLAME_LIFE * (0.75 + Math.random() * 0.5),
+      FLAME_COLORS[Math.floor(Math.random() * FLAME_COLORS.length)],
+      FLAME_GRAVITY_SCALE,
+    );
+  }
+
+  /** A note sagging off a mage whose concentration is being jammed. */
+  private spawnDissonanceMote(player: Player): void {
+    const angle = Math.random() * SPARKLE_TWO_PI;
+    this.spawnParticle(
+      player.position.x + Math.cos(angle) * 0.34,
+      player.position.y + Math.sin(angle) * 0.34,
+      1.25 + Math.random() * 0.25,
+      Math.cos(angle) * 0.12,
+      Math.sin(angle) * 0.12,
+      -0.15,
+      0.06,
+      0.75,
+      DISSONANCE_COLOR,
+      0.12,
+    );
   }
 
   private spawnFootprint(x: number, y: number, rotation: number): void {
@@ -1639,6 +1746,10 @@ export class ParticleRenderer implements GameRenderer {
     empty.wasMoving = false;
     empty.lastVx = 0;
     empty.lastVy = 0;
+    // Staggered rather than zeroed, so four mages set alight on the same tick
+    // do not pulse in lockstep like a string of lights.
+    empty.flameTimer = Math.random() * FLAME_INTERVAL;
+    empty.dissonanceTimer = Math.random() * DISSONANCE_INTERVAL;
     return empty;
   }
 

@@ -6,6 +6,7 @@
  */
 
 import { Arena, pushOutOfCircle } from './Arena';
+import type { OnHitRule } from './balance';
 import { rosterFor, type RosterId } from './cards';
 import {
   ACCELERATION,
@@ -45,6 +46,17 @@ import {
   TURN_SPEED,
 } from './config';
 import { defaultArena } from './defaultMap';
+import {
+  absorbWithShield,
+  applyEffect,
+  chargeRateMultiplier,
+  clearEffects,
+  damageTakenMultiplier,
+  isEffectKind,
+  moveSpeedMultiplier,
+  removeEffect,
+  tickEffects,
+} from './effects';
 import { elementDefFor, type ElementDef, type ElementId } from './elements';
 import {
   emptyInput,
@@ -69,6 +81,23 @@ export type CastResult = { ok: true } | { ok: false; reason: CastRejection };
 
 /** Relaxation passes used to free a mage overlapping solid geometry. */
 const DEPENETRATION_PASSES = 4;
+
+/**
+ * Everything a damage source may say about itself beyond the number. All
+ * optional: a bare `dealDamage(m, 10)` is a hit from nowhere that knocks
+ * nobody back and credits nobody, which is exactly what a test wants.
+ */
+export interface DamageOptions {
+  /** Direction of the shove; ignored without `knockMag`. */
+  knockDir?: Vec2;
+  knockMag?: number;
+  /** Praga's tick ignores Escudo Arcano by design (GDD §9). */
+  bypassShield?: boolean;
+  /** Whatever caused the damage; `kill` decides if it can score. */
+  attackerId?: string | null;
+  /** For damage over time, which must not re-apply the flinch every tick. */
+  noHitStun?: boolean;
+}
 
 /**
  * A cast that just happened, kept around only long enough for clients to see
@@ -305,17 +334,13 @@ export class World {
       recoveryTimer: 0,
       stunTimer: 0,
       knockbackVelocity: Vec2.zero,
-      slowFactor: 0,
-      slowTimer: 0,
       immunityTimer: 0,
       respawnTimer: 0,
       chargeRateBonus: 0,
-      speedBuffFactor: 0,
-      speedBuffTimer: 0,
-      castBuffFactor: 0,
-      castBuffTimer: 0,
-      shieldAmount: 0,
-      shieldTimer: 0,
+      effects: [],
+      streakElement: null,
+      streakCount: 0,
+      streakTimer: 0,
       input: emptyInput(),
     };
     this.mages.set(m.id, m);
@@ -381,10 +406,8 @@ export class World {
         for (const m of this.mages.values()) {
           if (!m.alive || m.team !== team) continue;
           if (m.position.distanceTo(position) > spell.radius) continue;
-          m.speedBuffFactor = Math.max(m.speedBuffFactor, speedFactor);
-          m.speedBuffTimer = Math.max(m.speedBuffTimer, spell.duration);
-          m.castBuffFactor = Math.max(m.castBuffFactor, castFactor);
-          m.castBuffTimer = Math.max(m.castBuffTimer, spell.duration);
+          applyEffect(m, { kind: 'haste', magnitude: speedFactor, duration: spell.duration });
+          applyEffect(m, { kind: 'cast_haste', magnitude: castFactor, duration: spell.duration });
         }
         break;
       }
@@ -393,8 +416,7 @@ export class World {
         for (const m of this.mages.values()) {
           if (!m.alive || m.team === team) continue;
           if (m.position.distanceTo(position) > spell.radius) continue;
-          m.slowFactor = Math.max(m.slowFactor, slowFactor);
-          m.slowTimer = Math.max(m.slowTimer, spell.duration);
+          applyEffect(m, { kind: 'slow', magnitude: slowFactor, duration: spell.duration });
         }
         break;
       }
@@ -403,8 +425,7 @@ export class World {
         for (const m of this.mages.values()) {
           if (!m.alive || m.team !== team) continue;
           if (m.position.distanceTo(position) > spell.radius) continue;
-          m.shieldAmount = Math.max(m.shieldAmount, amount);
-          m.shieldTimer = Math.max(m.shieldTimer, spell.duration);
+          applyEffect(m, { kind: 'shield', magnitude: amount, duration: spell.duration });
         }
         break;
       }
@@ -474,23 +495,24 @@ export class World {
 
   private updateMage(m: Mage, dt: number): void {
     if (m.immunityTimer > 0) m.immunityTimer = decay(m.immunityTimer, dt);
-    if (m.slowTimer > 0) {
-      m.slowTimer = decay(m.slowTimer, dt);
-      if (m.slowTimer === 0) m.slowFactor = 0;
-    }
-    if (m.speedBuffTimer > 0) {
-      m.speedBuffTimer = decay(m.speedBuffTimer, dt);
-      if (m.speedBuffTimer === 0) m.speedBuffFactor = 0;
-    }
-    if (m.castBuffTimer > 0) {
-      m.castBuffTimer = decay(m.castBuffTimer, dt);
-      if (m.castBuffTimer === 0) m.castBuffFactor = 0;
-    }
-    if (m.shieldTimer > 0) {
-      m.shieldTimer = decay(m.shieldTimer, dt);
-      if (m.shieldTimer === 0) m.shieldAmount = 0;
-    }
     if (m.throwCooldown > 0) m.throwCooldown = decay(m.throwCooldown, dt);
+    if (m.streakTimer > 0) {
+      m.streakTimer = decay(m.streakTimer, dt);
+      if (m.streakTimer === 0) {
+        m.streakElement = null;
+        m.streakCount = 0;
+      }
+    }
+
+    const due = tickEffects(m, dt);
+    if (due) {
+      for (const t of due) {
+        // A DoT never re-applies hit-stun: it lands several times a second, and
+        // stacking HIT_STUN on every tick would silently root anyone standing
+        // in it. The flinch belongs to the hit that applied the effect.
+        this.dealDamage(m, t.damage, { attackerId: t.sourceId, noHitStun: true });
+      }
+    }
 
     if (!m.alive) {
       if (m.respawnTimer > 0) {
@@ -534,8 +556,9 @@ export class World {
     } else if (input.charging && m.throwCooldown <= 0) {
       m.charging = true;
       m.state = 'charging';
-      // A friendly Bard's aura makes this fill faster (GDD §9).
-      m.charge = Math.min(1, m.charge + (dt * (1 + m.chargeRateBonus)) / CHARGE_TIME);
+      // A friendly Bard's aura makes this fill faster, a rival Bard's
+      // dissonance makes it fill slower (GDD §9).
+      m.charge = Math.min(1, m.charge + (dt * chargeRateMultiplier(m, m.chargeRateBonus)) / CHARGE_TIME);
       // Turn toward the aim point rather than snapping, and ignore a cursor
       // sitting on top of the mage (mirrors the client's AIM deadzone/turn).
       const aim = input.aim.sub(m.position);
@@ -558,11 +581,9 @@ export class World {
   private moveMage(m: Mage, input: MageInput, dt: number): void {
     const move = input.move.clampLength(1);
 
-    // Per-unit since the pivot: a Golem is slow and a Dervish is fast (GDD §9).
-    let speed = m.moveSpeed;
-    if (m.slowFactor > 0) speed *= Math.max(0.1, 1 - m.slowFactor);
-    // Bênção de Ímpeto (GDD §9): a temporary haste on top of the base speed.
-    if (m.speedBuffFactor > 0) speed *= 1 + m.speedBuffFactor;
+    // Per-unit since the pivot: a Golem is slow and a Dervish is fast (GDD §9),
+    // scaled by whatever slows and hastes are currently on the mage.
+    const speed = m.moveSpeed * moveSpeedMultiplier(m);
 
     // Accelerate toward the desired velocity instead of snapping to it, so
     // starts and stops carry the same weight as practice mode.
@@ -701,10 +722,10 @@ export class World {
    * stacking two Bards is deliberately not a strategy.
    */
   private updateSupportAuras(): void {
-    // Seeded from the Bênção de Ímpeto buff rather than 0, then merged with
-    // the strongest applicable aura by Math.max — a cast spell and a Bard's
-    // aura do not stack (GDD §9's "não soma" rule, same as two Bards).
-    for (const m of this.mages.values()) m.chargeRateBonus = m.castBuffFactor;
+    // Only the proximity half lives here now: `chargeRateMultiplier` merges it
+    // with the Bênção de Ímpeto buff by Math.max, so a cast spell and a Bard's
+    // aura still do not stack (GDD §9's "não soma" rule, same as two Bards).
+    for (const m of this.mages.values()) m.chargeRateBonus = 0;
 
     for (const src of this.mages.values()) {
       if (!src.alive || !src.rosterId) continue;
@@ -922,18 +943,87 @@ export class World {
     let dir = target.position.sub(p.position);
     if (dir.lengthSq() < 1e-9) dir = p.velocity;
 
-    this.dealDamage(target, p.damage, dir, p.knockback + (def.knockbackBonus ?? 0), false, p.ownerId);
+    this.dealDamage(target, p.damage, {
+      knockDir: dir,
+      knockMag: p.knockback + (def.knockbackBonus ?? 0),
+      attackerId: p.ownerId,
+    });
 
-    if (def.slowFactor && def.slowFactor > 0) {
-      target.slowFactor = def.slowFactor;
-      target.slowTimer = def.slowDuration ?? 0;
+    const streak = this.advanceStreak(target, p.element);
+    for (const rule of def.onHit) {
+      if (rule.trigger && !this.streakArmed(target, rule, streak)) continue;
+      this.applyOnHit(rule, p, target);
     }
-    if (def.interruptsCharge && target.charging) {
-      target.charging = false;
-      target.charge = 0;
-    }
-    if (def.spawnsPuddle) this.spawnPuddle(p.ownerId, target.position, def);
     if (def.splashRadius && def.splashRadius > 0) this.applySplash(p, target, def);
+  }
+
+  /**
+   * Counts consecutive hits of one element on one victim (GDD §8). A hit of a
+   * different element restarts the count rather than extending it, so the
+   * streak means "this mage kept working the same target", not "this mage was
+   * hit a lot".
+   */
+  private advanceStreak(target: Mage, element: ElementId): number {
+    if (target.streakElement === element && target.streakTimer > 0) target.streakCount++;
+    else {
+      target.streakElement = element;
+      target.streakCount = 1;
+    }
+    return target.streakCount;
+  }
+
+  /** Whether a triggered rider fires on this hit, and what that costs the streak. */
+  private streakArmed(target: Mage, rule: OnHitRule, streak: number): boolean {
+    const trigger = rule.trigger;
+    if (!trigger) return true;
+    target.streakTimer = Math.max(target.streakTimer, trigger.window);
+    if (streak < trigger.hits) return false;
+    if (trigger.reset) {
+      // Has to be re-earned from scratch (lightning's stun), rather than held
+      // at the threshold so every later hit re-applies it (fire's burn).
+      target.streakCount = 0;
+      target.streakElement = null;
+    }
+    return true;
+  }
+
+  /**
+   * One rider from an element's `onHit` list (GDD §8). Riders are data, so
+   * adding an element behaviour is a `balance.json` edit; only genuinely new
+   * *kinds* of behaviour land here.
+   */
+  private applyOnHit(rule: OnHitRule, p: Projectile, target: Mage): void {
+    switch (rule.effect) {
+      case 'interrupt':
+        if (target.charging) {
+          target.charging = false;
+          target.charge = 0;
+        }
+        break;
+      case 'puddle':
+        this.spawnPuddle(p.ownerId, target.position, rule);
+        break;
+      case 'shield_break':
+        // Light does not out-damage Escudo Arcano, it undoes it (GDD §8.7) —
+        // the Cleric's answer to a squad that turtles behind one.
+        removeEffect(target, 'shield');
+        break;
+      default: {
+        if (!isEffectKind(rule.effect)) break;
+        applyEffect(target, {
+          kind: rule.effect,
+          magnitude: rule.magnitude ?? 0,
+          duration: rule.duration ?? 0,
+          tickInterval: rule.tickInterval,
+          tickDamage: rule.tickDamage,
+          sourceId: p.ownerId,
+        });
+        // Stun is the one effect that also drives physics: `updateMage` roots
+        // off `stunTimer`, so the effect has to hand it the longer window.
+        if (rule.effect === 'stun') target.stunTimer = Math.max(target.stunTimer, rule.duration ?? 0);
+        break;
+      }
+    }
   }
 
   /**
@@ -945,29 +1035,35 @@ export class World {
     for (const m of this.mages.values()) {
       if (m === primary || !m.alive || m.team === p.team || m.immunityTimer > 0) continue;
       if (m.position.distanceTo(p.position) <= splashRadius) {
-        this.dealDamage(m, def.damage * 0.5, m.position.sub(p.position), def.knockback * 0.5, false, p.ownerId);
+        this.dealDamage(m, def.damage * 0.5, {
+          knockDir: m.position.sub(p.position),
+          knockMag: def.knockback * 0.5,
+          attackerId: p.ownerId,
+        });
       }
     }
   }
 
   private onProjectileExpire(p: Projectile): void {
     const def = elementDefFor(p.element);
+    if (!def) return;
     // Negation of space: a poison flask that never hits a mage still
     // contaminates the ground where it lands (GDD §8.5).
-    if (def?.spawnsPuddle) this.spawnPuddle(p.ownerId, p.position, def);
+    const rule = def.onHit.find((r) => r.effect === 'puddle' && r.onExpire);
+    if (rule) this.spawnPuddle(p.ownerId, p.position, rule);
   }
 
-  private spawnPuddle(ownerId: string, pos: Vec2, def: ElementDef): void {
+  private spawnPuddle(ownerId: string, pos: Vec2, rule: OnHitRule): void {
     const id = `puddle-${++this.nextId}`;
     this.puddles.set(id, {
       id,
       ownerId,
       position: pos,
-      radius: def.puddleRadius ?? 0,
-      duration: def.puddleDuration ?? 0,
+      radius: rule.radius ?? 0,
+      duration: rule.duration ?? 0,
       elapsed: 0,
-      tickInterval: def.puddleTickInterval ?? 0,
-      tickDamage: def.puddleTickDamage ?? 0,
+      tickInterval: rule.tickInterval ?? 0,
+      tickDamage: rule.tickDamage ?? 0,
       tickTimer: 0,
       alive: true,
     });
@@ -987,7 +1083,13 @@ export class World {
           if (m.position.distanceTo(pu.position) <= pu.radius + MAGE_RADIUS) {
             // `ownerId` is a mage for a poison flask and the literal 'spell' for
             // a Praga zone; `kill` sorts out which of those can score.
-            this.dealDamage(m, pu.tickDamage, Vec2.zero, 0, pu.bypassShield === true, pu.ownerId);
+            this.dealDamage(m, pu.tickDamage, {
+              bypassShield: pu.bypassShield === true,
+              attackerId: pu.ownerId,
+              // Ground DoT, same rule as burn: it ticks several times a second,
+              // so re-stunning on each one would root anyone who walks in.
+              noHitStun: true,
+            });
           }
         }
       }
@@ -1001,40 +1103,32 @@ export class World {
    * through, so death/respawn stay consistent everywhere. `bypassShield` is
    * for Praga's tick (GDD §9): it ignores Escudo Arcano by design.
    *
-   * `attackerId` is an optional trailing parameter rather than the options
-   * object it wants to be, purely so the existing positional callers keep
-   * compiling. Pass the id of whatever caused the damage; `kill` decides on its
+   * `attackerId` is the id of whatever caused the damage; `kill` decides on its
    * own whether that earns a kill.
    */
-  dealDamage(
-    m: Mage,
-    amount: number,
-    knockDir: Vec2,
-    knockMag: number,
-    bypassShield = false,
-    attackerId: string | null = null,
-  ): void {
+  dealDamage(m: Mage, amount: number, opts: DamageOptions = {}): void {
     if (!m.alive || m.immunityTimer > 0) return;
 
-    let remaining = amount;
-    if (!bypassShield && m.shieldAmount > 0) {
-      const absorbed = Math.min(m.shieldAmount, remaining);
-      m.shieldAmount -= absorbed;
-      remaining -= absorbed;
-    }
+    // Arcane marks a target so the rest of the squad hits harder (GDD §8.7) —
+    // applied before the shield, so vulnerability burns through Escudo Arcano
+    // faster too.
+    let remaining = amount * damageTakenMultiplier(m);
+    if (!opts.bypassShield) remaining = absorbWithShield(m, remaining);
     m.health -= remaining;
 
-    if (knockMag > 0) {
-      const n = knockDir.normalized();
+    if (opts.knockMag && opts.knockMag > 0 && opts.knockDir) {
+      const n = opts.knockDir.normalized();
       if (n.lengthSq() > 0) {
         // Additive initial velocity, decayed over the stun window in
         // updateMage — not an instant teleport (see KNOCKBACK_DAMPING).
-        m.knockbackVelocity = m.knockbackVelocity.add(n.scale(knockMag));
+        m.knockbackVelocity = m.knockbackVelocity.add(n.scale(opts.knockMag));
       }
     }
-    m.stunTimer = HIT_STUN;
+    // Never shorten a running stun: a lightning stun outlasts HIT_STUN, and a
+    // graze landing during it must not cut the crowd control short.
+    if (!opts.noHitStun) m.stunTimer = Math.max(m.stunTimer, HIT_STUN);
 
-    if (m.health <= 0) this.kill(m, attackerId);
+    if (m.health <= 0) this.kill(m, opts.attackerId ?? null);
   }
 
   /**
@@ -1078,14 +1172,12 @@ export class World {
     m.charge = 0;
     m.charging = false;
     m.stunTimer = 0;
-    m.slowFactor = 0;
-    m.slowTimer = 0;
-    m.speedBuffFactor = 0;
-    m.speedBuffTimer = 0;
-    m.castBuffFactor = 0;
-    m.castBuffTimer = 0;
-    m.shieldAmount = 0;
-    m.shieldTimer = 0;
+    // A mage comes back clean: nothing that was on it survives the trip, and
+    // the streak that was building toward a burn or a stun starts over.
+    clearEffects(m);
+    m.streakElement = null;
+    m.streakCount = 0;
+    m.streakTimer = 0;
   }
 
   /**

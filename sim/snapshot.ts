@@ -12,6 +12,7 @@
  * one of the callers rather than the owner.
  */
 
+import type { EffectKind } from './effects';
 import { TEAM_A, TEAM_B } from './entities';
 import type { ElementId } from './elements';
 import type { RosterId } from './cards';
@@ -51,12 +52,13 @@ export interface MageSnapshotState {
   role: string;
   rosterId: RosterId | null;
   alive: boolean;
-  /** True while Escudo Arcano still has damage to absorb (GDD §9) — for a client shield indicator. */
-  shielded: boolean;
-  /** Bênção de Ímpeto running (GDD §9) — for the client's haste aura. */
-  hasted: boolean;
-  /** Slowed by an ice hit or Maldição da Lentidão (GDD §8.3, §9). */
-  slowed: boolean;
+  /**
+   * Every status effect currently on this mage (GDD §9), in `EFFECT_ORDER`.
+   * This replaced three booleans (shielded/hasted/slowed): a client that reads
+   * the list can show a burn or a stun the day it is added to `balance.json`,
+   * with no protocol change.
+   */
+  fx: MageFxState[];
   /** Enemy mages this one put down (GDD §4); see `World.kill` for who gets credited. */
   kills: number;
   /** Times this mage was put down. A team's kill total is the enemy's sum of these. */
@@ -65,6 +67,12 @@ export interface MageSnapshotState {
   respawnRemaining: number;
   /** Post-respawn damage immunity is running. The wire omits it when false. */
   immune: boolean;
+}
+
+/** One running effect, flattened for the wire: kind and how many stacks deep. */
+export interface MageFxState {
+  kind: EffectKind;
+  stacks: number;
 }
 
 export interface StructureSnapshotState {
@@ -135,9 +143,7 @@ export function buildSnapshot(world: World, tick: number): Snapshot {
       role: m.role,
       rosterId: m.rosterId,
       alive: m.alive,
-      shielded: m.shieldAmount > 0,
-      hasted: m.speedBuffTimer > 0,
-      slowed: m.slowTimer > 0,
+      fx: m.effects.map((e) => ({ kind: e.kind, stacks: e.stacks })),
       kills: m.kills,
       deaths: m.deaths,
       respawnRemaining: m.respawnTimer,
@@ -203,14 +209,17 @@ export function toSnapshotMsg(snap: Snapshot, view: SnapshotView): SnapshotMsg {
       charge: m.charge,
       element: m.element,
       role: m.role,
-      shielded: m.shielded,
-      hasted: m.hasted,
-      slowed: m.slowed,
+
       kills: m.kills,
       deaths: m.deaths,
       ...(m.rosterId ? { rosterId: m.rosterId } : {}),
-      // Omitted rather than sent as 0/false: this rides 20 times a second for
-      // eight mages, and both are the exception, not the rule.
+      // Omitted rather than sent empty/0/false: this rides 20 times a second
+      // for eight mages, and all three are the exception, not the rule. A mage
+      // with no effects on it now costs nothing, where the three booleans it
+      // replaced always cost three fields.
+      ...(m.fx.length > 0
+        ? { fx: m.fx.map((e) => (e.stacks > 1 ? { k: e.kind, s: e.stacks } : { k: e.kind })) }
+        : {}),
       ...(m.respawnRemaining > 0 ? { respawnRemaining: m.respawnRemaining } : {}),
       ...(m.immune ? { immune: true } : {}),
     })),
