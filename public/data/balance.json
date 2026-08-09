@@ -71,7 +71,7 @@
     "tank": {
       "attacks": true,
       "attackUrge": 0.95,
-      "advanceStopDistance": 2.0,
+      "advanceStopDistance": 2.8,
       "prefersStructures": true,
       "escorts": false,
       "seeksCover": false,
