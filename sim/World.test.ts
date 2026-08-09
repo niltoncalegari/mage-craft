@@ -1,9 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { applyEffect, hasEffect, magnitudeOf } from './effects';
 import { Arena } from './Arena';
-import { CHARGE_TIME, HIT_STUN, RESPAWN_DELAY, SIM_DT } from './config';
+import { defaultSquad } from './cards';
+import {
+  CHARGE_TIME,
+  CORE_RADIUS,
+  HIT_STUN,
+  MAGE_RADIUS,
+  RESPAWN_DELAY,
+  SIM_DT,
+  SQUAD_SIZE,
+} from './config';
 import { elementDefFor } from './elements';
-import { emptyInput, TEAM_A, TEAM_B, type Mage, type MageInput } from './entities';
+import {
+  emptyInput,
+  TEAM_A,
+  TEAM_B,
+  type Mage,
+  type MageInput,
+  type Structure,
+  type Team,
+} from './entities';
 import { Vec2 } from './Vec2';
 import { World } from './World';
 
@@ -435,5 +452,125 @@ describe('World — respawn and round end', () => {
     w.addMage('a1', TEAM_A, 'fire', false);
     stepN(w, 10);
     expect(w.roundOver).toBe(false);
+  });
+});
+
+/**
+ * Refusing a blocked move keeps a mage out of a wall; it does nothing for one
+ * that is already in it. Online squads got stuck inside the Nexus and never
+ * moved again for the rest of the match — these are the regressions for it.
+ */
+describe('World — anti-stuck', () => {
+  /** The default (siege) map, so structures are on the board. */
+  function siegeWorld(): World {
+    return new World();
+  }
+
+  function coreOf(w: World, team: Team): Structure {
+    return w.structuresOf(team).find((s) => s.kind === 'core')!;
+  }
+
+  it('counts live structures as solid, not just obstacles', () => {
+    const w = siegeWorld();
+    const core = coreOf(w, TEAM_B);
+
+    expect(w.isBlocked(core.position)).toBe(true);
+    expect(w.arena.blocksMovementAt(core.position, MAGE_RADIUS)).toBe(false);
+  });
+
+  it('pushes a mage that ends up inside a structure back out', () => {
+    const w = siegeWorld();
+    const core = coreOf(w, TEAM_B);
+    const m = w.summon(TEAM_A, 'pyromancer', core.position);
+
+    w.step(SIM_DT);
+
+    expect(w.isBlocked(m.position)).toBe(false);
+    expect(m.position.distanceTo(core.position)).toBeGreaterThanOrEqual(CORE_RADIUS);
+  });
+
+  it('pushes a mage out of an obstacle it was placed inside', () => {
+    const w = siegeWorld();
+    const rock = w.arena.obstacles.find((o) => o.type === 'rock')!;
+    const m = w.summon(TEAM_A, 'pyromancer', rock.position);
+
+    w.step(SIM_DT);
+
+    expect(w.isBlocked(m.position)).toBe(false);
+  });
+
+  // Walking a squad into a Tower used to end with every mage pinned against it,
+  // because resolveMove rejected every direction once they were inside.
+  it('never leaves a mage stuck inside a blocker while it is being pushed into one', () => {
+    const w = siegeWorld();
+    const [tower] = w.structuresOf(TEAM_B).filter((s) => s.kind === 'tower');
+    const m = w.summon(TEAM_A, 'stone_golem', new Vec2(tower.position.x - 3, tower.position.y));
+
+    // Hold "walk into the tower" for a full second.
+    w.setInput(m.id, input({ move: new Vec2(1, 0) }));
+    stepN(w, 60);
+
+    expect(w.isBlocked(m.position)).toBe(false);
+  });
+
+  it('spawns a full squad clear of every structure and obstacle', () => {
+    const w = siegeWorld();
+    w.initSquad(TEAM_A, defaultSquad());
+    w.initSquad(TEAM_B, defaultSquad());
+
+    for (const m of w.mages.values()) {
+      expect(w.isBlocked(m.position), `spawn of ${m.id}`).toBe(false);
+      expect(w.arena.contains(m.position, MAGE_RADIUS)).toBe(true);
+    }
+  });
+
+  it('gives the map enough spawn points for a whole squad', () => {
+    const w = siegeWorld();
+    for (const team of [TEAM_A, TEAM_B]) {
+      const seats = w.arena.spawns.filter((s) => s.team === team);
+      expect(seats.length).toBeGreaterThanOrEqual(SQUAD_SIZE);
+    }
+  });
+
+  it('respawns each mage on its own slot, clear of blockers', () => {
+    const w = siegeWorld();
+    w.initSquad(TEAM_A, defaultSquad());
+
+    for (const m of w.mages.values()) w.dealDamage(m, 9999);
+    stepN(w, Math.ceil(RESPAWN_DELAY / SIM_DT) + 5);
+
+    const alive = [...w.mages.values()].filter((m) => m.alive);
+    expect(alive).toHaveLength(SQUAD_SIZE);
+    for (const m of alive) expect(w.isBlocked(m.position), `respawn of ${m.id}`).toBe(false);
+
+    // Distinct slots, not four bodies stacked on spawn 0.
+    const spots = new Set(alive.map((m) => `${m.position.x.toFixed(2)},${m.position.y.toFixed(2)}`));
+    expect(spots.size).toBe(SQUAD_SIZE);
+  });
+
+  // What the AI has to ask before it commits to a direction. A probe one step
+  // ahead only sees a wall once you are against it — which is how a squad ends
+  // up grinding along a Tower instead of walking round it.
+  it('sweeps a whole path for blockers, not just the next step', () => {
+    const w = siegeWorld();
+    const core = coreOf(w, TEAM_B);
+    const near = new Vec2(core.position.x - 6, core.position.y);
+    const far = new Vec2(core.position.x + 6, core.position.y);
+
+    expect(w.isBlocked(near)).toBe(false);
+    expect(w.isBlockedSegment(near, far)).toBe(true);
+    expect(w.isBlockedSegment(near, new Vec2(near.x, near.y + 3))).toBe(false);
+  });
+
+  it('reopens the path grid when a structure falls', () => {
+    const w = siegeWorld();
+    const [tower] = w.structuresOf(TEAM_B).filter((s) => s.kind === 'tower');
+
+    expect(w.pathGrid().isBlocked(tower.position)).toBe(true);
+
+    w.damageStructure(tower, tower.maxHealth);
+    expect(tower.alive).toBe(false);
+
+    expect(w.pathGrid().isBlocked(tower.position)).toBe(false);
   });
 });

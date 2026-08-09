@@ -11,10 +11,14 @@
     { "kind": "tower", "team": "enemy", "x": 12, "y": 8 }
   ],
   "spawns": [
-    { "team": "player", "x": -19, "y": -4 },
-    { "team": "player", "x": -19, "y": 4 },
-    { "team": "enemy", "x": 19, "y": -4 },
-    { "team": "enemy", "x": 19, "y": 4 }
+    { "team": "player", "x": -19, "y": -6 },
+    { "team": "player", "x": -19, "y": -2 },
+    { "team": "player", "x": -19, "y": 2 },
+    { "team": "player", "x": -19, "y": 6 },
+    { "team": "enemy", "x": 19, "y": -6 },
+    { "team": "enemy", "x": 19, "y": -2 },
+    { "team": "enemy", "x": 19, "y": 2 },
+    { "team": "enemy", "x": 19, "y": 6 }
   ],
   "objects": [
     { "type": "fort", "x": 0, "y": -11, "width": 1.4, "height": 6 },

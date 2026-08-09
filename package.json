@@ -20,6 +20,7 @@
     "smoke": "node scripts/smoke.mjs",
     "smoke:interaction": "node scripts/interaction.mjs",
     "smoke:combat": "node scripts/combat.mjs",
+    "report:ai": "tsx scripts/ai-report.mts",
     "test:e2e": "docker compose up --build -d && (playwright test; s=$?; docker compose down; exit $s)"
   },
   "dependencies": {

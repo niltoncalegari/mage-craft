@@ -38,7 +38,6 @@ import {
   SPACING,
   SPAWN_MARGIN,
   SPELL_CAST_FX_DURATION,
-  SQUAD_SIZE,
   STRUCTURE_DAMAGE_MULTIPLIER,
   STRUCTURE_TOP_HEIGHT,
   SUDDEN_DEATH_DURATION,
@@ -77,6 +76,7 @@ import {
   type Structure,
   type Team,
 } from './entities';
+import { PathGrid } from './PathGrid';
 import { type Role } from './roles';
 import { spellFor, type SpellCard, type SpellId } from './spells';
 import { Vec2 } from './Vec2';
@@ -88,6 +88,14 @@ export type CastResult = { ok: true } | { ok: false; reason: CastRejection };
 
 /** Relaxation passes used to free a mage overlapping solid geometry. */
 const DEPENETRATION_PASSES = 4;
+/**
+ * Margin the path planner keeps beyond the body radius, so a planned route has
+ * room to actually be walked (see `pathGrid`). Roughly half a cell.
+ */
+const PATH_CLEARANCE = 0.2;
+/** Spacing of `isBlockedSegment`'s samples, and the ceiling on how many it takes. */
+const SEGMENT_SAMPLE_STEP = MAGE_RADIUS;
+const SEGMENT_SAMPLE_LIMIT = 96;
 
 /**
  * Everything a damage source may say about itself beyond the number. All
@@ -157,6 +165,9 @@ export class World {
   private readonly teamCounts = new Map<Team, number>();
   private readonly mana = new Map<Team, number>();
   private readonly manaAccum = new Map<Team, number>();
+
+  private cachedPathGrid: PathGrid | null = null;
+  private cachedPathBlockers = -1;
 
   /** Pass an arena to play on a specific map; omit for the default one. */
   constructor(readonly arena: Arena = defaultArena()) {
@@ -259,7 +270,7 @@ export class World {
         rosterId: entry.id,
         moveSpeed: entry.moveSpeed,
         maxHealth: entry.health,
-        position: this.arena.spawnFor(team, idx),
+        position: this.findClearSpawn(team, idx),
         isBot: true,
       });
     });
@@ -302,7 +313,7 @@ export class World {
       rosterId: null,
       moveSpeed: MOVE_SPEED,
       maxHealth: MAX_HEALTH,
-      position: this.arena.spawnFor(team, idx),
+      position: this.findClearSpawn(team, idx),
       isBot,
     });
   }
@@ -489,7 +500,10 @@ export class World {
     for (const m of this.mages.values()) this.updateMage(m, dt);
     this.applySupportHealing(dt);
     this.separateMages();
+    // Local pushout first; then the planner fallback for bodies still wedged
+    // between blockers where a short push cannot find an exit.
     this.freeTrappedMages();
+    this.resolvePenetrations();
     this.updateStructures(dt);
     this.updateProjectiles(dt);
     this.updatePuddles(dt);
@@ -681,6 +695,37 @@ export class World {
     }
   }
 
+  /**
+   * Escape hatch for bodies still inside a blocker after local pushout — a
+   * corner between a Tower and a fence can leave no short exit, and without
+   * the planner fallback the mage freezes there for the rest of the match.
+   */
+  private resolvePenetrations(): void {
+    for (const id of sortedMageIds(this)) {
+      const m = this.mages.get(id);
+      if (!m?.alive) continue;
+      if (!this.blockedAt(m.position)) continue;
+      m.position = this.freePositionNear(m.position);
+    }
+  }
+
+  /** `p` itself when it is clear, otherwise the closest point that is. */
+  private freePositionNear(p: Vec2): Vec2 {
+    let out = p;
+    for (let pass = 0; pass < DEPENETRATION_PASSES; pass++) {
+      const push = this.arena
+        .pushOutOfObstacles(out, MAGE_RADIUS)
+        .add(this.pushOutOfStructures(out, MAGE_RADIUS));
+      if (push.lengthSq() <= 1e-12) break;
+      out = this.arena.clamp(out.add(push), MAGE_RADIUS);
+    }
+
+    if (!this.blockedAt(out)) return out;
+    // Wedged with no local way out; fall back to the planner's nearest walkable cell.
+    const free = this.pathGrid().nearestFree(out);
+    return free ? this.arena.clamp(free, MAGE_RADIUS) : out;
+  }
+
   /** {@link Arena.pushOutOfObstacles} for the live structures on the field. */
   pushOutOfStructures(p: Vec2, radius: number): Vec2 {
     let push = Vec2.zero;
@@ -722,6 +767,66 @@ export class World {
       if (s.alive && s.position.distanceTo(p) < s.radius + radius) return true;
     }
     return false;
+  }
+
+  /**
+   * Alias of {@link blockedAt}. PathGrid docs and older call sites say
+   * `isBlocked`; Brain on main already uses `blockedAt` — both names resolve
+   * to the same predicate.
+   */
+  isBlocked(p: Vec2, radius: number = MAGE_RADIUS): boolean {
+    return this.blockedAt(p, radius);
+  }
+
+  /**
+   * Whether a body walking the straight line from `from` to `to` would hit
+   * anything. Sampled rather than solved analytically, like
+   * `Arena.hasLineOfSight`: the predicate is already inflated by a body radius,
+   * so the narrowest blocking band on any map is far wider than the step below.
+   */
+  isBlockedSegment(from: Vec2, to: Vec2): boolean {
+    const delta = to.sub(from);
+    const dist = delta.length();
+    if (dist < 1e-9) return this.blockedAt(from);
+
+    const steps = Math.min(SEGMENT_SAMPLE_LIMIT, Math.ceil(dist / SEGMENT_SAMPLE_STEP));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      if (this.blockedAt(new Vec2(from.x + delta.x * t, from.y + delta.y * t))) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The shared A* grid, built lazily off `blockedAt` and rebuilt when the set of
+   * solid structures changes — a fallen Tower opens a route that was closed a
+   * tick earlier. Keyed on the live count rather than a dirty flag so that
+   * killing a structure by hand (tests, admin tooling) invalidates it too.
+   */
+  pathGrid(): PathGrid {
+    let blockers = 0;
+    for (const s of this.structures.values()) if (s.alive) blockers++;
+
+    if (!this.cachedPathGrid || blockers !== this.cachedPathBlockers) {
+      // Planned with a margin over the body radius. A cell whose *centre* is
+      // just barely clear can still have a sliver of blocker across the line to
+      // the next centre, and a mage told to walk that line pushes into the
+      // sliver forever. The margin buys back the error the grid introduces.
+      this.cachedPathGrid = new PathGrid(this.arena, (p) =>
+        this.blockedAt(p, MAGE_RADIUS + PATH_CLEARANCE),
+      );
+      this.cachedPathBlockers = blockers;
+    }
+    return this.cachedPathGrid;
+  }
+
+  /**
+   * The team's `idx`-th spawn, moved off any structure standing on it. The map
+   * only knows about obstacles, so a spawn point can be perfectly legal on disk
+   * and still sit inside a Core.
+   */
+  findClearSpawn(team: Team, idx: number): Vec2 {
+    return this.freePositionNear(this.arena.spawnFor(team, idx));
   }
 
   /* ---- Supports (GDD §9) --------------------------------------------------- */
@@ -1221,7 +1326,9 @@ export class World {
    * one place someone would zero them by reflex.
    */
   private respawn(m: Mage): void {
-    m.position = this.freeSpawnFor(m.team);
+    // Its own slot, not the first free seat: a whole squad wiped at once used
+    // to come back stacked, where spacing then shoved them into the back wall.
+    m.position = this.findClearSpawn(m.team, this.squadSlotOf(m));
     m.velocity = Vec2.zero;
     m.health = m.maxHealth;
     m.alive = true;
@@ -1239,27 +1346,16 @@ export class World {
     m.streakTimer = 0;
   }
 
-  /**
-   * A spawn slot for `team` that is clear and that nobody is already standing
-   * on. Everyone used to come back on slot 0, so a wiped squad respawned in a
-   * single pile that `separateMages` then shoved outward — straight into
-   * whatever obstacle happened to be next to the spawn.
-   */
-  private freeSpawnFor(team: Team): Vec2 {
-    for (let idx = 0; idx < SQUAD_SIZE; idx++) {
-      const p = this.arena.spawnFor(team, idx);
-      if (this.blockedAt(p)) continue;
-
-      let taken = false;
-      for (const m of this.mages.values()) {
-        if (m.alive && m.team === team && m.position.distanceTo(p) < SPACING) {
-          taken = true;
-          break;
-        }
-      }
-      if (!taken) return p;
+  /** A mage's position among its team, in id order — its spawn slot. */
+  private squadSlotOf(m: Mage): number {
+    let slot = 0;
+    for (const id of sortedMageIds(this)) {
+      const other = this.mages.get(id);
+      if (!other || other.team !== m.team) continue;
+      if (other === m) return slot;
+      slot++;
     }
-    return this.arena.spawnFor(team, 0);
+    return 0;
   }
 
   /**
