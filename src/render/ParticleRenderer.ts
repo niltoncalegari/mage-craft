@@ -250,12 +250,16 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
     trailSize: 0.12,
     trailRate: 8,
     impactColors: [0xdbe6f2, 0x8d99ae, 0x6b7480],
-    impactCount: 16,
-    impactSpeed: 2.1,
+    // The heaviest hit in the game (damage 32, and it interrupts a charge) was
+    // landing with the *smallest* impact of the nine — a dull grey puff. It now
+    // throws the widest shockwave of any non-wind element, which is what
+    // "a boulder just arrived" should look like.
+    impactCount: 20,
+    impactSpeed: 2.8,
     gravityScale: 1.4,
     visualScale: 1.35,
     ring: true,
-    ringScale: 1.4,
+    ringScale: 2.2,
     smoke: true,
   },
   arcane: {

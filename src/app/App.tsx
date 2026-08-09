@@ -27,6 +27,7 @@ import { HomeScreen } from './screens/HomeScreen';
 import { LoginScreen } from './screens/LoginScreen';
 import { PracticeScreen } from './screens/PracticeScreen';
 import { QueueScreen } from './screens/QueueScreen';
+import { RangeScreen } from './screens/RangeScreen';
 import { RankingScreen } from './screens/RankingScreen';
 import { RoomBrowserScreen } from './screens/RoomBrowserScreen';
 import { RoomLobbyScreen } from './screens/RoomLobbyScreen';
@@ -45,7 +46,9 @@ export type AppScreen =
   | 'queue'
   | 'lobby'
   | 'onlineMatch'
-  | 'ranking';
+  | 'ranking'
+  /** Dev surface: the whole roster firing at a wall, for judging spell VFX. */
+  | 'range';
 
 interface AppProps {
   stats?: { wins: number; losses: number };
@@ -397,7 +400,11 @@ function AppShell(props: AppProps): JSX.Element {
       <div class={styles.vignette} />
       <div class={styles.layer}>
         {screen === 'title' ? (
-          <TitleScreen onEnter={() => setScreen(user ? 'home' : 'login')} onPractice={() => setScreen('practice')} />
+          <TitleScreen
+            onEnter={() => setScreen(user ? 'home' : 'login')}
+            onPractice={() => setScreen('practice')}
+            onOpenRange={() => setScreen('range')}
+          />
         ) : null}
         {screen === 'login' ? <LoginScreen onBack={() => setScreen('title')} onSignedIn={signIn} /> : null}
         {screen === 'home' && user ? (
@@ -415,6 +422,7 @@ function AppShell(props: AppProps): JSX.Element {
             onSignOut={signOut}
           />
         ) : null}
+        {screen === 'range' ? <RangeScreen onExit={() => setScreen(user ? 'home' : 'title')} /> : null}
         {screen === 'dashboard' && user ? <DashboardScreen user={user} onBack={() => setScreen('home')} /> : null}
         {screen === 'practice' ? (
           <PracticeScreen token={user?.token} onExit={() => setScreen(user ? 'home' : 'title')} />

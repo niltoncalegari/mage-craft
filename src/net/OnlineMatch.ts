@@ -143,6 +143,8 @@ export class OnlineMatch {
       mapData: MapData;
       onLeaveMatch: (reason: LeaveMatchReason) => void;
       onTick?: (dt: number) => void;
+      /** Draw the match HUD and squad panels. Defaults to true; false gives a bare arena. */
+      chrome?: boolean;
     },
   ) {
     this.spectating = opts.spectating;
@@ -173,23 +175,34 @@ export class OnlineMatch {
       new SquadHighlightRenderer(this.renderer.scene, this.world, () =>
         this.sync.entityIdFor(this.highlightedMageId),
       ),
-      new MatchHUD(container, this.world, {
-        getState: () => this.sync.matchState,
-        getSelectedCard: () => this.selectedCardId,
-        onSelectCard: (cardId) => this.selectCard(cardId),
-        isVisible: () => !this.paused,
-        isSpectating: () => this.spectating,
-        getMySide: () => this.sync.mySide,
-      }),
-      new SquadPanel(container, {
-        getSquad: () => this.sync.squad,
-        getHighlighted: () => this.highlightedMageId,
-        getMySide: () => this.sync.mySide,
-        onSelect: (wireId) => this.watchMage(wireId),
-        isVisible: () => !this.paused,
-        isCardArmed: () => this.selectedCardId !== null,
-      }),
     ];
+
+    /*
+     * The card bar, clock and squad panels are the *match*, not the view. The
+     * firing range (`RangeScreen`) has no mana, no hand and no opponent, and
+     * its outer lanes sit exactly where the two squad panels float — so it
+     * opts out and gets the bare arena.
+     */
+    if (opts.chrome !== false) {
+      this.renderers.push(
+        new MatchHUD(container, this.world, {
+          getState: () => this.sync.matchState,
+          getSelectedCard: () => this.selectedCardId,
+          onSelectCard: (cardId) => this.selectCard(cardId),
+          isVisible: () => !this.paused,
+          isSpectating: () => this.spectating,
+          getMySide: () => this.sync.mySide,
+        }),
+        new SquadPanel(container, {
+          getSquad: () => this.sync.squad,
+          getHighlighted: () => this.highlightedMageId,
+          getMySide: () => this.sync.mySide,
+          onSelect: (wireId) => this.watchMage(wireId),
+          isVisible: () => !this.paused,
+          isCardArmed: () => this.selectedCardId !== null,
+        }),
+      );
+    }
 
     this.audio = new AudioManager(this.events);
     this.audio.setMuted(this.settings.get('muted'));

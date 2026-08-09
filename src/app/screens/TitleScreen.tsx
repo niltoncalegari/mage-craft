@@ -1,7 +1,11 @@
 import type { JSX } from 'preact';
 import styles from '../App.module.css';
 
-export function TitleScreen(props: { onEnter(): void; onPractice(): void }): JSX.Element {
+export function TitleScreen(props: {
+  onEnter(): void;
+  onPractice(): void;
+  onOpenRange(): void;
+}): JSX.Element {
   return (
     <div class={styles.titleScreen}>
       <p class={styles.tag}>Enter the arena</p>
@@ -15,6 +19,10 @@ export function TitleScreen(props: { onEnter(): void; onPractice(): void }): JSX
         </button>
         <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onPractice}>
           Quick Practice
+        </button>
+        {/* Dev surface: the whole roster firing at a wall, for judging spell VFX. */}
+        <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onOpenRange}>
+          Firing Range
         </button>
       </div>
     </div>
