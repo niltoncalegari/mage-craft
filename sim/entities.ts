@@ -91,6 +91,14 @@ export interface Mage {
   stunTimer: number;
   knockbackVelocity: Vec2;
 
+  /**
+   * Seconds this mage still cannot heal for, set by a hit hard enough to shove
+   * it (GDD §9, `HEAL_INTERRUPT_KNOCKBACK`). A plain timer for the same reason
+   * `stunTimer` is one: it is driven by impact, not by a status a caster
+   * applied. Only healers read it — on anyone else it just runs down.
+   */
+  healInterruptTimer: number;
+
   immunityTimer: number;
   respawnTimer: number;
 
@@ -167,7 +175,7 @@ export interface Puddle {
 
 /**
  * The objective. A team loses the moment its Core falls, and the Core is immune
- * while either of its Towers still stands — that immunity is what stops a
+ * while both of its Towers still stand — that immunity is what stops a
  * minute-one rush and gives the match its shape.
  */
 export type StructureKind = 'core' | 'tower';
@@ -190,7 +198,7 @@ export interface Structure {
   readonly attackInterval: number;
   attackCooldown: number;
 
-  /** Recomputed each tick: a Core is invulnerable while a Tower of its team lives. */
+  /** Recomputed each tick: a Core is invulnerable while both Towers of its team live. */
   invulnerable: boolean;
 }
 

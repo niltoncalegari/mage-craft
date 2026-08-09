@@ -15,6 +15,8 @@ import {
   CHARGE_TIME,
   CORE_HEALTH,
   CORE_RADIUS,
+  HEAL_INTERRUPT_DURATION,
+  HEAL_INTERRUPT_KNOCKBACK,
   HIT_STUN,
   KNOCKBACK_DAMPING,
   KNOCKBACK_STOP_SPEED,
@@ -30,13 +32,18 @@ import {
   RECOVERY,
   RESPAWN_DELAY,
   RESPAWN_IMMUNITY,
+  SIEGE_RAMP_END,
+  SIEGE_RAMP_START,
+  SIEGE_RAMP_SUDDEN_DEATH,
   SPACING,
   SPAWN_MARGIN,
   SPELL_CAST_FX_DURATION,
   SQUAD_SIZE,
+  STRUCTURE_DAMAGE_MULTIPLIER,
   STRUCTURE_TOP_HEIGHT,
   SUDDEN_DEATH_DURATION,
   SUDDEN_DEATH_MANA_MULTIPLIER,
+  SUDDEN_DEATH_STRUCTURE_DECAY,
   THROW_COOLDOWN,
   TOWER_ATTACK_INTERVAL,
   TOWER_DAMAGE,
@@ -334,6 +341,7 @@ export class World {
       recoveryTimer: 0,
       stunTimer: 0,
       knockbackVelocity: Vec2.zero,
+      healInterruptTimer: 0,
       immunityTimer: 0,
       respawnTimer: 0,
       chargeRateBonus: 0,
@@ -496,6 +504,7 @@ export class World {
   private updateMage(m: Mage, dt: number): void {
     if (m.immunityTimer > 0) m.immunityTimer = decay(m.immunityTimer, dt);
     if (m.throwCooldown > 0) m.throwCooldown = decay(m.throwCooldown, dt);
+    if (m.healInterruptTimer > 0) m.healInterruptTimer = decay(m.healInterruptTimer, dt);
     if (m.streakTimer > 0) {
       m.streakTimer = decay(m.streakTimer, dt);
       if (m.streakTimer === 0) {
@@ -746,6 +755,9 @@ export class World {
     for (const healerId of sortedMageIds(this)) {
       const src = this.mages.get(healerId);
       if (!src?.alive || !src.rosterId) continue;
+      // Shoved out of it (GDD §9): the heal resumes on its own once the timer
+      // runs out — a heavy hit costs the Cleric a window, not the ability.
+      if (src.healInterruptTimer > 0) continue;
       const entry = rosterFor(src.rosterId);
       if (!entry?.healPerSecond || !entry.healRange) continue;
 
@@ -768,14 +780,22 @@ export class World {
   /* ---- Structure behaviour (GDD §5) ---------------------------------------- */
 
   private updateStructures(dt: number): void {
-    // A Core is only reachable once both its Towers are down — the rule that
-    // stops a minute-one rush at the Core.
+    // Core is immune only while both Towers still stand — one flank break is
+    // enough to open the Core (GDD §14: the stricter "both down" rule never
+    // let a push convert in measurement).
     for (const team of [TEAM_A, TEAM_B] as Team[]) {
-      const towerUp = this.structuresOf(team).some((s) => s.kind === 'tower' && s.alive);
+      const bothTowersUp = this.structuresOf(team)
+        .filter((s) => s.kind === 'tower')
+        .every((s) => s.alive);
       for (const s of this.structuresOf(team)) {
-        if (s.kind === 'core') s.invulnerable = towerUp;
+        if (s.kind === 'core') s.invulnerable = bothTowersUp;
       }
     }
+
+    if (this.suddenDeath) this.decayStructures(dt);
+
+    // Sudden death stops towers shooting so the remaining seconds convert.
+    if (this.suddenDeath) return;
 
     for (const id of sortedIds(this.structures.keys())) {
       const s = this.structures.get(id);
@@ -850,13 +870,44 @@ export class World {
     return null;
   }
 
+  /**
+   * How hard siege damage lands right now (GDD §14).
+   *
+   * Scaled and ramped so a committed push converts: flat mage-vs-mage damage
+   * alone never adds up to a Tower break inside normal time.
+   */
+  siegeMultiplier(): number {
+    if (this.suddenDeath) return STRUCTURE_DAMAGE_MULTIPLIER * SIEGE_RAMP_SUDDEN_DEATH;
+
+    const progress = Math.min(1, this.elapsed / MATCH_DURATION);
+    const ramp = SIEGE_RAMP_START + (SIEGE_RAMP_END - SIEGE_RAMP_START) * progress;
+    return STRUCTURE_DAMAGE_MULTIPLIER * ramp;
+  }
+
   /** The single seam for structure damage, mirroring `dealDamage` for mages. */
   damageStructure(s: Structure, amount: number): void {
     if (!s.alive || s.invulnerable) return;
-    s.health -= amount;
+    s.health -= amount * this.siegeMultiplier();
     if (s.health <= 0) {
       s.health = 0;
       s.alive = false;
+    }
+  }
+
+  /**
+   * Sudden-death decay. Not routed through `damageStructure` — this damage
+   * belongs to nobody and must not inflate structure-damage stats/tiebreaks.
+   */
+  private decayStructures(dt: number): void {
+    for (const id of sortedIds(this.structures.keys())) {
+      const s = this.structures.get(id);
+      if (!s || !s.alive || s.invulnerable) continue;
+
+      s.health -= SUDDEN_DEATH_STRUCTURE_DECAY * dt;
+      if (s.health <= 0) {
+        s.health = 0;
+        s.alive = false;
+      }
     }
   }
 
@@ -1123,6 +1174,13 @@ export class World {
         // updateMage — not an instant teleport (see KNOCKBACK_DAMPING).
         m.knockbackVelocity = m.knockbackVelocity.add(n.scale(opts.knockMag));
       }
+      // A shove that big also breaks a healer's concentration (GDD §9). Read
+      // off the knockback rather than off an element list on purpose: whatever
+      // is heavy enough to move a mage is heavy enough to cut its healing, and
+      // re-tuning which elements qualify stays a `balance.json` edit.
+      if (opts.knockMag >= HEAL_INTERRUPT_KNOCKBACK) {
+        m.healInterruptTimer = Math.max(m.healInterruptTimer, HEAL_INTERRUPT_DURATION);
+      }
     }
     // Never shorten a running stun: a lightning stun outlasts HIT_STUN, and a
     // graze landing during it must not cut the crowd control short.
@@ -1172,6 +1230,7 @@ export class World {
     m.charge = 0;
     m.charging = false;
     m.stunTimer = 0;
+    m.healInterruptTimer = 0;
     // A mage comes back clean: nothing that was on it survives the trip, and
     // the streak that was building toward a burn or a stun starts over.
     clearEffects(m);

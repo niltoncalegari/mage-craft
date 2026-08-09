@@ -9,6 +9,7 @@ import { magnitudeOf } from './effects';
 import { defaultSquad } from './cards';
 import {
   CHARGE_TIME,
+  HEAL_INTERRUPT_DURATION,
   MANA_MAX,
   MANA_REGEN_INTERVAL,
   MANA_START,
@@ -59,7 +60,7 @@ describe('structures', () => {
     expect(coreOf(w, TEAM_B)).toBeTruthy();
   });
 
-  it('keeps a Core immune while either of its Towers stands', () => {
+  it('keeps a Core immune while both of its Towers stand', () => {
     const w = new World();
     const core = coreOf(w, TEAM_B);
 
@@ -69,6 +70,20 @@ describe('structures', () => {
     w.damageStructure(core, 9999);
     expect(core.alive).toBe(true);
     expect(core.health).toBe(core.maxHealth);
+  });
+
+  it('exposes the Core once either Tower falls', () => {
+    const w = new World();
+    const [tower] = towersOf(w, TEAM_B);
+    tower.health = 0;
+    tower.alive = false;
+    w.step(SIM_DT);
+
+    const core = coreOf(w, TEAM_B);
+    expect(core.invulnerable).toBe(false);
+
+    w.damageStructure(core, 9999);
+    expect(core.alive).toBe(false);
   });
 
   it('exposes the Core once both Towers are down', () => {
@@ -81,6 +96,16 @@ describe('structures', () => {
 
     w.damageStructure(core, 9999);
     expect(core.alive).toBe(false);
+  });
+
+  it('scales structure damage by the siege multiplier', () => {
+    const w = new World();
+    const [tower] = towersOf(w, TEAM_B);
+    const before = tower.health;
+    const raw = 2;
+    w.damageStructure(tower, raw);
+    const expected = Math.max(0, before - raw * w.siegeMultiplier());
+    expect(tower.health).toBeCloseTo(expected);
   });
 
   it('ends the match the instant a Core falls', () => {
@@ -396,5 +421,52 @@ describe('supports', () => {
 
     expect([...w.projectiles.values()].some((p) => p.element === 'holy')).toBe(true);
     expect(hurt.health).toBeGreaterThan(20);
+  });
+
+  /**
+   * The counterplay a continuous 8 HP/s aura had none of (GDD §9): a hit heavy
+   * enough to shove the Cleric cuts the healing. *Momentarily* is the whole
+   * point — the heal has to come back on its own, or a single wind blade would
+   * take the Cleric out of the fight for good.
+   */
+  it('cuts the Cleric’s heal while it is being shoved, then lets it resume', () => {
+    const w = new World();
+    const hurt = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    hurt.health = 20;
+    const cleric = w.summon(TEAM_A, 'cleric', new Vec2(-10, 1.6));
+    const dervish = w.summon(TEAM_B, 'wind_dervish', new Vec2(-4, 1.6));
+
+    fullyChargeAndRelease(w, dervish.id, cleric.position);
+    for (let i = 0; i < 120 && cleric.healInterruptTimer === 0; i++) w.step(SIM_DT);
+    expect(cleric.healInterruptTimer, 'the blade has to land').toBeGreaterThan(0);
+
+    const shoved = hurt.health;
+    stepN(w, Math.floor(HEAL_INTERRUPT_DURATION / 2 / SIM_DT));
+    expect(hurt.health, 'no healing while the Cleric is off balance').toBe(shoved);
+
+    stepN(w, Math.ceil(HEAL_INTERRUPT_DURATION / SIM_DT));
+    expect(hurt.health, 'the heal returns by itself').toBeGreaterThan(shoved);
+  });
+
+  /**
+   * Only the heavy hits qualify (`HEAL_INTERRUPT_KNOCKBACK`). Chip damage must
+   * not shut a Cleric down, or the interrupt stops being a shove and becomes a
+   * silence anybody can apply.
+   */
+  it('keeps healing through a hit too light to shove it', () => {
+    const w = new World();
+    const hurt = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    hurt.health = 20;
+    const cleric = w.summon(TEAM_A, 'cleric', new Vec2(-10, 1.6));
+    const stormcaller = w.summon(TEAM_B, 'stormcaller', new Vec2(-4, 1.6));
+
+    fullyChargeAndRelease(w, stormcaller.id, cleric.position);
+    for (let i = 0; i < 120 && cleric.health === cleric.maxHealth; i++) w.step(SIM_DT);
+    expect(cleric.health, 'the bolt has to land').toBeLessThan(cleric.maxHealth);
+
+    const hit = hurt.health;
+    stepN(w, 20);
+    expect(cleric.healInterruptTimer).toBe(0);
+    expect(hurt.health).toBeGreaterThan(hit);
   });
 });

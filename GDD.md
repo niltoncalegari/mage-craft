@@ -290,6 +290,13 @@ Três regras que dão forma a isso:
    por segundo; se cada tique repusesse `HIT_STUN`, ficar numa poça (ou pegando
    fogo) seria um root permanente e invisível. A poça de veneno tinha esse bug
    desde sempre.
+4. **Empurrão pesado corta a cura.** Um acerto que imponha pelo menos
+   `HEAL_INTERRUPT_KNOCKBACK` (3.0 — fogo, arcano, pedra e vento) desliga a cura
+   da vítima por `HEAL_INTERRUPT_DURATION` (0.8 s). A regra lê o *knockback*, não
+   uma lista de elementos: o que é pesado o bastante para mover um mago é pesado
+   o bastante para tirar o Clérigo do ritmo, e afinar quem se qualifica continua
+   sendo uma edição de `balance.json`. O corte é momentâneo por definição — a
+   cura volta sozinha quando o timer zera (§9).
 
 Os números todos — voo, dano, knockback, efeitos, papéis, roster, feitiços e as
 constantes de `config.ts` — vivem em **[public/data/balance.json](public/data/balance.json)**,
@@ -320,7 +327,7 @@ de custo de mana morreu — escolher o esquadrão não gasta mana.
 | Arqueiro Arcano | Dano | 70 | 5.5 | `arcane` | Splash 2.0. Contra de grupo |
 | Alquimista | Dano | 70 | 5.0 | `poison` | Poça de 4 s nega terreno. Zoning, não burst |
 | Dervixe do Vento | Dano | 65 | 7.0 | `wind` | Dano baixo, knockback alto. Empurra tank para fora da cobertura |
-| Clérigo | Suporte | 95 | 5.0 | `holy` | Cura o aliado ferido mais próximo, 8 HP/s, alcance 5. Ataque fraco (dano 8, splash 1.2) |
+| Clérigo | Suporte | 95 | 5.0 | `holy` | Cura o aliado ferido mais próximo, 8 HP/s, alcance 5, **cortada por 0.8 s a cada empurrão pesado** (§8.10). Ataque fraco (dano 8, splash 1.2) |
 | Bardo Arcano | Suporte | 70 | 5.0 | `sonic` | Aura: +25% velocidade de conjuração aos aliados em raio 4. Ataque fraco (dano 6, lentidão 15% por 0.6 s) |
 
 > **Suporte passou a atacar.** Até aqui `ROLE_BEHAVIOR.support.attacks` era `false` e

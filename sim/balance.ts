@@ -144,6 +144,8 @@ export interface Balance {
     readonly hitStun: number;
     readonly knockbackDamping: number;
     readonly knockbackStopSpeed: number;
+    readonly healInterruptKnockback: number;
+    readonly healInterruptDuration: number;
     readonly respawnDelay: number;
     readonly respawnImmunity: number;
     readonly squadSize: number;
@@ -165,6 +167,16 @@ export interface Balance {
     readonly towerAttackInterval: number;
     readonly towerDamage: number;
     readonly topHeight: number;
+    /** Flat multiplier on projectile damage vs structures (before the time ramp). */
+    readonly siegeDamageMultiplier: number;
+    /** Siege ramp at match start (multiplies siegeDamageMultiplier). */
+    readonly siegeRampStart: number;
+    /** Siege ramp at the end of normal time. */
+    readonly siegeRampEnd: number;
+    /** Flat siege ramp held during sudden death. */
+    readonly siegeRampSuddenDeath: number;
+    /** HP/s structures lose during sudden death when reachable. */
+    readonly suddenDeathStructureDecay: number;
   };
   readonly roles: Readonly<Record<string, RoleRule>>;
   readonly roster: Readonly<Record<string, RosterRule>>;

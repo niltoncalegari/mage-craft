@@ -59,6 +59,21 @@ export const KNOCKBACK_DAMPING = S.knockbackDamping;
 export const KNOCKBACK_STOP_SPEED = S.knockbackStopSpeed;
 
 /**
+ * A shove breaks a healer's concentration (GDD §9). A hit that imparts at
+ * least this much knockback stops the victim's healing for
+ * `HEAL_INTERRUPT_DURATION` seconds — momentarily, not for the rest of the
+ * fight: a Cleric that is being shoved around heals in gaps instead of
+ * continuously, which is the counterplay a permanent 8 HP/s aura had none of.
+ *
+ * The threshold is what makes this an answer rather than a nerf: at 3.0 only
+ * the heavy hits qualify (fire 3.5, arcane 3.0, stone 6.0, wind 8.5), so
+ * chipping the Cleric with lightning or a Bard's wave does not shut it down,
+ * and arcane's half-knockback splash does not either.
+ */
+export const HEAL_INTERRUPT_KNOCKBACK = S.healInterruptKnockback;
+export const HEAL_INTERRUPT_DURATION = S.healInterruptDuration;
+
+/**
  * Squad mages always come back (GDD §4) — death costs presence on the field,
  * not the mage itself. This number is one of the two unmeasured dials GDD §10
  * flags as deciding whether an AFK player actually loses: too short and death
@@ -91,12 +106,10 @@ export const SUDDEN_DEATH_DURATION = S.suddenDeathDuration;
 /* ---- Structures (GDD §5) -------------------------------------------------- */
 
 /*
- * Structure health is the main dial on how offensive the game is. The first
- * pass (1400/700) made two competent players deadlock: every seeded AI-vs-AI
- * match drew at the sudden-death timeout because neither side could ever break
- * a Tower through the other's defence — exactly the failure GDD §14 warns about.
- * These values let a well-supported push convert, while a lone unit still dies
- * to the Tower before it does real damage.
+ * Structure health + siege scaling are the dials on how offensive the game is.
+ * Raw Tower HP of 400 with no multiplier left human PvP without a convert in
+ * three minutes; these values (and the ramp in World.siegeMultiplier) make a
+ * committed flank break a Tower inside the first minute.
  */
 export const CORE_HEALTH = ST.coreHealth;
 export const TOWER_HEALTH = ST.towerHealth;
@@ -108,6 +121,15 @@ export const TOWER_ATTACK_INTERVAL = ST.towerAttackInterval;
 export const TOWER_DAMAGE = ST.towerDamage;
 /** Structures are hit by projectiles flying below this height. */
 export const STRUCTURE_TOP_HEIGHT = ST.topHeight;
+
+/* ---- Siege pressure (GDD §4, §14) ----------------------------------------- */
+
+export const STRUCTURE_DAMAGE_MULTIPLIER = ST.siegeDamageMultiplier;
+export const SIEGE_RAMP_START = ST.siegeRampStart;
+export const SIEGE_RAMP_END = ST.siegeRampEnd;
+export const SIEGE_RAMP_SUDDEN_DEATH = ST.siegeRampSuddenDeath;
+/** HP per second reachable structures lose in sudden death. */
+export const SUDDEN_DEATH_STRUCTURE_DECAY = ST.suddenDeathStructureDecay;
 
 /* ---- Spells (GDD §9) -------------------------------------------------------- */
 /*

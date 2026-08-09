@@ -24,6 +24,8 @@
     "hitStun": 0.35,
     "knockbackDamping": 12,
     "knockbackStopSpeed": 0.02,
+    "healInterruptKnockback": 3.0,
+    "healInterruptDuration": 0.8,
 
     "respawnDelay": 6,
     "respawnImmunity": 5,
@@ -50,14 +52,19 @@
   },
 
   "structures": {
-    "coreHealth": 900,
-    "towerHealth": 400,
+    "coreHealth": 200,
+    "towerHealth": 72,
     "coreRadius": 1.6,
     "towerRadius": 1.1,
     "towerRange": 9,
-    "towerAttackInterval": 1.1,
-    "towerDamage": 10,
-    "topHeight": 2.6
+    "towerAttackInterval": 1.2,
+    "towerDamage": 4,
+    "topHeight": 2.6,
+    "siegeDamageMultiplier": 5.5,
+    "siegeRampStart": 2.6,
+    "siegeRampEnd": 4.0,
+    "siegeRampSuddenDeath": 4.5,
+    "suddenDeathStructureDecay": 10
   },
 
   "roles": {
