@@ -1,0 +1,150 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Commit SHA to deploy (blank = this commit). Use to roll back.'
+        required: false
+        type: string
+
+# Never cancel a deploy midway — a half-applied stack is worse than a queued one.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    name: build ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # The client and the game server both build from the repo root: the
+          # server bundles the shared sim/ and public/maps/ (see server/Dockerfile).
+          - image: client
+            context: .
+            dockerfile: Dockerfile
+          - image: gameserver
+            context: .
+            dockerfile: server/Dockerfile
+          - image: api
+            context: ./api
+            dockerfile: ./api/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ matrix.image }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ matrix.image }}:latest
+          # Layer cache in the registry: npm ci is the slow step and it only
+          # changes when a lockfile does.
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache,mode=max
+
+  deploy:
+    name: deploy to VPS
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Open SSH connection
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          SSH_HOST_KEY: ${{ secrets.VPS_SSH_HOST_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if [ -n "${SSH_HOST_KEY:-}" ]; then
+            printf '%s\n' "$SSH_HOST_KEY" > ~/.ssh/known_hosts
+          else
+            # Trust-on-first-use. Works, but a pinned VPS_SSH_HOST_KEY is what
+            # actually stops a man in the middle from taking over the deploy.
+            echo "::warning::VPS_SSH_HOST_KEY is not set; falling back to ssh-keyscan"
+            ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Copy compose file
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" 'mkdir -p /opt/mage-craft'
+          scp -i ~/.ssh/deploy_key -P "$VPS_PORT" docker-compose.prod.yml \
+            "$VPS_USER@$VPS_HOST:/opt/mage-craft/docker-compose.prod.yml"
+
+      - name: Pull and restart
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+            "IMAGE_TAG=$IMAGE_TAG REGISTRY=$REGISTRY bash -euo pipefail -s" <<'REMOTE'
+          cd /opt/mage-craft
+          # .env lives only on the server and holds the secrets; never in git.
+          test -f .env || { echo "missing /opt/mage-craft/.env — see DEPLOY.md" >&2; exit 1; }
+          export IMAGE_TAG REGISTRY
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          # Keep a week of images so a rollback has something to pull locally.
+          docker image prune -f --filter until=168h
+          docker compose -f docker-compose.prod.yml ps
+          REMOTE
+
+      - name: Verify the deploy is live
+        run: |
+          set -euo pipefail
+          # Checked from inside the box: the published port may be firewalled off
+          # from GitHub's runners, and that is not a failed deploy.
+          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" 'bash -euo pipefail -s' <<'REMOTE'
+          cd /opt/mage-craft
+          port=$(sed -n 's/^CLIENT_PORT=//p' .env | tail -1 | tr -d '"'\''[:space:]')
+          port=${port:-8080}
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then
+              echo "client healthy on :${port}"
+              curl -fsS "http://127.0.0.1:${port}/api/ranking?limit=1" >/dev/null \
+                && echo "api reachable through nginx"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "client never became healthy" >&2
+          docker compose -f docker-compose.prod.yml logs --tail 50
+          exit 1
+          REMOTE
+
+      - name: Revoke the key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
