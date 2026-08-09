@@ -1,0 +1,357 @@
+{
+  "version": 1,
+
+  "sim": {
+    "hz": 60,
+    "mageRadius": 0.5,
+    "maxHealth": 100,
+    "moveSpeed": 6,
+    "acceleration": 40,
+    "turnSpeed": 12,
+    "aimTurnSpeed": 15,
+    "aimDeadzone": 1.2,
+    "spacing": 1.4,
+
+    "chargeTime": 1.5,
+    "windup": 0.18,
+    "recovery": 0.25,
+    "throwCooldown": 0.6,
+
+    "launchHeight": 1,
+    "spawnMargin": 0.6,
+    "maxProjectileLifetime": 5,
+
+    "hitStun": 0.35,
+    "knockbackDamping": 12,
+    "knockbackStopSpeed": 0.02,
+
+    "respawnDelay": 6,
+    "respawnImmunity": 5,
+
+    "squadSize": 4,
+
+    "manaMax": 10,
+    "manaStart": 5,
+    "manaRegenInterval": 2.8,
+    "suddenDeathManaMultiplier": 2,
+
+    "matchDuration": 180,
+    "suddenDeathDuration": 60,
+
+    "spellCastFxDuration": 1,
+
+    "obstacleTopHeight": {
+      "tree": 2.4,
+      "rock": 1.0,
+      "fort": 1.3,
+      "fence": 0.85,
+      "prop": 0.9
+    }
+  },
+
+  "structures": {
+    "coreHealth": 900,
+    "towerHealth": 400,
+    "coreRadius": 1.6,
+    "towerRadius": 1.1,
+    "towerRange": 9,
+    "towerAttackInterval": 1.1,
+    "towerDamage": 10,
+    "topHeight": 2.6
+  },
+
+  "roles": {
+    "tank": {
+      "attacks": true,
+      "attackUrge": 0.95,
+      "advanceStopDistance": 2.0,
+      "prefersStructures": true,
+      "escorts": false,
+      "seeksCover": false,
+      "retreatHealthFraction": 0
+    },
+    "damage": {
+      "attacks": true,
+      "attackUrge": 0.95,
+      "advanceStopDistance": 6.5,
+      "prefersStructures": false,
+      "escorts": false,
+      "seeksCover": true,
+      "retreatHealthFraction": 0.3
+    },
+    "support": {
+      "attacks": true,
+      "attackUrge": 0.45,
+      "advanceStopDistance": 4.0,
+      "prefersStructures": false,
+      "escorts": true,
+      "seeksCover": true,
+      "retreatHealthFraction": 0.45
+    }
+  },
+
+  "roster": {
+    "stone_golem": {
+      "name": "Stone Golem",
+      "role": "tank",
+      "health": 280,
+      "moveSpeed": 3.5,
+      "element": "stone"
+    },
+    "ice_sentinel": {
+      "name": "Ice Sentinel",
+      "role": "tank",
+      "health": 200,
+      "moveSpeed": 4.0,
+      "element": "ice"
+    },
+    "pyromancer": {
+      "name": "Pyromancer",
+      "role": "damage",
+      "health": 80,
+      "moveSpeed": 5.0,
+      "element": "fire"
+    },
+    "stormcaller": {
+      "name": "Stormcaller",
+      "role": "damage",
+      "health": 60,
+      "moveSpeed": 5.0,
+      "element": "lightning"
+    },
+    "arcane_archer": {
+      "name": "Arcane Archer",
+      "role": "damage",
+      "health": 70,
+      "moveSpeed": 5.5,
+      "element": "arcane"
+    },
+    "alchemist": {
+      "name": "Alchemist",
+      "role": "damage",
+      "health": 70,
+      "moveSpeed": 5.0,
+      "element": "poison"
+    },
+    "wind_dervish": {
+      "name": "Wind Dervish",
+      "role": "damage",
+      "health": 65,
+      "moveSpeed": 7.0,
+      "element": "wind"
+    },
+    "cleric": {
+      "name": "Cleric",
+      "role": "support",
+      "health": 95,
+      "moveSpeed": 5.0,
+      "element": "holy",
+      "healPerSecond": 8,
+      "healRange": 5
+    },
+    "arcane_bard": {
+      "name": "Arcane Bard",
+      "role": "support",
+      "health": 70,
+      "moveSpeed": 5.0,
+      "element": "sonic",
+      "auraChargeBonus": 0.25,
+      "auraRadius": 4
+    }
+  },
+
+  "effects": {
+    "slow": { "stacking": "refresh_strongest", "maxMagnitude": 0.8 },
+    "haste": { "stacking": "refresh_strongest", "maxMagnitude": 1.5 },
+    "cast_slow": { "stacking": "refresh_strongest", "maxMagnitude": 0.75 },
+    "cast_haste": { "stacking": "refresh_strongest", "maxMagnitude": 1.5 },
+    "vulnerable": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
+    "stun": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
+    "burn": { "stacking": "stack_intensity", "maxStacks": 3, "maxMagnitude": 1 },
+    "shield": { "stacking": "pool", "maxMagnitude": 9999 }
+  },
+
+  "elements": {
+    "fire": {
+      "name": "Bola de fogo",
+      "flight": {
+        "minSpeed": 8,
+        "projectileSpeed": 20,
+        "launchArc": 4.5,
+        "gravity": 18,
+        "radius": 0.22
+      },
+      "damage": 20,
+      "knockback": 3.5,
+      "onHit": [
+        {
+          "effect": "burn",
+          "duration": 4,
+          "tickInterval": 0.5,
+          "tickDamage": 4,
+          "trigger": { "hits": 2, "window": 4.0, "reset": false }
+        }
+      ]
+    },
+    "ice": {
+      "name": "Fragmento de gelo",
+      "flight": {
+        "minSpeed": 7,
+        "projectileSpeed": 17,
+        "launchArc": 4.2,
+        "gravity": 18,
+        "radius": 0.22
+      },
+      "damage": 14,
+      "knockback": 2.5,
+      "onHit": [{ "effect": "slow", "magnitude": 0.35, "duration": 1.25 }]
+    },
+    "lightning": {
+      "name": "Raio",
+      "flight": {
+        "minSpeed": 14,
+        "projectileSpeed": 30,
+        "launchArc": 1.5,
+        "gravity": 10,
+        "radius": 0.2
+      },
+      "damage": 18,
+      "knockback": 1.5,
+      "onHit": [
+        {
+          "effect": "stun",
+          "duration": 0.9,
+          "trigger": { "hits": 3, "window": 4.0, "reset": true }
+        }
+      ]
+    },
+    "poison": {
+      "name": "Frasco de veneno",
+      "flight": {
+        "minSpeed": 8,
+        "projectileSpeed": 18,
+        "launchArc": 4.0,
+        "gravity": 18,
+        "radius": 0.24
+      },
+      "damage": 8,
+      "knockback": 1.0,
+      "onHit": [
+        {
+          "effect": "puddle",
+          "radius": 1.5,
+          "duration": 4.0,
+          "tickInterval": 0.3,
+          "tickDamage": 6,
+          "onExpire": true
+        }
+      ]
+    },
+    "stone": {
+      "name": "Projétil de pedra",
+      "flight": {
+        "minSpeed": 5,
+        "projectileSpeed": 13,
+        "launchArc": 5.5,
+        "gravity": 18,
+        "radius": 0.3
+      },
+      "damage": 32,
+      "knockback": 6.0,
+      "onHit": [{ "effect": "interrupt" }]
+    },
+    "arcane": {
+      "name": "Orbe arcano",
+      "flight": {
+        "minSpeed": 8,
+        "projectileSpeed": 19,
+        "launchArc": 4.3,
+        "gravity": 18,
+        "radius": 0.24
+      },
+      "damage": 20,
+      "knockback": 3.0,
+      "splashRadius": 2.0,
+      "onHit": [{ "effect": "vulnerable", "magnitude": 0.25, "duration": 4 }]
+    },
+    "wind": {
+      "name": "Lâmina de vento",
+      "flight": {
+        "minSpeed": 10,
+        "projectileSpeed": 22,
+        "launchArc": 3.0,
+        "gravity": 14,
+        "radius": 0.2
+      },
+      "damage": 6,
+      "knockback": 4.0,
+      "knockbackBonus": 4.5,
+      "onHit": [{ "effect": "interrupt" }]
+    },
+    "holy": {
+      "name": "Lança de luz",
+      "flight": {
+        "minSpeed": 7,
+        "projectileSpeed": 16,
+        "launchArc": 4.0,
+        "gravity": 18,
+        "radius": 0.2
+      },
+      "damage": 8,
+      "knockback": 1.0,
+      "splashRadius": 1.2,
+      "onHit": [{ "effect": "shield_break" }]
+    },
+    "sonic": {
+      "name": "Onda sonora",
+      "flight": {
+        "minSpeed": 9,
+        "projectileSpeed": 20,
+        "launchArc": 2.8,
+        "gravity": 14,
+        "radius": 0.22
+      },
+      "damage": 6,
+      "knockback": 2.0,
+      "onHit": [
+        { "effect": "slow", "magnitude": 0.15, "duration": 0.6 },
+        { "effect": "cast_slow", "magnitude": 0.3, "duration": 2.5 }
+      ]
+    }
+  },
+
+  "spells": {
+    "blessing": {
+      "name": "Blessing of Haste",
+      "kind": "buff",
+      "cost": 2,
+      "radius": 4,
+      "duration": 5,
+      "effect": { "kind": "buff_haste", "speedFactor": 0.4, "castFactor": 0.25 }
+    },
+    "slow_curse": {
+      "name": "Curse of Slowing",
+      "kind": "curse",
+      "cost": 3,
+      "radius": 4,
+      "duration": 4,
+      "effect": { "kind": "curse_slow", "slowFactor": 0.5 }
+    },
+    "arcane_shield": {
+      "name": "Escudo Arcano",
+      "kind": "buff",
+      "cost": 3,
+      "radius": 4,
+      "duration": 6,
+      "effect": { "kind": "buff_shield", "amount": 60 }
+    },
+    "plague": {
+      "name": "Praga",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 3.5,
+      "duration": 5,
+      "effect": { "kind": "curse_zone", "tickDamage": 10, "tickInterval": 1 }
+    }
+  }
+}

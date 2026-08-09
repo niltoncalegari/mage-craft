@@ -5,6 +5,7 @@ import {
   elementDefFor,
   isElementId,
   isPickableElement,
+  onHitRule,
   PICKABLE_ELEMENTS,
   type ElementDef,
   type ElementId,
@@ -65,15 +66,17 @@ describe('element catalog', () => {
     expect(lightning.projectileSpeed).toBeGreaterThan(fire.projectileSpeed);
     expect(stone.projectileSpeed).toBeLessThan(fire.projectileSpeed);
     expect(stone.damage).toBeGreaterThan(fire.damage);
-    expect(stone.interruptsCharge).toBe(true);
+    expect(onHitRule(stone, 'interrupt')).toBeDefined();
 
     // §8.3 ice controls, §8.5 poison denies ground, §8.7 arcane splashes and
     // wind shoves.
-    expect(ice.slowFactor).toBeGreaterThan(0);
-    expect(ice.slowDuration).toBeGreaterThan(0);
-    expect(poison.spawnsPuddle).toBe(true);
-    expect(poison.puddleRadius).toBeGreaterThan(0);
-    expect(poison.puddleDuration).toBeGreaterThan(0);
+    const iceSlow = onHitRule(ice, 'slow');
+    expect(iceSlow?.magnitude).toBeGreaterThan(0);
+    expect(iceSlow?.duration).toBeGreaterThan(0);
+    const poisonPuddle = onHitRule(poison, 'puddle');
+    expect(poisonPuddle).toBeDefined();
+    expect(poisonPuddle?.radius).toBeGreaterThan(0);
+    expect(poisonPuddle?.duration).toBeGreaterThan(0);
     expect(arcane.splashRadius).toBeGreaterThan(0);
     expect(wind.knockbackBonus).toBeGreaterThan(0);
   });
@@ -102,8 +105,10 @@ describe('element catalog', () => {
     expect(byDamage.slice(0, 4)).toContain('sonic');
     // Both still do something on impact, or they would be worse than silence.
     expect(def('holy').splashRadius).toBeGreaterThan(0);
-    expect(def('sonic').slowFactor).toBeGreaterThan(0);
+    expect(def('sonic').onHit.length).toBeGreaterThan(0);
     // ...but the Bard nags where the Sentinel controls (§8.3).
-    expect(def('sonic').slowFactor ?? 0).toBeLessThan(def('ice').slowFactor ?? 0);
+    const sonicSlow = onHitRule(def('sonic'), 'slow')?.magnitude ?? 0;
+    const iceSlowFactor = onHitRule(def('ice'), 'slow')?.magnitude ?? 0;
+    expect(sonicSlow).toBeLessThan(iceSlowFactor);
   });
 });

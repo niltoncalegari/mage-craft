@@ -6,26 +6,7 @@
  * arena.
  */
 
-import {
-  BLESSING_CAST_BONUS,
-  BLESSING_COST,
-  BLESSING_DURATION,
-  BLESSING_RADIUS,
-  BLESSING_SPEED_BONUS,
-  PLAGUE_COST,
-  PLAGUE_DURATION,
-  PLAGUE_RADIUS,
-  PLAGUE_TICK_DAMAGE,
-  PLAGUE_TICK_INTERVAL,
-  SHIELD_AMOUNT,
-  SHIELD_COST,
-  SHIELD_DURATION,
-  SHIELD_RADIUS,
-  SLOW_CURSE_COST,
-  SLOW_CURSE_DURATION,
-  SLOW_CURSE_FACTOR,
-  SLOW_CURSE_RADIUS,
-} from './config';
+import { BALANCE } from './balance';
 
 export type SpellId = 'blessing' | 'slow_curse' | 'arcane_shield' | 'plague';
 
@@ -53,48 +34,20 @@ export interface SpellCard {
   readonly effect: SpellEffect;
 }
 
-const CATALOG: Readonly<Record<SpellId, SpellCard>> = {
-  blessing: {
-    id: 'blessing',
-    name: 'Blessing of Haste',
-    kind: 'buff',
-    cost: BLESSING_COST,
-    radius: BLESSING_RADIUS,
-    duration: BLESSING_DURATION,
-    effect: {
-      kind: 'buff_haste',
-      speedFactor: BLESSING_SPEED_BONUS,
-      castFactor: BLESSING_CAST_BONUS,
+const CATALOG: Readonly<Record<SpellId, SpellCard>> = Object.fromEntries(
+  Object.entries(BALANCE.spells).map(([id, s]) => [
+    id,
+    {
+      id: id as SpellId,
+      name: s.name,
+      kind: s.kind as 'buff' | 'curse',
+      cost: s.cost,
+      radius: s.radius,
+      duration: s.duration,
+      effect: s.effect as SpellEffect,
     },
-  },
-  slow_curse: {
-    id: 'slow_curse',
-    name: 'Curse of Slowing',
-    kind: 'curse',
-    cost: SLOW_CURSE_COST,
-    radius: SLOW_CURSE_RADIUS,
-    duration: SLOW_CURSE_DURATION,
-    effect: { kind: 'curse_slow', slowFactor: SLOW_CURSE_FACTOR },
-  },
-  arcane_shield: {
-    id: 'arcane_shield',
-    name: 'Escudo Arcano',
-    kind: 'buff',
-    cost: SHIELD_COST,
-    radius: SHIELD_RADIUS,
-    duration: SHIELD_DURATION,
-    effect: { kind: 'buff_shield', amount: SHIELD_AMOUNT },
-  },
-  plague: {
-    id: 'plague',
-    name: 'Praga',
-    kind: 'curse',
-    cost: PLAGUE_COST,
-    radius: PLAGUE_RADIUS,
-    duration: PLAGUE_DURATION,
-    effect: { kind: 'curse_zone', tickDamage: PLAGUE_TICK_DAMAGE, tickInterval: PLAGUE_TICK_INTERVAL },
-  },
-};
+  ]),
+) as Readonly<Record<SpellId, SpellCard>>;
 
 /** Full catalog in GDD §9 display order. */
 export const ALL_SPELLS: readonly SpellId[] = ['blessing', 'slow_curse', 'arcane_shield', 'plague'];

@@ -256,6 +256,46 @@ não sugestão: são só quatro magos em campo e eles ficam lá a partida inteir
 jogador não distingue o tank do suporte de relance, ele não sabe onde jogar o buff.
 Ver §17.
 
+### 8.10 O que cada elemento *faz* — a matriz de efeitos
+
+O papel diz como o mago se comporta; o elemento diz o que o ataque dele deixa
+para trás. Enquanto só o gelo e o veneno tinham rider, escolher elemento era
+escolher um número de dano — a composição do esquadrão (§7) não era decisão
+nenhuma. Cada elemento agora ocupa uma função tática distinta:
+
+| Elemento | Função | Efeito |
+| --- | --- | --- |
+| **Fogo** | Dano sustentado | **Queimadura**: 2 acertos seguidos acendem um DoT empilhável (até 3 pilhas) |
+| **Gelo** | Controle suave | **Lentidão** na velocidade de movimento |
+| **Raio** | Controle duro | **Atordoamento** no 3º acerto seguido, e a sequência recomeça do zero |
+| **Pedra** | Deslocamento pesado | Knockback alto + **interrompe** a conjuração do alvo |
+| **Veneno** | Negação de área | **Poça** no chão, no acerto ou onde o frasco cair |
+| **Arcano** | Amplificador | **Vulnerabilidade**: o alvo passa a tomar +25% de dano de todo mundo |
+| **Vento** | Deslocamento leve | Knockback muito alto + **interrompe** a conjuração |
+| **Sagrado** | Anti-buff | **Luz perfurante**: derruba o Escudo Arcano em vez de arranhá-lo |
+| **Sônico** | Anti-conjuração | **Dissonância**: reduz a velocidade de conjuração, e um slow leve |
+
+Três regras que dão forma a isso:
+
+1. **"Acertos seguidos" conta por vítima e por elemento**, não por atacante.
+   Dois Pyromancers focando o mesmo alvo alimentam a mesma sequência — é a
+   composição que é premiada, não a pontaria de um mago só. Um acerto de outro
+   elemento no meio **quebra** a sequência.
+2. **A janela da sequência tem que ser maior que a cadência de tiro** de um
+   mago (`throwCooldown + chargeTime`), ou o efeito fica inalcançável sozinho.
+   `balance.test.ts` prende isso; foi exatamente assim que a primeira versão do
+   stun do raio (janela de 2.5s contra cadência de 2.85s) foi pega, sem nunca
+   ter falhado nada — ele simplesmente nunca acontecia.
+3. **Dano ao longo do tempo não reaplica hit-stun.** Um DoT bate várias vezes
+   por segundo; se cada tique repusesse `HIT_STUN`, ficar numa poça (ou pegando
+   fogo) seria um root permanente e invisível. A poça de veneno tinha esse bug
+   desde sempre.
+
+Os números todos — voo, dano, knockback, efeitos, papéis, roster, feitiços e as
+constantes de `config.ts` — vivem em **[public/data/balance.json](public/data/balance.json)**,
+lido por import estático (`sim/balance.ts`, mesmo padrão de `defaultMap.ts`), para
+que servidor, cliente e Vitest nunca discordem sobre quanto dói uma bola de fogo.
+
 ---
 
 ## 9. Catálogo (v1.1)
@@ -428,9 +468,12 @@ o servidor Node inteiro (`server/src/**`: Hub, Room, RoomManager, Session, App, 
 o pipeline de render do cliente (`SnapshotSync`, `ArenaRenderer`, `PlayerRenderer`,
 `ParticleRenderer`, `PuddleRenderer`, `HUD`, `Minimap`) · a `api/` inteira.
 
-**Em particular, `sim/elements.ts` não muda.** Os 7 elementos são o catálogo de
-ataque das unidades da §9. Os números de dano, knockback, arco e poça já estão
-afinados e cobertos por teste.
+**`sim/elements.ts` mudou depois disto.** O voo (arco, gravidade, velocidade)
+continua intocado — `rangeMap.test.ts` o prende —, mas cada elemento ganhou uma
+lista `onHit` de efeitos, e os números todos saíram do TypeScript para
+`public/data/balance.json`. O motivo é de produto: com um só rider por elemento
+(o slow do gelo, a poça do veneno) montar esquadrão não era decisão nenhuma. Ver
+§8.10.
 
 ### Já construído (v1.0, e continua servindo)
 
@@ -456,11 +499,11 @@ Isto **não** é trabalho a fazer — está no repo, com teste:
 | `validateDeck` exige mín. 1 por papel | Papel migra para a validação do **esquadrão**; baralho ganha regra nova (§16.4) |
 | Mago nasce por `deploy` e morre para sempre (`DEFAULT_LIVES = 1`) | Esquadrão de 4 nasce no início e **ressuscita** — reativa `RESPAWN_DELAY` e `World.respawn()` |
 | `Commander` escolhe carta e ponto de invocação | Escolhe feitiço e mira **aglomerado**: centroide dos meus sob ameaça, ou dos inimigos |
-| Timers soltos (`slowFactor`/`slowTimer`, `chargeRateBonus`, `immunityTimer`) | Absorvidos pelo sistema de efeitos genérico, senão viram dois sistemas fazendo o mesmo |
+| Timers soltos (`slowFactor`/`slowTimer`, `chargeRateBonus`, `immunityTimer`) | **Feito.** Absorvidos pelo `sim/effects.ts`. `chargeRateBonus` sobrou como o meio-termo da aura (recalculado por proximidade a cada tick) e `immunityTimer` ficou como ciclo de vida |
 
 ### Novo — o custo real da v1.1
 
-1. **Sistema de status effects genérico** (`sim/effects.ts`). Era o passo 7 da v1.0 e **virou o passo 1**: sem ele não existe uma única carta jogável. Precisa de `kind`/magnitude/duração, stacking previsível e stats derivados (velocidade, conjuração, absorção).
+1. ~~**Sistema de status effects genérico** (`sim/effects.ts`).~~ **Feito.** `kind`/magnitude/duração/stacks, stacking declarado como dado (`refresh_strongest`, `stack_intensity`, `pool`) e stats derivados (`moveSpeedMultiplier`, `chargeRateMultiplier`, `damageTakenMultiplier`, `absorbWithShield`). Slow, haste, cast, escudo e o stun migraram para dentro; `stunTimer`, `knockbackVelocity` e `immunityTimer` ficaram de fora de propósito — são física de impacto e ciclo de vida, não status.
 2. **Esquadrão** (`sim/Squad.ts`): montagem de 4, spawn no início, respawn com atraso.
 3. **As 4 cartas que faltam** para fechar o baralho de 8 (§9).
 4. **Feedback de efeito na tela**: sem isso o jogador não vê o que a carta dele fez, e o jogo inteiro depende de ele ver.
@@ -468,7 +511,7 @@ Isto **não** é trabalho a fazer — está no repo, com teste:
 
 ### Ordem sugerida de implementação
 
-1. Sistema de efeitos genérico, com o slow do gelo migrado para dentro dele
+1. ~~Sistema de efeitos genérico, com o slow do gelo migrado para dentro dele~~ **Feito** (§8.10)
 2. Esquadrão: montagem, spawn, respawn (esquadrão default hardcoded)
 3. `SpellCard` + `World.castSpell`, começando com as 4 cartas que já existem
 4. `Commander` jogando feitiço por aglomerado

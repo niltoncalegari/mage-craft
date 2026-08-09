@@ -3,6 +3,7 @@ import type { Role } from '../../sim/roles';
 import type { GameRenderer } from '../core/Game';
 import type { AssetManager } from '../engine/AssetManager';
 import { PLAYER, TEAM_COLORS } from '../game/config';
+import { fxStacks, hasFx } from '../game/effects';
 import { PlayerState, type Player } from '../game/types';
 import type { World } from '../game/World';
 import { clamp } from '../utils/math';
@@ -17,6 +18,28 @@ const DEATH_FADE_DURATION = 1.15;
 const RESPAWN_FADE_IN = 0.3;
 /** Approximate frame step used by {@link PlayerRenderer.sync}. */
 const RENDER_DT = 1 / 60;
+
+/* ---- Status effect looks (GDD §8, §9) -------------------------------------- */
+
+/** Ice's wash. `ELEMENT_TINT.ice.core`, so a slowed mage reads as *iced*. */
+const FROST_COLOR = new THREE.Color(0xd8f7ff);
+/** Fire's. Deliberately the glow, not the core: the core is nearly white. */
+const EMBER_COLOR = new THREE.Color(0xff5a1f);
+const VULNERABLE_COLOR = 0x9b5de5;
+const STUN_COLOR = 0xffe066;
+/**
+ * How pale a slowed mage goes at most. Well short of 1: the mage still has to
+ * read as its team colour, and a fully blanched figure loses the one thing a
+ * player scans for in a scrum.
+ */
+const FROST_TINT_MAX = 0.55;
+/**
+ * How fast the wash eases in. Effects arrive at 20Hz, so snapping the colour on
+ * the snapshot boundary reads as a glitch rather than as frost spreading.
+ */
+const TINT_EASE_RATE = 6;
+const STUN_MOTE_COUNT = 3;
+const STUN_MOTE_HEIGHT = 1.55;
 
 /**
  * Where the hat pivots: the crown of the head. Rotating the whole hat group
@@ -94,10 +117,29 @@ interface PlayerView {
    */
   readonly orb: THREE.Mesh<THREE.BufferGeometry, THREE.Material> | null;
   /**
+   * Arcane's mark (GDD §8.7): a bruised shell saying "hit this one". Its own
+   * material, unlike the ground rings, because its opacity breathes per mage.
+   */
+  readonly vulnerableShell: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  /**
+   * Stun (GDD §8.4): motes circling the head. Parented to `root` like the
+   * support orb, so they keep orbiting while the body is being knocked around.
+   */
+  readonly stunMotes: THREE.Group;
+  readonly stunMoteMaterial: THREE.MeshBasicMaterial;
+  /**
    * Per-mage figure materials (cloned from the shared palette). Opacity is
    * animated on death/respawn; shared AssetManager mats must not be touched.
    */
   readonly fadeMaterials: THREE.MeshStandardMaterial[];
+  /**
+   * The colour each `fadeMaterials` entry was built with. Tinting a mage (ice
+   * blanches it, fire embers it) has to lerp *from* somewhere, and once the
+   * material has been tinted its own `color` is no longer that somewhere.
+   */
+  readonly baseColors: THREE.Color[];
+  /** How blanched the figure currently is, 0..1 — eased so a slow fades in. */
+  tint: number;
   /**
    * Everything this view must dispose — a superset of `fadeMaterials` that also
    * holds the gem halo, whose opacity is driven by charge rather than the fade.
@@ -291,6 +333,30 @@ export class PlayerRenderer implements GameRenderer {
     const slowRing = this.buffRing('player-slow-ring', 1.04, 1.16, 0x8ecae6);
     root.add(slowRing);
 
+    // Deliberately *not* a fourth ground ring: the ring radii from 0.58 to 1.42
+    // are already spoken for (see SquadHighlightRenderer's budget), and a fifth
+    // concentric circle turns the floor under a mage into a target.
+    const vulnerableShell = new THREE.Mesh(
+      this.assets.geometry(
+        'player-vulnerable-shell',
+        () => new THREE.SphereGeometry(0.78, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+      ),
+      new THREE.MeshBasicMaterial({
+        color: VULNERABLE_COLOR,
+        transparent: true,
+        opacity: 0,
+        side: THREE.BackSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    vulnerableShell.scale.y = 1.5;
+    vulnerableShell.visible = false;
+    root.add(vulnerableShell);
+
+    const { stunMotes, stunMoteMaterial } = this.buildStunMotes();
+    root.add(stunMotes);
+
     // The robe flares to the ground where the old tunic was straight-sided; the
     // belly sphere below still does the heavy lifting for the stout silhouette.
     const robe = this.shadowMesh(
@@ -369,6 +435,9 @@ export class PlayerRenderer implements GameRenderer {
       shieldDome,
       hasteRing,
       slowRing,
+      vulnerableShell,
+      stunMotes,
+      stunMoteMaterial,
       leftArm,
       rightArm,
       hatGroup,
@@ -377,7 +446,9 @@ export class PlayerRenderer implements GameRenderer {
       gemHalo,
       orb,
       fadeMaterials,
-      ownedMaterials: [...fadeMaterials, gemHalo.material],
+      baseColors: fadeMaterials.map((m) => m.color.clone()),
+      tint: 0,
+      ownedMaterials: [...fadeMaterials, gemHalo.material, vulnerableShell.material, stunMoteMaterial],
       opacity: 1,
       swayX: 0,
       swayZ: 0,
@@ -753,9 +824,28 @@ export class PlayerRenderer implements GameRenderer {
   }
 
   /**
-   * Shows which spells are currently *on* this mage (GDD §9). Only the
-   * transforms move: the materials are shared across every mage, so animating
-   * their opacity here would animate everybody's.
+   * Washes the whole figure toward `color`. Reads from `baseColors` rather than
+   * from the materials themselves, so repeated calls converge on the target
+   * instead of compounding into it.
+   */
+  private setFigureTint(view: PlayerView, color: THREE.Color, amount: number): void {
+    view.tint = amount;
+    for (let i = 0; i < view.fadeMaterials.length; i++) {
+      const mat = view.fadeMaterials[i];
+      const base = view.baseColors[i];
+      if (amount <= 0.001) mat.color.copy(base);
+      else mat.color.copy(base).lerp(color, amount);
+    }
+  }
+
+  /**
+   * Shows which spells and elemental effects are currently *on* this mage
+   * (GDD §8, §9).
+   *
+   * The ground rings only move their transforms: those materials are shared
+   * across every mage, so animating their opacity here would animate
+   * everybody's. The two effects that *are* per-mage — the frost wash and the
+   * vulnerability shell — own their materials for exactly that reason.
    */
   private updateStatusFx(view: PlayerView, player: Player, defeated: boolean): void {
     const shielded = Boolean(player.shielded) && !defeated;
@@ -775,6 +865,88 @@ export class PlayerRenderer implements GameRenderer {
     if (hasted) view.hasteRing.rotation.y = t * 4.5;
     if (slowed) view.slowRing.rotation.y = -t * 0.9;
     if (shielded) view.shieldDome.rotation.y = t * 0.6;
+
+    this.updateBodyTint(view, player, defeated);
+    this.updateVulnerableShell(view, player, defeated);
+    this.updateStunMotes(view, player, defeated);
+  }
+
+  /**
+   * Ice blanches a mage; fire embers it. The ring on the floor says *that*
+   * something is on this mage, but at the match camera's angle a ring under a
+   * scrum of eight is easy to lose — the body colour is the part you read
+   * without looking for it.
+   *
+   * Eased rather than snapped: the effects arrive at 20Hz, and a hard cut to
+   * pale on the snapshot boundary reads as a rendering glitch.
+   */
+  private updateBodyTint(view: PlayerView, player: Player, defeated: boolean): void {
+    const burning = !defeated && hasFx(player, 'burn');
+    const frozen = !defeated && Boolean(player.slowed);
+
+    let target = 0;
+    let color = FROST_COLOR;
+    if (burning) {
+      // Fire wins the body when both are on: a burning mage is the one about to
+      // die, and that is the more urgent thing to show.
+      color = EMBER_COLOR;
+      target = Math.min(0.15 + fxStacks(player, 'burn') * 0.12, 0.5);
+    } else if (frozen) {
+      target = FROST_TINT_MAX;
+    }
+
+    const eased = view.tint + (target - view.tint) * Math.min(1, RENDER_DT * TINT_EASE_RATE);
+    this.setFigureTint(view, color, eased);
+  }
+
+  private updateVulnerableShell(view: PlayerView, player: Player, defeated: boolean): void {
+    const marked = !defeated && hasFx(player, 'vulnerable');
+    view.vulnerableShell.visible = marked && view.opacity > 0.02;
+    if (!marked) return;
+
+    // A slow throb rather than a steady glow: the mark is a warning, and a
+    // static shell disappears into the scene after a second of looking at it.
+    view.vulnerableShell.material.opacity = 0.16 + Math.sin(this.clock * 3.4) * 0.07;
+    view.vulnerableShell.rotation.y = this.clock * 0.8;
+  }
+
+  private updateStunMotes(view: PlayerView, player: Player, defeated: boolean): void {
+    const stunned = !defeated && hasFx(player, 'stun');
+    view.stunMotes.visible = stunned && view.opacity > 0.02;
+    if (!stunned) return;
+
+    // Fast, flat and overhead — the cartoon shorthand, which is the only thing
+    // that reads at this camera distance in under a second.
+    view.stunMotes.rotation.y = this.clock * 5.5;
+    view.stunMoteMaterial.opacity = 0.65 + Math.sin(this.clock * 11) * 0.25;
+  }
+
+  /** Three motes on a ring above the crown; the group is what spins. */
+  private buildStunMotes(): {
+    stunMotes: THREE.Group;
+    stunMoteMaterial: THREE.MeshBasicMaterial;
+  } {
+    const stunMotes = new THREE.Group();
+    stunMotes.position.y = STUN_MOTE_HEIGHT;
+    stunMotes.visible = false;
+
+    const material = new THREE.MeshBasicMaterial({
+      color: STUN_COLOR,
+      transparent: true,
+      opacity: 0.8,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const geo = this.assets.geometry('player-stun-mote', () => new THREE.SphereGeometry(0.06, 8, 6));
+
+    for (let i = 0; i < STUN_MOTE_COUNT; i++) {
+      const mote = new THREE.Mesh(geo, material);
+      const angle = (i / STUN_MOTE_COUNT) * Math.PI * 2;
+      mote.position.set(Math.cos(angle) * 0.3, 0, Math.sin(angle) * 0.3);
+      stunMotes.add(mote);
+    }
+
+    return { stunMotes, stunMoteMaterial: material };
   }
 
   private applyAnimation(view: PlayerView, player: Player, renderTime: number): void {
