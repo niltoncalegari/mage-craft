@@ -58,7 +58,8 @@ test('register, report a match, and see it reflected on Home', async ({ page, re
   await expect(page.getByRole('heading', { name: 'Find Match' })).toBeVisible();
 
   // Home's stat row and squad strip are server-backed and need no navigation.
-  await expect(page.getByText('Wins')).toBeVisible();
+  // Exact match: "Wins" alone would also match the ranking panel's "By wins" sort button.
+  await expect(page.getByText('Wins', { exact: true })).toBeVisible();
   await expect(page.getByText('Most-played squad')).toBeVisible();
 
   // History tab: element usage chart reflects the reported match.

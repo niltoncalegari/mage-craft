@@ -67,7 +67,13 @@
   width: 24px;
 }
 
-/* One floating bubble per side, positioned by OnlineMatch — see .left/.right. */
+/*
+ * One floating bubble per side, positioned by OnlineMatch — see .left/.right.
+ * Pinned to the very top corners, clear of both MatchHUD's centered top bar
+ * (a different x range) and SquadPanel below it (top: 92px, or as low as
+ * 56px on a short landscape phone) — this sat at top: 66px originally and
+ * overlapped the squad panel's header at every breakpoint.
+ */
 .bubble {
   align-items: center;
   -webkit-backdrop-filter: var(--glass-blur);
@@ -80,7 +86,7 @@
   height: 40px;
   justify-content: center;
   position: absolute;
-  top: 66px;
+  top: 8px;
   transition: opacity 150ms ease, transform 150ms ease;
   width: 40px;
 }
