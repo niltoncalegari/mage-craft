@@ -156,7 +156,7 @@ export const ApiClient = {
     return request('/api/me/stats/cards', { headers: { Authorization: `Bearer ${token}` } });
   },
 
-  ranking(sort: 'wins' | 'kdr' = 'wins', page = 1, limit = 20): Promise<{ entries: RankingEntry[] }> {
+  ranking(sort: 'rating' | 'wins' | 'kdr' = 'rating', page = 1, limit = 20): Promise<{ entries: RankingEntry[] }> {
     return request(`/api/ranking?sort=${sort}&page=${page}&limit=${limit}`);
   },
 

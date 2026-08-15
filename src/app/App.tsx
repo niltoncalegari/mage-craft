@@ -13,29 +13,24 @@ import { loadLoadout } from './loadout';
 import { matchTeamNames } from './matchNames';
 import { recordMatch } from './matchHistory';
 import { rememberRoom, roomFromServerState, type RoomDetail } from './roomStore';
-import { DashboardScreen } from './screens/DashboardScreen';
 import { HomeScreen } from './screens/HomeScreen';
 import { LoginScreen } from './screens/LoginScreen';
 import { PracticeScreen } from './screens/PracticeScreen';
 import { QueueScreen } from './screens/QueueScreen';
 import { RangeScreen } from './screens/RangeScreen';
-import { RankingScreen } from './screens/RankingScreen';
 import { RoomLobbyScreen } from './screens/RoomLobbyScreen';
 import { TitleScreen } from './screens/TitleScreen';
 
 export type AppScreen =
   | 'title'
   | 'login'
-  /** The three-action landing surface. */
+  /** The landing surface — squad, deck, history and ranking all live here too. */
   | 'home'
-  /** Squad, deck and match history — everything you bring and everything you learned. */
-  | 'dashboard'
   | 'practice'
   | 'queue'
   /** Rematch/round-transition seating for a queued match's session — never a pre-match room browser. */
   | 'lobby'
   | 'onlineMatch'
-  | 'ranking'
   /** Dev surface: the whole roster firing at a wall, for judging spell VFX. */
   | 'range';
 
@@ -366,20 +361,16 @@ function AppShell(props: AppProps): JSX.Element {
             stats={props.stats}
             onFindMatch={() => void enterQueue(user.name)}
             onPractice={() => setScreen('practice')}
-            onOpenDashboard={() => setScreen('dashboard')}
-            onOpenRanking={() => setScreen('ranking')}
             onSignOut={signOut}
           />
         ) : null}
         {screen === 'range' && SHOW_RANGE ? <RangeScreen onExit={() => setScreen(user ? 'home' : 'title')} /> : null}
-        {screen === 'dashboard' && user ? <DashboardScreen user={user} onBack={() => setScreen('home')} /> : null}
         {screen === 'practice' && user ? (
           <PracticeScreen token={user.token} playerName={user.name} onExit={() => setScreen('home')} />
         ) : null}
         {screen === 'queue' && user ? (
           <QueueScreen status={queueStatus} found={queueFound} netError={netError} onCancel={leaveQueue} />
         ) : null}
-        {screen === 'ranking' && user ? <RankingScreen onBack={() => setScreen('home')} /> : null}
         {screen === 'lobby' && user && room ? (
           <RoomLobbyScreen
             room={room}

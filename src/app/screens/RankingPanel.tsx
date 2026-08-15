@@ -3,8 +3,18 @@ import { useEffect, useState } from 'preact/hooks';
 import { ApiClient, type RankingEntry } from '../../net/ApiClient';
 import styles from '../App.module.css';
 
-export function RankingScreen(props: { onBack(): void }): JSX.Element {
-  const [sort, setSort] = useState<'wins' | 'kdr'>('wins');
+const COLLAPSED_COUNT = 5;
+const EXPANDED_COUNT = 20;
+
+/**
+ * The global leaderboard, embedded on Home instead of behind its own screen —
+ * a player shouldn't have to leave the page they queue from just to see where
+ * they stand. Starts collapsed to a handful of rows; "Show more" expands in
+ * place rather than navigating anywhere.
+ */
+export function RankingPanel(): JSX.Element {
+  const [sort, setSort] = useState<'rating' | 'wins' | 'kdr'>('rating');
+  const [expanded, setExpanded] = useState(false);
   const [entries, setEntries] = useState<RankingEntry[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -12,7 +22,7 @@ export function RankingScreen(props: { onBack(): void }): JSX.Element {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    ApiClient.ranking(sort)
+    ApiClient.ranking(sort, 1, EXPANDED_COUNT)
       .then((res) => {
         if (!cancelled) setEntries(res.entries);
       })
@@ -27,21 +37,14 @@ export function RankingScreen(props: { onBack(): void }): JSX.Element {
     };
   }, [sort]);
 
-  return (
-    <div class={`${styles.panel} ${styles.panelWide}`}>
-      <div class={styles.panelHeader}>
-        <div>
-          <p class={styles.tag}>Global</p>
-          <h2 class={styles.panelTitle}>Ranking</h2>
-        </div>
-        <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onBack}>
-          Dashboard
-        </button>
-      </div>
+  const visible = expanded ? entries : entries.slice(0, COLLAPSED_COUNT);
 
+  return (
+    <div>
       <div class={styles.toolbar}>
         {(
           [
+            ['rating', 'By rating'],
             ['wins', 'By wins'],
             ['kdr', 'By KDR'],
           ] as const
@@ -64,7 +67,7 @@ export function RankingScreen(props: { onBack(): void }): JSX.Element {
       ) : null}
 
       <div class={styles.roomList}>
-        {entries.map((entry, index) => (
+        {visible.map((entry, index) => (
           <div class={`${styles.matchRow} ${styles.matchRowRanked}`} key={entry.userId}>
             <span class={styles.rankPosition}>#{index + 1}</span>
             <div>
@@ -73,10 +76,21 @@ export function RankingScreen(props: { onBack(): void }): JSX.Element {
                 {entry.wins}W {entry.losses}L · {entry.kills} kills · {entry.deaths} deaths
               </p>
             </div>
-            <span class={styles.badge}>{entry.kdr.toFixed(2)} KDR</span>
+            <span class={styles.badge}>{sort === 'kdr' ? `${entry.kdr.toFixed(2)} KDR` : entry.rating}</span>
           </div>
         ))}
       </div>
+
+      {!expanded && entries.length > COLLAPSED_COUNT ? (
+        <button
+          type="button"
+          class={`${styles.btn} ${styles.btnGhost}`}
+          style={{ marginTop: 10 }}
+          onClick={() => setExpanded(true)}
+        >
+          Show more
+        </button>
+      ) : null}
     </div>
   );
 }

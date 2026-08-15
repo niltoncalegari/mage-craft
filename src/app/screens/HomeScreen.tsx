@@ -5,23 +5,35 @@ import { getElement, toCssColor } from '../../game/elements';
 import { ApiClient, type UserSummary } from '../../net/ApiClient';
 import type { UserProfile } from '../auth';
 import styles from '../App.module.css';
+import { DeckBuilder } from './DeckBuilder';
+import { HistoryPanel } from './HistoryPanel';
+import { RankingPanel } from './RankingPanel';
+import { SquadBuilder } from './SquadBuilder';
+
+type LoadoutTab = 'squad' | 'deck' | 'history';
+
+const LOADOUT_TABS: readonly (readonly [LoadoutTab, string])[] = [
+  ['squad', 'Squad'],
+  ['deck', 'Deck'],
+  ['history', 'History'],
+];
 
 /**
  * The landing surface. A siege is decided by the squad you brought and the
  * spells you spend, not by which room you joined — so the shell offers exactly
- * three things: play against someone, play against an AI, or go change what you
- * bring. There is no room to create or browse — matchmaking is the only way in.
+ * two things: play against someone, or play against an AI. Everything else —
+ * loadout, match history, ranking — lives right here too, so nobody has to
+ * leave the page to see it.
  */
 export function HomeScreen(props: {
   user: UserProfile;
   stats?: { wins: number; losses: number };
   onFindMatch(): void;
   onPractice(): void;
-  onOpenDashboard(): void;
-  onOpenRanking(): void;
   onSignOut(): void;
 }): JSX.Element {
   const [serverStats, setServerStats] = useState<UserSummary | null>(null);
+  const [loadoutTab, setLoadoutTab] = useState<LoadoutTab>('squad');
 
   useEffect(() => {
     let cancelled = false;
@@ -100,14 +112,6 @@ export function HomeScreen(props: {
               ) : null,
             )}
           </div>
-          <button
-            type="button"
-            class={`${styles.btn} ${styles.btnGhost} ${styles.btnBlock}`}
-            style={{ marginTop: 16 }}
-            onClick={props.onOpenRanking}
-          >
-            Ranking
-          </button>
         </div>
 
         <div>
@@ -123,13 +127,34 @@ export function HomeScreen(props: {
               <h3>Practice</h3>
               <p>The same siege against an AI commander, run locally. No server, no queue, no ranking.</p>
             </button>
-            <button type="button" class={styles.actionCard} onClick={props.onOpenDashboard}>
-              <h3>Dashboard</h3>
-              <p>Build your squad and deck, and read what your past matches say about them.</p>
-            </button>
           </div>
         </div>
       </div>
+
+      <div class={styles.panelHeader} style={{ marginTop: 28 }}>
+        <p class={styles.tag}>Loadout</p>
+      </div>
+      <div class={styles.tabs}>
+        {LOADOUT_TABS.map(([id, label]) => (
+          <button
+            type="button"
+            key={id}
+            class={loadoutTab === id ? `${styles.tab} ${styles.tabActive}` : styles.tab}
+            onClick={() => setLoadoutTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {loadoutTab === 'squad' ? <SquadBuilder /> : null}
+      {loadoutTab === 'deck' ? <DeckBuilder /> : null}
+      {loadoutTab === 'history' ? <HistoryPanel user={props.user} /> : null}
+
+      <div class={styles.panelHeader} style={{ marginTop: 28 }}>
+        <p class={styles.tag}>Global</p>
+        <h3 class={styles.panelTitle}>Ranking</h3>
+      </div>
+      <RankingPanel />
     </div>
   );
 }
