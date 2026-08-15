@@ -33,6 +33,7 @@ export interface UserSummary {
   kdr: number;
   favoriteElement: string | null;
   rating: number;
+  mostPlayedSquad: string[] | null;
 }
 
 export interface MeResponse {

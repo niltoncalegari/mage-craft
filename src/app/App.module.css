@@ -330,31 +330,27 @@
   margin: 0 0 14px;
 }
 
-.favoriteElement {
-  --element-color: var(--teal);
-  align-items: center;
-  background: color-mix(in srgb, var(--element-color) 14%, rgba(0, 0, 0, 0.28));
-  border: 1px solid color-mix(in srgb, var(--element-color) 55%, transparent);
-  border-radius: 999px;
-  display: inline-flex;
+.squadStrip {
+  display: flex;
   gap: 8px;
   margin-top: 8px;
-  padding: 7px 12px 7px 9px;
 }
 
-.favoriteSwatch {
-  background: var(--element-color);
+.squadIcon {
+  --element-color: var(--teal);
+  background: color-mix(in srgb, var(--element-color) 55%, rgba(0, 0, 0, 0.35));
+  border: 1px solid color-mix(in srgb, var(--element-color) 70%, transparent);
   border-radius: 999px;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.45) inset;
-  flex: 0 0 auto;
-  height: 12px;
-  width: 12px;
-}
-
-.favoriteName {
-  color: var(--ink);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35) inset;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 13px;
   font-weight: 700;
+  height: 28px;
+  width: 28px;
+  flex: 0 0 auto;
 }
 
 .statRow {

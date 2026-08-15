@@ -81,6 +81,33 @@ describe('GET /api/me/stats/elements', () => {
 const SQUAD_A = ['stone_golem', 'pyromancer', 'stormcaller', 'cleric'];
 const SQUAD_B = ['ice_sentinel', 'wind_dervish', 'alchemist', 'arcane_bard'];
 
+describe('GET /api/me mostPlayedSquad', () => {
+  it('is null with no match history', async () => {
+    const { token } = await registerUser(app);
+    const res = await request(app).get('/api/me').set('Authorization', `Bearer ${token}`);
+    expect(res.body.stats.mostPlayedSquad).toBeNull();
+  });
+
+  it('is the most-played squad even when played only once (unlike the squad-stats floor)', async () => {
+    const { token } = await registerUser(app);
+    await reportMatch(token, { won: true, squad: SQUAD_A });
+
+    const res = await request(app).get('/api/me').set('Authorization', `Bearer ${token}`);
+    expect(res.body.stats.mostPlayedSquad).toEqual([...SQUAD_A].sort());
+  });
+
+  it('picks the squad with the most games, not the highest win rate', async () => {
+    const { token } = await registerUser(app);
+    // Squad A: 1 game, 1 win (100%). Squad B: 2 games, 1 win (50%) but played more.
+    await reportMatch(token, { won: true, squad: SQUAD_A });
+    await reportMatch(token, { won: true, squad: SQUAD_B });
+    await reportMatch(token, { won: false, squad: SQUAD_B });
+
+    const res = await request(app).get('/api/me').set('Authorization', `Bearer ${token}`);
+    expect(res.body.stats.mostPlayedSquad).toEqual([...SQUAD_B].sort());
+  });
+});
+
 describe('GET /api/me/stats/squads', () => {
   it('ranks compositions by win rate, ignoring the order they were picked in', async () => {
     const { token } = await registerUser(app);

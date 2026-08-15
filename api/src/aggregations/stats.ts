@@ -11,6 +11,8 @@ export interface UserSummary {
   kdr: number;
   favoriteElement: string | null;
   rating: number;
+  /** The squad fielded most often, for the "your comp" strip — see getMostPlayedSquad. */
+  mostPlayedSquad: string[] | null;
 }
 
 export interface ElementStat {
@@ -78,9 +80,10 @@ export async function getUserSummary(userId: string): Promise<UserSummary> {
   const favoriteElement = elements[0]?.elementId ?? null;
   const user = await User.findById(userId, { rating: 1 }).lean();
   const rating = user?.rating ?? 1200;
+  const mostPlayedSquad = await getMostPlayedSquad(userId);
 
   if (!totals) {
-    return { matchesPlayed: 0, wins: 0, losses: 0, kills: 0, deaths: 0, kdr: 0, favoriteElement, rating };
+    return { matchesPlayed: 0, wins: 0, losses: 0, kills: 0, deaths: 0, kdr: 0, favoriteElement, rating, mostPlayedSquad };
   }
 
   return {
@@ -92,6 +95,7 @@ export async function getUserSummary(userId: string): Promise<UserSummary> {
     kdr: computeKdr(totals.kills, totals.deaths),
     favoriteElement,
     rating,
+    mostPlayedSquad,
   };
 }
 
@@ -117,15 +121,11 @@ export interface CardStat {
   casts: number;
 }
 
-/** Win rate per squad composition — the "which comps do I win with" question. */
-export async function getUserSquadStats(userId: string): Promise<SquadStat[]> {
-  const rows = await MatchLog.aggregate<{
-    _id: string;
-    squad: string[];
-    games: number;
-    wins: number;
-    structuresDestroyed: number;
-  }>([
+type SquadRow = { _id: string; squad: string[]; games: number; wins: number; structuresDestroyed: number };
+
+/** Every squad composition the player has ever fielded, most-played first, no game-count floor. */
+async function rawSquadStats(userId: string): Promise<SquadRow[]> {
+  return MatchLog.aggregate<SquadRow>([
     { $match: { userId: new Types.ObjectId(userId), 'squad.0': { $exists: true } } },
     { $addFields: { sortedSquad: { $sortArray: { input: '$squad', sortBy: 1 } } } },
     {
@@ -137,10 +137,16 @@ export async function getUserSquadStats(userId: string): Promise<SquadStat[]> {
         structuresDestroyed: { $sum: '$structuresDestroyed' },
       },
     },
-    { $match: { games: { $gte: MIN_GAMES_FOR_COMP } } },
+    { $sort: { games: -1 } },
   ]);
+}
+
+/** Win rate per squad composition — the "which comps do I win with" question. */
+export async function getUserSquadStats(userId: string): Promise<SquadStat[]> {
+  const rows = await rawSquadStats(userId);
 
   return rows
+    .filter((r) => r.games >= MIN_GAMES_FOR_COMP)
     .map((r) => ({
       // The $reduce leaves a leading separator; the client never parses this,
       // but a stray '+' would look like a bug in any log that prints it.
@@ -152,6 +158,12 @@ export async function getUserSquadStats(userId: string): Promise<SquadStat[]> {
       structuresDestroyed: r.structuresDestroyed,
     }))
     .sort((a, b) => b.winRate - a.winRate || b.games - a.games);
+}
+
+/** The squad fielded most often, even if only once — unlike getUserSquadStats, no noise floor. */
+export async function getMostPlayedSquad(userId: string): Promise<string[] | null> {
+  const [top] = await rawSquadStats(userId);
+  return top?.squad ?? null;
 }
 
 /** Total casts per card across every logged match, most-cast first. */

@@ -1,6 +1,7 @@
 import type { JSX } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { getElement, isElementId, toCssColor } from '../../game/elements';
+import { defaultSquad, isRosterId, rosterFor } from '../../../sim/cards';
+import { getElement, toCssColor } from '../../game/elements';
 import { ApiClient, type UserSummary } from '../../net/ApiClient';
 import type { UserProfile } from '../auth';
 import styles from '../App.module.css';
@@ -38,14 +39,13 @@ export function HomeScreen(props: {
 
   const wins = serverStats?.wins ?? props.stats?.wins ?? props.user.wins;
   const losses = serverStats?.losses ?? props.stats?.losses ?? props.user.losses;
+  const rating = serverStats?.rating;
 
-  const favoriteId =
-    serverStats?.favoriteElement && isElementId(serverStats.favoriteElement)
-      ? serverStats.favoriteElement
-      : isElementId(props.user.favoriteElement)
-        ? props.user.favoriteElement
-        : 'fire';
-  const favorite = getElement(favoriteId);
+  // The most-played 4-mage squad, not one "favorite" element — a match is
+  // fought by a whole squad, and a single-element badge never said which one.
+  // Falls back to the default squad for a player with no match history yet.
+  const playedSquad = serverStats?.mostPlayedSquad?.filter(isRosterId) ?? [];
+  const squad = (playedSquad.length ? playedSquad : defaultSquad()).map((id) => rosterFor(id));
 
   return (
     <div class={`${styles.panel} ${styles.panelWide}`}>
@@ -76,17 +76,29 @@ export function HomeScreen(props: {
                 <span>KDR</span>
               </div>
             ) : null}
+            {rating !== undefined ? (
+              <div class={styles.stat}>
+                <b>{rating}</b>
+                <span>Rating</span>
+              </div>
+            ) : null}
           </div>
           <p class={styles.panelHint} style={{ marginTop: 14 }}>
-            Favorite element
+            Most-played squad
           </p>
-          <div
-            class={styles.favoriteElement}
-            style={{ '--element-color': toCssColor(favorite.color) } as JSX.CSSProperties}
-            title={favorite.role}
-          >
-            <span class={styles.favoriteSwatch} aria-hidden="true" />
-            <span class={styles.favoriteName}>{favorite.name}</span>
+          <div class={styles.squadStrip}>
+            {squad.map((entry, i) =>
+              entry ? (
+                <span
+                  key={`${entry.id}-${i}`}
+                  class={styles.squadIcon}
+                  style={{ '--element-color': toCssColor(getElement(entry.element).color) } as JSX.CSSProperties}
+                  title={`${entry.name} · ${getElement(entry.element).name} · ${entry.role}`}
+                >
+                  {entry.name[0]}
+                </span>
+              ) : null,
+            )}
           </div>
           <button
             type="button"
