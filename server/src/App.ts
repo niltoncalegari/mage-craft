@@ -304,6 +304,7 @@ export class App {
       deck,
       squad: stored?.squad,
       joinedAt: this.now() / 1000,
+      rating: msg.rating,
     });
     this.sendQueueStatus(clientId);
     this.sweepQueue();
@@ -454,6 +455,7 @@ export class App {
         opponentName: opponent?.name ?? 'Arcane Automaton',
         yourTeam: team,
         againstBot: !opponent,
+        opponentRating: opponent?.rating ?? null,
       });
     }
 

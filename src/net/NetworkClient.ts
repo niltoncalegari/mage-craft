@@ -162,8 +162,8 @@ export class NetworkClient {
   }
 
   /** Enter matchmaking. Omit the deck to let the server use the default one. */
-  joinQueue(name: string, deck?: string[]): void {
-    this.send(deck ? { type: 'join_queue', name, deck } : { type: 'join_queue', name });
+  joinQueue(name: string, deck?: string[], rating?: number): void {
+    this.send({ type: 'join_queue', name, ...(deck ? { deck } : {}), ...(rating !== undefined ? { rating } : {}) });
   }
 
   /**

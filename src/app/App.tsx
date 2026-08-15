@@ -82,6 +82,8 @@ function AppShell(props: AppProps): JSX.Element {
     awaitingResultDismiss: false,
     /** Which wire team the player commands; the match POV depends on it. */
     localTeam: null as number | null,
+    /** Opponent's Elo at pairing time; null against a bot — bots never move rating. */
+    opponentRating: null as number | null,
   });
 
   const [screen, setScreen] = useState<AppScreen>(() => (getSession() ? 'home' : 'title'));
@@ -122,6 +124,7 @@ function AppShell(props: AppProps): JSX.Element {
     spectating,
     awaitingResultDismiss: metaRef.current.awaitingResultDismiss,
     localTeam: metaRef.current.localTeam,
+    opponentRating: metaRef.current.opponentRating,
   };
 
   /**
@@ -175,6 +178,7 @@ function AppShell(props: AppProps): JSX.Element {
         // The queue seats you without a lobby, so this is the first (and for a
         // bot opponent the only) place that names your side.
         metaRef.current.localTeam = msg.yourTeam;
+        metaRef.current.opponentRating = msg.opponentRating;
         setQueueFound(msg);
       },
       onMatchResult: (msg) => {
@@ -187,7 +191,8 @@ function AppShell(props: AppProps): JSX.Element {
         recordMatch(record);
         const token = userRef.current?.token;
         if (token) {
-          ApiClient.reportMatch(token, reportFor(record, 'pvp')).catch(() => {
+          const opponentRating = metaRef.current.opponentRating;
+          ApiClient.reportMatch(token, reportFor(record, 'pvp', opponentRating ?? undefined)).catch(() => {
             // The local history already has it; a failed sync is not worth
             // interrupting the victory screen for.
           });
@@ -322,7 +327,11 @@ function AppShell(props: AppProps): JSX.Element {
       // Register the loadout before queueing: the server seats a queued player
       // immediately, with no lobby in between to send it during.
       sendLoadout(bridge);
-      bridge.net.joinQueue(name);
+      // Fetched fresh rather than cached off Home's last render: the queue
+      // wants what the opponent is about to be told, not a stale number.
+      const token = userRef.current?.token;
+      const rating = token ? await ApiClient.me(token).then((me) => me.stats.rating).catch(() => undefined) : undefined;
+      bridge.net.joinQueue(name, undefined, rating);
     } catch (err) {
       setNetError(err instanceof Error ? err.message : 'Could not reach server');
       setOnline(false);

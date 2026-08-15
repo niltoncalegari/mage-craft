@@ -32,6 +32,7 @@ export interface UserSummary {
   deaths: number;
   kdr: number;
   favoriteElement: string | null;
+  rating: number;
 }
 
 export interface MeResponse {
@@ -91,6 +92,7 @@ export interface RankingEntry {
   kills: number;
   deaths: number;
   kdr: number;
+  rating: number;
 }
 
 export interface ReportMatchInput {
@@ -108,6 +110,8 @@ export interface ReportMatchInput {
   squad?: string[];
   cards?: CardStat[];
   structuresDestroyed?: number;
+  /** Opponent's Elo at match time; omitted for bot/practice games, which never move rating. */
+  opponentRating?: number;
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -155,7 +159,7 @@ export const ApiClient = {
     return request(`/api/ranking?sort=${sort}&page=${page}&limit=${limit}`);
   },
 
-  reportMatch(token: string, input: ReportMatchInput): Promise<{ id: string }> {
+  reportMatch(token: string, input: ReportMatchInput): Promise<{ id: string; rating?: number }> {
     return request('/api/matches', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },

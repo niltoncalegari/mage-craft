@@ -44,7 +44,7 @@ export function recordFor(result: MatchResultMsg, myTeam: number, mode: MatchMod
  * a ranked siege has neither a difficulty setting nor a map choice, so both are
  * reported as the constants they actually are.
  */
-export function reportFor(record: MatchRecord, mode: 'sp-vs-ai' | 'pvp'): ReportMatchInput {
+export function reportFor(record: MatchRecord, mode: 'sp-vs-ai' | 'pvp', opponentRating?: number): ReportMatchInput {
   return {
     mode,
     won: record.won === true,
@@ -59,6 +59,7 @@ export function reportFor(record: MatchRecord, mode: 'sp-vs-ai' | 'pvp'): Report
     squad: [...record.squad],
     cards: record.cards.map((c) => ({ cardId: c.cardId, casts: c.casts })),
     structuresDestroyed: record.structuresDestroyed,
+    ...(opponentRating !== undefined ? { opponentRating } : {}),
   };
 }
 

@@ -23,6 +23,8 @@ export interface QueueEntry {
   squad?: RosterId[];
   /** Epoch seconds, injected so tests can drive the clock. */
   joinedAt: number;
+  /** Elo at queue time, passed through to the paired opponent's match_found. */
+  rating?: number;
 }
 
 export interface Pairing {

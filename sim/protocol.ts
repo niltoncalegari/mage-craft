@@ -46,6 +46,8 @@ export type JoinQueueMsg = {
   name: string;
   /** @deprecated Send `set_loadout` instead — it also covers custom rooms. */
   deck?: string[];
+  /** Current Elo, so a paired opponent can be told what they're facing. */
+  rating?: number;
 };
 export type LeaveQueueMsg = { type: 'leave_queue' };
 
@@ -291,6 +293,8 @@ export type MatchFoundMsg = {
   yourTeam: number;
   /** True when the opponent is a bot because the queue timed out. */
   againstBot: boolean;
+  /** Opponent's Elo at pairing time; null against a bot (bots aren't rated). */
+  opponentRating: number | null;
 };
 
 export type ServerMsg =
