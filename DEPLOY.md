@@ -121,6 +121,13 @@ manual já tinha, nada mais:
 ```bash
 adduser --disabled-password --gecos "" mage-craft-runner
 usermod -aG docker mage-craft-runner
+
+# The deploy job runs as this user, so it — not root, not a "deploy" account —
+# is who needs to read the secrets. Skipping this is a silent 403: `docker
+# compose` fails with "open /opt/mage-craft/.env: permission denied" the first
+# time the pipeline actually runs, which is a worse place to learn about it.
+chown mage-craft-runner:mage-craft-runner /opt/mage-craft/.env
+chmod 600 /opt/mage-craft/.env
 ```
 
 Baixe e extraia o runner como esse usuário (troque a versão pela mais recente
