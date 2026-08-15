@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type {
   ClientMsg,
+  EmoteMsg,
   ErrorMsg,
   MatchFoundMsg,
   MatchResultMsg,
@@ -157,6 +158,23 @@ describe('App — lobby protocol', () => {
 
   it('tells a client that has not joined a room to join one first', () => {
     send('stranger', { type: 'set_ready', ready: true });
+    expect(hub.last<ErrorMsg>('stranger', 'error')?.message).toMatch(/not joined a room/);
+  });
+
+  it('broadcasts a sent emote to both players in the room, naming the sender', () => {
+    const roomId = hostRoom('host', 'Alice');
+    send('guest', { type: 'join_room', roomId, name: 'Bob' });
+    hub.clear();
+
+    send('host', { type: 'send_emote', emoteId: 'gg' });
+
+    expect(hub.last<EmoteMsg>('host', 'emote')).toEqual({ type: 'emote', playerId: 'host', emoteId: 'gg' });
+    expect(hub.last<EmoteMsg>('guest', 'emote')).toEqual({ type: 'emote', playerId: 'host', emoteId: 'gg' });
+  });
+
+  it('drops an emote from a client that has not joined a room', () => {
+    send('stranger', { type: 'send_emote', emoteId: 'gg' });
+    expect(hub.to<EmoteMsg>('stranger', 'emote')).toHaveLength(0);
     expect(hub.last<ErrorMsg>('stranger', 'error')?.message).toMatch(/not joined a room/);
   });
 

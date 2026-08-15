@@ -199,6 +199,7 @@ function AppShell(props: AppProps): JSX.Element {
         metaRef.current.awaitingResultDismiss = true;
         onlineMatchRef.current?.showRoundResult(msg.winnerTeam);
       },
+      onEmote: (msg) => onlineMatchRef.current?.showEmote(msg.playerId, msg.emoteId),
       onError: (msg) => setNetError(msg.message),
       onClose: () => setOnline(false),
     });
@@ -273,6 +274,7 @@ function AppShell(props: AppProps): JSX.Element {
           localTeam: metaRef.current.localTeam,
           mapData,
           getTeamName: (wireTeam) => teamNamesRef.current[wireTeam] ?? null,
+          onSendEmote: (emoteId) => bridgeRef.current?.net.sendEmote(emoteId),
           onLeaveMatch: () => {
             // Matchmaking never seats a host (GDD §4: "sem lobby, sem
             // ready-up, sem código"), so the round-end rematch lobby has no

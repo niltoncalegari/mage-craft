@@ -70,6 +70,9 @@ export type SetLoadoutMsg = { type: 'set_loadout'; deck?: string[]; squad?: stri
  */
 export type CastMsg = { type: 'cast'; cardId: string; position: Vec2DTO };
 
+/** A quick-react from the hand, GDD-adjacent but not in it — see EmoteId in src/app/emotes.ts. */
+export type SendEmoteMsg = { type: 'send_emote'; emoteId: string };
+
 export type ClientMsg =
   | CreateRoomMsg
   | JoinRoomMsg
@@ -84,7 +87,8 @@ export type ClientMsg =
   | JoinQueueMsg
   | LeaveQueueMsg
   | SetLoadoutMsg
-  | CastMsg;
+  | CastMsg
+  | SendEmoteMsg;
 
 export type PlayerSlotDTO = {
   slotId: string;
@@ -297,6 +301,9 @@ export type MatchFoundMsg = {
   opponentRating: number | null;
 };
 
+/** Broadcast to both players in the room the instant one of them sends one — no ack, no history. */
+export type EmoteMsg = { type: 'emote'; playerId: string; emoteId: string };
+
 export type ServerMsg =
   | RoomStateMsg
   | RoomListMsg
@@ -306,6 +313,7 @@ export type ServerMsg =
   | MatchResultMsg
   | QueueStatusMsg
   | MatchFoundMsg
+  | EmoteMsg
   | ErrorMsg;
 
 export function peekType(data: unknown): string | null {

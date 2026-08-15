@@ -19,6 +19,7 @@ import { IdAllocator } from '../ecs/Entity';
 import { MapLoader } from '../game/MapLoader';
 import { Team, type Arena, type MapData } from '../game/types';
 import { World } from '../game/World';
+import { EmoteBar } from '../ui/EmoteBar';
 import { MatchHUD } from '../ui/MatchHUD';
 import { Menus } from '../ui/Menus';
 import { SquadPanel } from '../ui/SquadPanel';
@@ -56,6 +57,9 @@ const HAND_KEYS = ['1', '2', '3', '4'];
 
 /** How far a press must travel before it counts as dragging the view, not clicking. */
 const DRAG_THRESHOLD_PX = 5;
+
+/** Swapped in over the arena's default open-hand cursor (src/style.css) while panning the camera. */
+const GRAB_CURSOR = `url(${import.meta.env.BASE_URL}cursors/hand-grab.png) 8 8, grabbing`;
 
 let mapDataPromise: Promise<MapData> | null = null;
 
@@ -135,6 +139,8 @@ export class OnlineMatch {
   /** Which wire team the player commands; null while spectating. See {@link teamName}. */
   private readonly localTeam: number | null;
   private readonly getTeamName: ((wireTeam: number) => string | null) | null;
+  private readonly localPlayerId: string;
+  private emoteBar: EmoteBar | null = null;
 
   constructor(
     container: HTMLElement,
@@ -155,12 +161,19 @@ export class OnlineMatch {
        * against a local bot — and the HUD falls back to "You"/"Opponent".
        */
       getTeamName?: (wireTeam: number) => string | null;
+      /**
+       * Sends a quick-react to the opponent. Omitted by callers with nobody to
+       * send one to (practice, the firing range) — the emote button never
+       * appears in that case rather than sending into the void.
+       */
+      onSendEmote?: (emoteId: string) => void;
     },
   ) {
     this.spectating = opts.spectating;
     this.onTick = opts.onTick ?? null;
     this.localTeam = opts.localTeam;
     this.getTeamName = opts.getTeamName ?? null;
+    this.localPlayerId = opts.localPlayerId;
 
     // Same construction order as Game.init: obstacles share the world's id
     // space so nothing collides with mage/projectile ids.
@@ -216,6 +229,9 @@ export class OnlineMatch {
           getSideName: (team) => this.teamName(team),
         }),
       );
+      if (opts.onSendEmote) {
+        this.emoteBar = new EmoteBar(container, opts.onSendEmote);
+      }
     }
 
     this.audio = new AudioManager(this.events);
@@ -282,6 +298,12 @@ export class OnlineMatch {
     this.sync.applySnapshot(snap);
   }
 
+  /** Shows a quick-react bubble over whichever side sent it — including the local player's own. */
+  showEmote(playerId: string, emoteId: string): void {
+    const side = playerId === this.localPlayerId ? this.sync.mySide : this.sync.mySide === 'left' ? 'right' : 'left';
+    this.emoteBar?.showBubble(side, emoteId);
+  }
+
   /** Shows the victory/defeat screen for the round that just ended (server-authoritative `winnerTeam`). */
   showRoundResult(winnerTeam: number): void {
     this.roundEnded = true;
@@ -300,6 +322,7 @@ export class OnlineMatch {
     this.renderer.domElement.removeEventListener('pointermove', this.onPointer);
     this.overlay.remove();
     this.menus.dispose();
+    this.emoteBar?.dispose();
     this.audio.dispose();
     for (const r of this.renderers) r.dispose?.();
     this.arenaRenderer.dispose();
@@ -448,7 +471,7 @@ export class OnlineMatch {
     if (!this.dragging) {
       if (Math.hypot(ev.clientX - from.x, ev.clientY - from.y) < DRAG_THRESHOLD_PX) return;
       this.dragging = true;
-      this.renderer.domElement.style.cursor = 'grabbing';
+      this.renderer.domElement.style.cursor = GRAB_CURSOR;
     }
 
     const view = this.renderer.cameraController.getView();

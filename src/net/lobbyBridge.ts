@@ -1,5 +1,6 @@
 import { NetworkClient } from './NetworkClient';
 import type {
+  EmoteMsg,
   ErrorMsg,
   MatchFoundMsg,
   MatchResultMsg,
@@ -20,6 +21,7 @@ export type LobbyBridgeHandlers = {
   onMatchResult(msg: MatchResultMsg): void;
   onQueueStatus(msg: QueueStatusMsg): void;
   onMatchFound(msg: MatchFoundMsg): void;
+  onEmote(msg: EmoteMsg): void;
   onError(msg: ErrorMsg): void;
   onClose(): void;
 };
@@ -43,6 +45,7 @@ export class LobbyBridge {
       onMatchResult: (m) => this.handlers?.onMatchResult(m),
       onQueueStatus: (m) => this.handlers?.onQueueStatus(m),
       onMatchFound: (m) => this.handlers?.onMatchFound(m),
+      onEmote: (m) => this.handlers?.onEmote(m),
       onError: (m) => this.handlers?.onError(m),
       onClose: () => this.handlers?.onClose(),
     });

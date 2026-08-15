@@ -1,6 +1,7 @@
 import {
   peekType,
   type ClientMsg,
+  type EmoteMsg,
   type ErrorMsg,
   type MatchFoundMsg,
   type MatchResultMsg,
@@ -22,6 +23,7 @@ export type NetworkHandlers = {
   onMatchResult?(msg: MatchResultMsg): void;
   onQueueStatus?(msg: QueueStatusMsg): void;
   onMatchFound?(msg: MatchFoundMsg): void;
+  onEmote?(msg: EmoteMsg): void;
   onError?(msg: ErrorMsg): void;
   onOpen?(): void;
   onClose?(): void;
@@ -179,6 +181,11 @@ export class NetworkClient {
     this.send({ type: 'leave_queue' });
   }
 
+  /** Quick-react from the hand — see src/app/emotes.ts. Broadcast-only, no ack. */
+  sendEmote(emoteId: string): void {
+    this.send({ type: 'send_emote', emoteId });
+  }
+
   private dispatch(msg: ServerMsg): void {
     const typ = peekType(msg);
     switch (typ) {
@@ -205,6 +212,9 @@ export class NetworkClient {
         break;
       case 'match_found':
         this.handlers.onMatchFound?.(msg as MatchFoundMsg);
+        break;
+      case 'emote':
+        this.handlers.onEmote?.(msg as EmoteMsg);
         break;
       case 'error':
         this.handlers.onError?.(msg as ErrorMsg);

@@ -39,6 +39,10 @@ body,
 }
 
 canvas {
+  /* The pointer over the arena is a hand, not an arrow — it's a stand-in
+     for reaching into the fight, not a UI cursor. Swapped for a fist
+     mid-drag by OnlineMatch's camera-pan handler. */
+  cursor: url('/cursors/hand-open.png') 8 8, pointer;
   display: block;
 }
 

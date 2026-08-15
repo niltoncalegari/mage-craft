@@ -24,6 +24,7 @@ import type {
   RoomStateMsg,
   SelectElementMsg,
   SelectTeamMsg,
+  SendEmoteMsg,
   ServerMsg,
   SetLoadoutMsg,
   SetReadyMsg,
@@ -185,6 +186,13 @@ export class App {
         break;
       case 'cast':
         this.handleCast(clientId, msg as CastMsg);
+        break;
+      case 'send_emote':
+        this.withRoom(clientId, (_sess, roomId) => {
+          const emoteId = (msg as SendEmoteMsg).emoteId;
+          if (typeof emoteId !== 'string' || emoteId.length === 0 || emoteId.length > 32) return;
+          this.broadcastToHumans(roomId, { type: 'emote', playerId: clientId, emoteId });
+        });
         break;
       default:
         this.sendError(clientId, `unknown message type ${JSON.stringify(type)}`);

@@ -1,0 +1,116 @@
+/* Shares the glass tokens with MatchHUD/SquadPanel — see src/style.css. */
+
+.toggle {
+  -webkit-backdrop-filter: var(--glass-blur);
+  align-items: center;
+  backdrop-filter: var(--glass-blur);
+  background: linear-gradient(158deg, var(--glass-tint-lit), var(--glass-tint) 58%);
+  border: 1px solid var(--glass-edge);
+  border-radius: 999px;
+  bottom: 12px;
+  box-shadow: var(--glass-specular), var(--glass-shadow);
+  color: var(--glass-ink);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  font-size: 20px;
+  height: 44px;
+  justify-content: center;
+  position: absolute;
+  right: 12px;
+  width: 44px;
+}
+
+.panel {
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  background: linear-gradient(158deg, var(--glass-tint-lit), var(--glass-tint) 58%);
+  border: 1px solid var(--glass-edge);
+  border-radius: 16px;
+  bottom: 64px;
+  box-shadow: var(--glass-specular), var(--glass-shadow);
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(4, 1fr);
+  padding: 8px;
+  position: absolute;
+  right: 12px;
+  width: 168px;
+}
+
+.panel[hidden] {
+  display: none;
+}
+
+.pick {
+  align-items: center;
+  background: var(--glass-inset);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  height: 36px;
+  justify-content: center;
+  padding: 0;
+  transition: background-color 100ms linear, transform 100ms ease;
+  width: 36px;
+}
+
+.pick:hover {
+  background: var(--glass-inset-lit);
+  transform: translateY(-1px);
+}
+
+.pick img {
+  height: 24px;
+  image-rendering: pixelated;
+  width: 24px;
+}
+
+/* One floating bubble per side, positioned by OnlineMatch — see .left/.right. */
+.bubble {
+  align-items: center;
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  background: linear-gradient(158deg, var(--glass-tint-lit), var(--glass-tint) 58%);
+  border: 1px solid var(--glass-edge);
+  border-radius: 999px;
+  box-shadow: var(--glass-specular), var(--glass-shadow);
+  display: flex;
+  height: 40px;
+  justify-content: center;
+  position: absolute;
+  top: 66px;
+  transition: opacity 150ms ease, transform 150ms ease;
+  width: 40px;
+}
+
+.bubble[hidden] {
+  display: none;
+}
+
+.bubble img {
+  height: 28px;
+  image-rendering: pixelated;
+  width: 28px;
+}
+
+.left {
+  left: 16px;
+}
+
+.right {
+  right: 16px;
+}
+
+@media (pointer: coarse) {
+  .toggle {
+    height: 48px;
+    width: 48px;
+  }
+
+  .pick {
+    height: 42px;
+    width: 42px;
+  }
+}
