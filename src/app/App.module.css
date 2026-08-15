@@ -619,3 +619,49 @@
 .spectatorBar p {
   margin: 0 0 8px;
 }
+
+/* ---- Mobile ---- */
+
+/*
+ * A fingertip needs a bigger target than a mouse cursor — 44px is the usual
+ * baseline (Apple HIG, WCAG 2.5.5) — so every tappable control in the menu
+ * shell grows under a coarse pointer, regardless of viewport size. This is
+ * additive to each control's own layout, not a replacement for it.
+ */
+@media (pointer: coarse) {
+  .btn {
+    min-height: 44px;
+    padding: 13px 20px;
+  }
+
+  .tab {
+    min-height: 40px;
+    padding: 10px 16px;
+  }
+
+  .chip {
+    min-height: 36px;
+    padding: 8px 12px;
+  }
+
+  .actionCard {
+    padding: 18px 16px;
+  }
+}
+
+/*
+ * The panel is capped at 92vh so it never runs past the viewport, but on a
+ * landscape phone (short, ~380-430px tall) that cap leaves barely any room
+ * to read before scrolling starts. Home in particular is a long page now
+ * (loadout tabs, ranking) that leans on this scroll area — trading the
+ * outer page margin for it here is a straight win at this height.
+ */
+@media (max-height: 500px) {
+  .panelWide {
+    max-height: 96vh;
+  }
+
+  .panel {
+    padding: clamp(12px, 2vw, 20px);
+  }
+}

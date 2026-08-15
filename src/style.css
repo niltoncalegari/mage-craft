@@ -20,6 +20,24 @@ body,
   position: relative;
 }
 
+/*
+ * The "force landscape on a phone held in portrait" hack: mobile Safari has
+ * no orientation-lock API, so this rotates the whole app 90° to a
+ * landscape-shaped box sized off the swapped viewport dimensions. Toggled by
+ * src/app/useOrientationLock.ts, which drops the class the instant the
+ * player physically turns their phone to landscape — the transform is a
+ * stand-in for a real device rotation, not a permanent skew.
+ */
+#app.force-landscape {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vh;
+  height: 100vw;
+  transform-origin: top left;
+  transform: rotate(90deg) translateY(-100%);
+}
+
 canvas {
   display: block;
 }

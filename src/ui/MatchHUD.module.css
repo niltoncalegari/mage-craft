@@ -325,3 +325,49 @@
     display: none;
   }
 }
+
+/*
+ * A phone in landscape is wide but short (~380-430px tall) — the width-only
+ * query above does nothing for that case. Pulls the top bar and bottom bar
+ * both toward the edges and shrinks their own padding so the 3D viewport in
+ * between keeps a usable amount of room.
+ */
+@media (max-height: 480px) {
+  .top {
+    top: 4px;
+  }
+
+  .side {
+    padding: 4px 8px;
+  }
+
+  .clockBox {
+    padding: 3px 10px;
+  }
+
+  .clock {
+    font-size: 18px;
+  }
+
+  .bar {
+    bottom: 4px;
+    gap: 3px;
+  }
+
+  .card {
+    padding: 5px 8px 4px;
+  }
+
+  .nextBox,
+  .manaBox {
+    padding: 5px 8px;
+  }
+}
+
+/* Touch needs a bigger target than a mouse cursor does; a card this small
+   under a fingertip is easy to miscast from. */
+@media (pointer: coarse) {
+  .card {
+    min-height: 44px;
+  }
+}

@@ -20,6 +20,7 @@ import { QueueScreen } from './screens/QueueScreen';
 import { RangeScreen } from './screens/RangeScreen';
 import { RoomLobbyScreen } from './screens/RoomLobbyScreen';
 import { TitleScreen } from './screens/TitleScreen';
+import { useOrientationLock } from './useOrientationLock';
 
 export type AppScreen =
   | 'title'
@@ -209,6 +210,17 @@ function AppShell(props: AppProps): JSX.Element {
     const portal = new PortalScene(portalRef.current);
     return () => portal.dispose();
   }, []);
+
+  const rotatedForLandscape = useOrientationLock();
+  useEffect(() => {
+    const app = document.getElementById('app');
+    if (!app) return;
+    app.classList.toggle('force-landscape', rotatedForLandscape);
+    // Renderer.resize listens for window 'resize'; a CSS transform doesn't
+    // fire one on its own, and the new layout needs a frame to settle
+    // before container.clientWidth/Height reads the swapped dimensions.
+    requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+  }, [rotatedForLandscape]);
 
   /**
    * The stored session is trusted for the first paint — re-authenticating before
