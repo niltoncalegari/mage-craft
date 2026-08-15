@@ -67,69 +67,37 @@ jobs:
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache,mode=max
 
   deploy:
-    name: deploy to VPS
+    name: deploy on VPS runner
     needs: build
-    runs-on: ubuntu-latest
+    # Runs on the VPS itself (see DEPLOY.md — a self-hosted runner registered
+    # for this repo only, under its own OS user with docker-group-only
+    # privileges). No SSH, no VPS credentials in GitHub: the job already has a
+    # local docker socket, so "deploy" is just "pull the new tag and restart".
+    runs-on: [self-hosted, mage-craft]
     environment: production
-    env:
-      VPS_HOST: ${{ secrets.VPS_HOST }}
-      VPS_USER: ${{ secrets.VPS_USER }}
-      VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Open SSH connection
-        env:
-          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          SSH_HOST_KEY: ${{ secrets.VPS_SSH_HOST_KEY }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          if [ -n "${SSH_HOST_KEY:-}" ]; then
-            printf '%s\n' "$SSH_HOST_KEY" > ~/.ssh/known_hosts
-          else
-            # Trust-on-first-use. Works, but a pinned VPS_SSH_HOST_KEY is what
-            # actually stops a man in the middle from taking over the deploy.
-            echo "::warning::VPS_SSH_HOST_KEY is not set; falling back to ssh-keyscan"
-            ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          fi
-          chmod 600 ~/.ssh/known_hosts
-
-      - name: Copy compose file
-        run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" 'mkdir -p /opt/mage-craft'
-          scp -i ~/.ssh/deploy_key -P "$VPS_PORT" docker-compose.prod.yml \
-            "$VPS_USER@$VPS_HOST:/opt/mage-craft/docker-compose.prod.yml"
 
       - name: Pull and restart
         env:
           IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
-            "IMAGE_TAG=$IMAGE_TAG REGISTRY=$REGISTRY bash -euo pipefail -s" <<'REMOTE'
-          cd /opt/mage-craft
-          # .env lives only on the server and holds the secrets; never in git.
-          test -f .env || { echo "missing /opt/mage-craft/.env — see DEPLOY.md" >&2; exit 1; }
-          export IMAGE_TAG REGISTRY
-          docker compose -f docker-compose.prod.yml pull
-          docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          # /opt/mage-craft/.env holds the application secrets (JWT_SECRET,
+          # MATCH_INGEST_API_KEY, ...) and lives only on this box — never in the
+          # repo, never in a GitHub secret. See DEPLOY.md.
+          test -f /opt/mage-craft/.env || { echo "missing /opt/mage-craft/.env — see DEPLOY.md" >&2; exit 1; }
+          COMPOSE="docker compose --env-file /opt/mage-craft/.env -f docker-compose.prod.yml -p mage-craft"
+          $COMPOSE pull
+          $COMPOSE up -d --remove-orphans
           # Keep a week of images so a rollback has something to pull locally.
           docker image prune -f --filter until=168h
-          docker compose -f docker-compose.prod.yml ps
-          REMOTE
+          $COMPOSE ps
 
       - name: Verify the deploy is live
         run: |
           set -euo pipefail
-          # Checked from inside the box: the published port may be firewalled off
-          # from GitHub's runners, and that is not a failed deploy.
-          ssh -i ~/.ssh/deploy_key -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" 'bash -euo pipefail -s' <<'REMOTE'
-          cd /opt/mage-craft
-          port=$(sed -n 's/^CLIENT_PORT=//p' .env | tail -1 | tr -d '"'\''[:space:]')
+          port=$(sed -n 's/^CLIENT_PORT=//p' /opt/mage-craft/.env | tail -1 | tr -d '"'\''[:space:]')
           port=${port:-8080}
           for _ in $(seq 1 30); do
             if curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then
@@ -141,10 +109,5 @@ jobs:
             sleep 2
           done
           echo "client never became healthy" >&2
-          docker compose -f docker-compose.prod.yml logs --tail 50
+          docker compose --env-file /opt/mage-craft/.env -f docker-compose.prod.yml -p mage-craft logs --tail 50
           exit 1
-          REMOTE
-
-      - name: Revoke the key
-        if: always()
-        run: rm -f ~/.ssh/deploy_key

@@ -72,16 +72,25 @@ apagar tudo: `docker compose down -v`.
 ## Deploy por pipeline
 
 `.github/workflows/deploy.yml` roda a cada push na `main`: builda as três
-imagens, publica em `ghcr.io/niltoncalegari/mage-craft/{client,gameserver,api}`
-com a tag do commit, copia o `docker-compose.prod.yml` para a VPS e roda
-`pull` + `up -d`. No fim confere `/healthz` de dentro da máquina e falha o job
-se o stack não subir.
+imagens num runner hospedado do GitHub e publica em
+`ghcr.io/niltoncalegari/mage-craft/{client,gameserver,api}` com a tag do
+commit. O segundo job — o que efetivamente troca o que está no ar — roda **na
+própria VPS**, via um runner self-hosted registrado só para este repositório,
+não por SSH. `pull` + `up -d` executam localmente, contra o socket do Docker
+da máquina; no fim ele confere `/healthz` de dentro da caixa e falha o job se
+o stack não subir.
 
-O build sai da VPS de propósito: `tsc` + Vite + três imagens é o passo que
-derruba uma VPS pequena por falta de memória. Na VPS sobra download e restart.
+Isso significa **nenhum segredo de VPS no GitHub** — nem host, nem usuário, nem
+chave privada. O runner já está na máquina; a confiança está em quem registrou
+o runner, não numa chave guardada num secret.
+
+O build das imagens continua fora da VPS de propósito: `tsc` + Vite + três
+imagens é o passo que derruba uma VPS pequena por falta de memória. A VPS só
+baixa e reinicia.
 
 `.github/workflows/ci.yml` roda typecheck, lint, testes e build em todo push e
-PR — separado do deploy, para PR ter sinal sem publicar nada.
+PR num runner hospedado comum — separado do deploy, para PR ter sinal sem
+tocar a VPS.
 
 ### Preparar a VPS (uma vez)
 
@@ -89,50 +98,75 @@ PR — separado do deploy, para PR ter sinal sem publicar nada.
 # 1. Docker
 curl -fsSL https://get.docker.com | sh
 
-# 2. Usuário de deploy, sem senha e sem shell de login interativo
-adduser --disabled-password --gecos "" deploy
-usermod -aG docker deploy
+# 2. Diretório do stack — só o .env de produção mora aqui, não o código
+mkdir -p /opt/mage-craft
 
-# 3. Diretório do stack — só o compose e o .env moram aqui, não o código
-mkdir -p /opt/mage-craft && chown deploy:deploy /opt/mage-craft
-
-# 4. .env de produção (o mesmo do deploy manual)
-sudo -u deploy tee /opt/mage-craft/.env >/dev/null <<EOF
+# 3. .env de produção — os segredos da aplicação vivem só aqui, nunca no GitHub
 JWT_SECRET=$(openssl rand -hex 32)
-MATCH_INGEST_API_KEY=$(openssl rand -hex 32)
+MATCH_KEY=$(openssl rand -hex 32)
+cat > /opt/mage-craft/.env <<EOF
+JWT_SECRET=${JWT_SECRET}
+MATCH_INGEST_API_KEY=${MATCH_KEY}
 CLIENT_PORT=8080
 PUBLIC_ORIGIN=http://SEU.IP.AQUI:8080
 EOF
 chmod 600 /opt/mage-craft/.env
 ```
 
-Chave SSH só para o deploy, gerada **na sua máquina** (a privada nunca toca a VPS):
+### Registrar o runner (uma vez)
+
+Usuário dedicado, sem sudo, só no grupo `docker` — o mesmo alcance que o deploy
+manual já tinha, nada mais:
 
 ```bash
-ssh-keygen -t ed25519 -f ~/.ssh/mage-craft-deploy -C "github-actions" -N ""
-ssh-copy-id -i ~/.ssh/mage-craft-deploy.pub deploy@SEU.IP
-# Fingerprint do host, para o Actions não confiar cegamente no primeiro contato:
-ssh-keyscan -H SEU.IP
+adduser --disabled-password --gecos "" mage-craft-runner
+usermod -aG docker mage-craft-runner
+
+# The deploy job runs as this user, so it — not root, not a "deploy" account —
+# is who needs to read the secrets. Skipping this is a silent 403: `docker
+# compose` fails with "open /opt/mage-craft/.env: permission denied" the first
+# time the pipeline actually runs, which is a worse place to learn about it.
+chown mage-craft-runner:mage-craft-runner /opt/mage-craft/.env
+chmod 600 /opt/mage-craft/.env
 ```
 
-### Secrets no GitHub
+Baixe e extraia o runner como esse usuário (troque a versão pela mais recente
+em `github.com/actions/runner/releases` — o asset é `linux-x64`, não `amd64`):
 
-`Settings → Secrets and variables → Actions` (ou no environment `production`):
+```bash
+sudo -u mage-craft-runner mkdir -p /home/mage-craft-runner/actions-runner
+cd /home/mage-craft-runner/actions-runner
+VER=2.336.0
+sudo -u mage-craft-runner curl -sL -o runner.tar.gz \
+  "https://github.com/actions/runner/releases/download/v${VER}/actions-runner-linux-x64-${VER}.tar.gz"
+sudo -u mage-craft-runner tar xzf runner.tar.gz && rm runner.tar.gz
+```
 
-| Secret | Valor | Obrigatório |
-| --- | --- | --- |
-| `VPS_HOST` | IP da VPS | sim |
-| `VPS_USER` | `deploy` | sim |
-| `VPS_SSH_KEY` | conteúdo de `~/.ssh/mage-craft-deploy` (a **privada**, inteira) | sim |
-| `VPS_SSH_HOST_KEY` | saída do `ssh-keyscan -H SEU.IP` | recomendado |
-| `VPS_PORT` | porta SSH, se não for 22 | não |
+Um token de registro (válido por 1h, minerado do lado da sua máquina com `gh`
+autenticado — não é um secret de longa duração):
 
-Sem `VPS_SSH_HOST_KEY` o job cai em `ssh-keyscan` na hora e aceita qualquer
-host que responda — funciona, mas é exatamente a brecha que a chave fixada
-fecha.
+```bash
+gh api -X POST repos/niltoncalegari/mage-craft/actions/runners/registration-token --jq .token
+```
 
-Os segredos da aplicação (`JWT_SECRET`, `MATCH_INGEST_API_KEY`) **não** vão para
-o GitHub: eles vivem só no `/opt/mage-craft/.env` da VPS. A pipeline nunca os lê.
+Configure e suba como serviço systemd:
+
+```bash
+sudo -u mage-craft-runner ./config.sh --unattended \
+  --url https://github.com/niltoncalegari/mage-craft \
+  --token <token-do-comando-acima> \
+  --name mage-craft-vps \
+  --work _work \
+  --labels mage-craft
+./svc.sh install mage-craft-runner
+./svc.sh start
+```
+
+Confirma em `Settings → Actions → Runners` no repositório, ou:
+
+```bash
+gh api repos/niltoncalegari/mage-craft/actions/runners --jq '.runners[]|{name,status,busy}'
+```
 
 ### Pacotes públicos
 
