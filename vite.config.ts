@@ -8,6 +8,9 @@ export default defineConfig({
       // Same-origin `/api` in dev too, mirroring the Nginx proxy used in
       // production (Dockerfile + nginx.conf) — see src/net/ApiClient.ts.
       '/api': { target: 'http://localhost:4000', changeOrigin: true },
+      // Likewise for the game server's WebSocket, so the client can resolve one
+      // same-origin URL in dev and in production instead of guessing a port.
+      '/ws': { target: 'ws://localhost:8080', ws: true },
     },
   },
   build: {

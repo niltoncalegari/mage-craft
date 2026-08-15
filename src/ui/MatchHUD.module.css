@@ -44,9 +44,36 @@
   text-align: right;
 }
 
+/* Nick and its You/Enemy tag share a row; the tag never squeezes the nick out. */
+.sideHead {
+  align-items: baseline;
+  display: flex;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.sideRight .sideHead {
+  flex-direction: row-reverse;
+}
+
 .sideLabel {
   font-size: 13px;
   font-weight: 900;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Deliberately quiet: with a real nick above the meter, this only disambiguates. */
+.sideRole {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  opacity: 0.6;
+  text-transform: uppercase;
 }
 
 .coreMeter {

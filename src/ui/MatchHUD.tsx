@@ -27,6 +27,13 @@ export interface MatchHudDeps {
   isSpectating: () => boolean;
   /** Which half of the arena the local commander's own side stands on. */
   getMySide: () => 'left' | 'right';
+  /**
+   * The nick commanding a side, or null when nobody named it. Asked every frame
+   * rather than passed once: a room's roster keeps arriving during the match
+   * (a claimed bot seat changes hands mid-round), so a name captured at
+   * construction would go stale.
+   */
+  getSideName: (team: Team) => string | null;
 }
 
 interface CardRefs {
@@ -38,7 +45,10 @@ interface CardRefs {
 }
 
 interface SideRefs {
+  /** The commander's nick, or the generic word when the match never named them. */
   label: HTMLElement;
+  /** "You"/"Enemy" tag beside the nick — with two nicks up there, whose is whose. */
+  role: HTMLElement;
   coreFill: HTMLElement;
   coreText: HTMLElement;
   towers: HTMLElement;
@@ -93,7 +103,10 @@ function remainingSeconds(state: MatchState): number {
 function SideView({ refs, mirrored }: { refs: SideRefs; mirrored: boolean }): JSX.Element {
   return (
     <div class={`${styles.side} ${mirrored ? styles.sideRight : ''}`}>
-      <span class={styles.sideLabel} ref={keep(refs, 'label')} />
+      <div class={styles.sideHead}>
+        <span class={styles.sideLabel} ref={keep(refs, 'label')} />
+        <span class={styles.sideRole} ref={keep(refs, 'role')} />
+      </div>
       <div class={styles.coreMeter}>
         <div class={styles.coreFill} ref={keep(refs, 'coreFill')} />
         <span class={styles.coreText} ref={keep(refs, 'coreText')} />
@@ -240,8 +253,13 @@ export class MatchHUD implements GameRenderer {
     const core = structures.find((s) => s.kind === 'core');
     const towers = structures.filter((s) => s.kind === 'tower');
 
-    refs.label.textContent = team === Team.Player ? 'You' : 'Opponent';
+    // The nick is the headline; the generic word only stands in when the match
+    // never carried one (a bare local session, or a room state that hasn't
+    // landed yet — the next frame replaces it as soon as one does).
+    const mine = team === Team.Player;
+    refs.label.textContent = this.deps.getSideName(team) ?? (mine ? 'You' : 'Opponent');
     refs.label.style.color = teamInk(team);
+    refs.role.textContent = mine ? 'You' : 'Enemy';
 
     const fraction = core ? clamp01(core.health / Math.max(1, core.maxHealth)) : 0;
     refs.coreFill.style.width = `${Math.round(fraction * 100)}%`;

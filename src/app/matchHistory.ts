@@ -4,8 +4,8 @@
  * The server's `MatchLog` only ever saw offline practice runs, and only for
  * signed-in accounts — so "which comps do I actually win with" had no data
  * behind it at all. This store is written at the end of every match, ranked or
- * practice, guest or account, which makes the answer available immediately;
- * the account API mirrors it later for cross-device history.
+ * practice, which makes the answer available immediately even when the report
+ * to the account API fails; that API mirrors it for cross-device history.
  *
  * Capped as a ring buffer: the questions this answers are about recent form,
  * and unbounded localStorage growth is how a save file becomes a bug report.

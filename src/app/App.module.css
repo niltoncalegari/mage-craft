@@ -147,7 +147,27 @@
   color: var(--muted);
   font-size: 14px;
   font-weight: 600;
+  /* These run two and three lines wide on most panels; the default leading
+     packed them tight enough to read as one block. */
+  line-height: 1.5;
   margin: 0;
+}
+
+/*
+ * Vertical rhythm for a panel's own children. `.panelTitle`, `.panelHint` and
+ * `.form` all carry `margin: 0` so they can be nested anywhere without fighting
+ * their container — which left every standalone panel (login, practice, create
+ * room) rendering its title, its blurb and its first field as one unbroken run,
+ * with the form's first label touching whatever sat above it. Scoped to direct
+ * children so the composed layouts (`.panelHeader`, the builders) are untouched.
+ */
+.panel > .panelTitle {
+  margin-bottom: 10px;
+}
+
+.panel > .form,
+.panel > .toolbar {
+  margin-top: 16px;
 }
 
 /* ---- Buttons ---- */

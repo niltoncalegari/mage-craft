@@ -1,10 +1,16 @@
 import type { JSX } from 'preact';
 import styles from '../App.module.css';
 
+/**
+ * The front door. There is one way past it — an account (see ../auth) — so the
+ * only other button here is the firing range, and that one is a dev surface:
+ * `import.meta.env.DEV` keeps it out of the production bundle's UI entirely.
+ */
 export function TitleScreen(props: {
   onEnter(): void;
-  onPractice(): void;
   onOpenRange(): void;
+  /** Whether to offer the dev-only firing range. */
+  showRange: boolean;
 }): JSX.Element {
   return (
     <div class={styles.titleScreen}>
@@ -17,13 +23,11 @@ export function TitleScreen(props: {
         <button type="button" class={`${styles.btn} ${styles.btnTeal}`} onClick={props.onEnter}>
           Enter Hall
         </button>
-        <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onPractice}>
-          Quick Practice
-        </button>
-        {/* Dev surface: the whole roster firing at a wall, for judging spell VFX. */}
-        <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onOpenRange}>
-          Firing Range
-        </button>
+        {props.showRange ? (
+          <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onOpenRange}>
+            Firing Range
+          </button>
+        ) : null}
       </div>
     </div>
   );

@@ -1,16 +1,17 @@
-# Full stack for a single host (see DEPLOY.md).
+# Production stack for the VPS. Pulls prebuilt images instead of building.
 #
-# Only `client` publishes a port: Nginx is the one entrypoint and proxies /api
-# to the accounts service and /ws to the game server, so the browser talks to a
-# single origin and neither backend has to be reachable from the internet.
+# docker-compose.yml builds from source, which needs the repo, a toolchain and
+# ~2 GB of RAM on the host — the part most likely to fall over on a small VPS.
+# Here CI does the building (.github/workflows/deploy.yml) and the host only
+# pulls, so a deploy is a download and a restart.
 #
-# Copy .env.example to .env and set the two secrets before the first `up` —
-# JWT_SECRET and MATCH_INGEST_API_KEY are declared with `:?` so a missing value
-# fails the deploy rather than silently shipping a known default.
+# This is the only file the VPS needs besides its own .env; there is no clone of
+# the source on the server. The deploy job copies it to /opt/mage-craft.
+#
+#   IMAGE_TAG pins the exact commit being run. The deploy job always sets it, so
+#   a rollback is `IMAGE_TAG=<old-sha> docker compose -f ... up -d`.
 
 x-logging: &default-logging
-  # The json-file driver is unbounded by default, which is the classic way a
-  # VPS runs out of disk a month after a deploy nobody has touched since.
   driver: json-file
   options:
     max-size: '10m'
@@ -30,7 +31,7 @@ services:
       retries: 5
 
   api:
-    build: ./api
+    image: ${REGISTRY:-ghcr.io/niltoncalegari/mage-craft}/api:${IMAGE_TAG:-latest}
     restart: unless-stopped
     logging: *default-logging
     depends_on:
@@ -43,9 +44,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       MATCH_INGEST_API_KEY: ${MATCH_INGEST_API_KEY:?set MATCH_INGEST_API_KEY in .env}
-      # Same-origin in this topology, so CORS never actually fires. Set it
-      # anyway: it is the guard if the API is ever published directly.
-      CORS_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost:8080}
+      CORS_ORIGIN: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in .env}
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
       interval: 15s
@@ -54,10 +53,7 @@ services:
       start_period: 20s
 
   gameserver:
-    build:
-      # Repo root: the server bundles the shared sim/ and public/maps/.
-      context: .
-      dockerfile: server/Dockerfile
+    image: ${REGISTRY:-ghcr.io/niltoncalegari/mage-craft}/gameserver:${IMAGE_TAG:-latest}
     restart: unless-stopped
     logging: *default-logging
     environment:
@@ -71,7 +67,7 @@ services:
       start_period: 15s
 
   client:
-    build: .
+    image: ${REGISTRY:-ghcr.io/niltoncalegari/mage-craft}/client:${IMAGE_TAG:-latest}
     restart: unless-stopped
     logging: *default-logging
     depends_on:

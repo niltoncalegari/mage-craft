@@ -1,8 +1,7 @@
 /**
  * Thin fetch wrapper for the accounts/ranking/match-log service (`api/`,
  * see docs/accounts-ranking-dashboard.md). The only place in the client that
- * talks to that backend — everything else (offline sim, local guest
- * accounts) stays untouched.
+ * talks to that backend — the offline sim stays untouched.
  */
 
 // Empty default = same-origin relative fetch (`/api/...`), proxied to the
