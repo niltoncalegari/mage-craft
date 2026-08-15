@@ -61,4 +61,46 @@ describe('POST /api/matches', () => {
       .send(samplePayload({ difficulty: 'nightmare' }));
     expect(res.status).toBe(400);
   });
+
+  describe('Elo rating', () => {
+    it('moves a pvp win against an even opponent up by the expected amount', async () => {
+      const { token } = await registerUser(app);
+      const res = await request(app)
+        .post('/api/matches')
+        .set('Authorization', `Bearer ${token}`)
+        .send(samplePayload({ mode: 'pvp', won: true, opponentRating: 1200 }));
+      expect(res.status).toBe(201);
+      expect(res.body.rating).toBe(1216); // starts at 1200, +K/2 for an even win
+    });
+
+    it('moves a pvp loss down', async () => {
+      const { token } = await registerUser(app);
+      const res = await request(app)
+        .post('/api/matches')
+        .set('Authorization', `Bearer ${token}`)
+        .send(samplePayload({ mode: 'pvp', won: false, opponentRating: 1200 }));
+      expect(res.status).toBe(201);
+      expect(res.body.rating).toBe(1184);
+    });
+
+    it('never touches rating for sp-vs-ai matches, even with opponentRating sent', async () => {
+      const { token } = await registerUser(app);
+      const res = await request(app)
+        .post('/api/matches')
+        .set('Authorization', `Bearer ${token}`)
+        .send(samplePayload({ mode: 'sp-vs-ai', opponentRating: 1200 }));
+      expect(res.status).toBe(201);
+      expect(res.body.rating).toBeUndefined();
+    });
+
+    it('never touches rating for a pvp match against a bot (no opponentRating sent)', async () => {
+      const { token } = await registerUser(app);
+      const res = await request(app)
+        .post('/api/matches')
+        .set('Authorization', `Bearer ${token}`)
+        .send(samplePayload({ mode: 'pvp' }));
+      expect(res.status).toBe(201);
+      expect(res.body.rating).toBeUndefined();
+    });
+  });
 });

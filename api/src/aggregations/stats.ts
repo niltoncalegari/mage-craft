@@ -10,6 +10,7 @@ export interface UserSummary {
   deaths: number;
   kdr: number;
   favoriteElement: string | null;
+  rating: number;
 }
 
 export interface ElementStat {
@@ -28,6 +29,7 @@ export interface RankingEntry {
   kills: number;
   deaths: number;
   kdr: number;
+  rating: number;
 }
 
 /** Kills-per-death ratio; a player with zero deaths is ranked by raw kills. */
@@ -74,9 +76,11 @@ export async function getUserSummary(userId: string): Promise<UserSummary> {
 
   const elements = await getUserElementStats(userId);
   const favoriteElement = elements[0]?.elementId ?? null;
+  const user = await User.findById(userId, { rating: 1 }).lean();
+  const rating = user?.rating ?? 1200;
 
   if (!totals) {
-    return { matchesPlayed: 0, wins: 0, losses: 0, kills: 0, deaths: 0, kdr: 0, favoriteElement };
+    return { matchesPlayed: 0, wins: 0, losses: 0, kills: 0, deaths: 0, kdr: 0, favoriteElement, rating };
   }
 
   return {
@@ -87,6 +91,7 @@ export async function getUserSummary(userId: string): Promise<UserSummary> {
     deaths: totals.deaths,
     kdr: computeKdr(totals.kills, totals.deaths),
     favoriteElement,
+    rating,
   };
 }
 
@@ -161,7 +166,11 @@ export async function getUserCardStats(userId: string): Promise<CardStat[]> {
   return rows.map((r) => ({ cardId: r._id, casts: r.casts }));
 }
 
-export async function getRanking(options: { skip: number; limit: number; sort: 'wins' | 'kdr' }): Promise<RankingEntry[]> {
+export async function getRanking(options: {
+  skip: number;
+  limit: number;
+  sort: 'rating' | 'wins' | 'kdr';
+}): Promise<RankingEntry[]> {
   const rows = await MatchLog.aggregate<{
     _id: Types.ObjectId;
     wins: number;
@@ -180,19 +189,24 @@ export async function getRanking(options: { skip: number; limit: number; sort: '
     },
   ]);
 
-  const users = await User.find({ _id: { $in: rows.map((r) => r._id) } }, { username: 1 }).lean();
-  const usernameById = new Map(users.map((u) => [u._id.toString(), u.username]));
+  const users = await User.find({ _id: { $in: rows.map((r) => r._id) } }, { username: 1, rating: 1 }).lean();
+  const userById = new Map(users.map((u) => [u._id.toString(), u]));
 
   const entries: RankingEntry[] = rows.map((r) => ({
     userId: r._id.toString(),
-    username: usernameById.get(r._id.toString()) ?? 'unknown',
+    username: userById.get(r._id.toString())?.username ?? 'unknown',
     wins: r.wins,
     losses: r.losses,
     kills: r.kills,
     deaths: r.deaths,
     kdr: computeKdr(r.kills, r.deaths),
+    rating: userById.get(r._id.toString())?.rating ?? 1200,
   }));
 
-  entries.sort((a, b) => (options.sort === 'kdr' ? b.kdr - a.kdr : b.wins - a.wins));
+  entries.sort((a, b) => {
+    if (options.sort === 'kdr') return b.kdr - a.kdr;
+    if (options.sort === 'wins') return b.wins - a.wins;
+    return b.rating - a.rating;
+  });
   return entries.slice(options.skip, options.skip + options.limit);
 }

@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
+import { applyEloDelta, computeEloDelta } from '../aggregations/elo.js';
 import { requireAuthOrApiKey } from '../middleware/apiKey.js';
 import { MatchLog } from '../models/MatchLog.js';
+import { User } from '../models/User.js';
 import type { AuthedRequest } from '../types.js';
 
 export const matchesRouter = Router();
@@ -128,6 +130,10 @@ matchesRouter.post('/', requireAuthOrApiKey, async (req: AuthedRequest, res) => 
     res.status(400).json({ error: 'structuresDestroyed must be a non-negative number' });
     return;
   }
+  if (body.opponentRating !== undefined && !isNonNegativeNumber(body.opponentRating)) {
+    res.status(400).json({ error: 'opponentRating must be a non-negative number' });
+    return;
+  }
 
   const match = await MatchLog.create({
     userId,
@@ -146,5 +152,20 @@ matchesRouter.post('/', requireAuthOrApiKey, async (req: AuthedRequest, res) => 
     structuresDestroyed: body.structuresDestroyed ?? 0,
   });
 
-  res.status(201).json({ id: match._id.toString() });
+  // Rating only moves for real PvP against another rated account — never for
+  // sp-vs-ai/practice, and never when the reporting client omits an opponent
+  // rating (a bot opponent has none). The server owns the arithmetic; it only
+  // trusts the opponent's rating value, same as it already trusts kills/deaths.
+  let rating: number | undefined;
+  if (body.mode === 'pvp' && typeof body.opponentRating === 'number') {
+    const user = await User.findById(userId, { rating: 1 });
+    if (user) {
+      const delta = computeEloDelta(user.rating, body.opponentRating, body.won);
+      rating = applyEloDelta(user.rating, delta);
+      user.rating = rating;
+      await user.save();
+    }
+  }
+
+  res.status(201).json({ id: match._id.toString(), rating });
 });

@@ -24,14 +24,41 @@ async function reportMatch(token: string, won: boolean, kills: number, deaths: n
 }
 
 describe('GET /api/ranking', () => {
-  it('is accessible without auth and ranks players by wins by default', async () => {
+  it('is accessible without auth and ranks players by rating by default', async () => {
+    const top = await registerUser(app);
+    const bottom = await registerUser(app);
+    await request(app)
+      .post('/api/matches')
+      .set('Authorization', `Bearer ${top.token}`)
+      .send({
+        mode: 'pvp',
+        won: true,
+        kills: 5,
+        deaths: 1,
+        score: 100,
+        difficulty: 'normal',
+        timeSeconds: 60,
+        livesSpent: 0,
+        map: 'arena1.json',
+        elements: [],
+        opponentRating: 1200,
+      });
+    await reportMatch(bottom.token, true, 1, 3);
+
+    const res = await request(app).get('/api/ranking');
+    expect(res.status).toBe(200);
+    expect(res.body.entries[0].username).toBe(top.username);
+    expect(res.body.entries[0].rating).toBeGreaterThan(res.body.entries[1].rating);
+  });
+
+  it('ranks by wins when sort=wins', async () => {
     const top = await registerUser(app);
     const bottom = await registerUser(app);
     await reportMatch(top.token, true, 5, 1);
     await reportMatch(top.token, true, 5, 1);
     await reportMatch(bottom.token, true, 1, 3);
 
-    const res = await request(app).get('/api/ranking');
+    const res = await request(app).get('/api/ranking?sort=wins');
     expect(res.status).toBe(200);
     expect(res.body.entries[0].username).toBe(top.username);
     expect(res.body.entries[0].wins).toBe(2);
