@@ -9,8 +9,7 @@ import styles from '../App.module.css';
  * The landing surface. A siege is decided by the squad you brought and the
  * spells you spend, not by which room you joined — so the shell offers exactly
  * three things: play against someone, play against an AI, or go change what you
- * bring. Custom rooms still exist, one link down, for people who want to pick
- * their opponent.
+ * bring. There is no room to create or browse — matchmaking is the only way in.
  */
 export function HomeScreen(props: {
   user: UserProfile;
@@ -19,7 +18,6 @@ export function HomeScreen(props: {
   onPractice(): void;
   onOpenDashboard(): void;
   onOpenRanking(): void;
-  onCustomMatch(): void;
   onSignOut(): void;
 }): JSX.Element {
   const [serverStats, setServerStats] = useState<UserSummary | null>(null);
@@ -116,13 +114,6 @@ export function HomeScreen(props: {
             <button type="button" class={styles.actionCard} onClick={props.onOpenDashboard}>
               <h3>Dashboard</h3>
               <p>Build your squad and deck, and read what your past matches say about them.</p>
-            </button>
-          </div>
-
-          <div class={styles.footerBar} style={{ marginTop: 16 }}>
-            <p class={styles.panelHint}>Want to pick your opponent, team sizes or spectate?</p>
-            <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onCustomMatch}>
-              Custom match
             </button>
           </div>
         </div>

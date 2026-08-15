@@ -12,17 +12,7 @@ import { clearSession, getSession, restoreSession, type UserProfile } from './au
 import { loadLoadout } from './loadout';
 import { matchTeamNames } from './matchNames';
 import { recordMatch } from './matchHistory';
-import {
-  createLocalRoom,
-  joinLocalRoom,
-  listLocalRooms,
-  rememberRoom,
-  roomFromServerState,
-  summariesFromServer,
-  type RoomDetail,
-  type RoomSummary,
-} from './roomStore';
-import { CreateRoomScreen } from './screens/CreateRoomScreen';
+import { rememberRoom, roomFromServerState, type RoomDetail } from './roomStore';
 import { DashboardScreen } from './screens/DashboardScreen';
 import { HomeScreen } from './screens/HomeScreen';
 import { LoginScreen } from './screens/LoginScreen';
@@ -30,7 +20,6 @@ import { PracticeScreen } from './screens/PracticeScreen';
 import { QueueScreen } from './screens/QueueScreen';
 import { RangeScreen } from './screens/RangeScreen';
 import { RankingScreen } from './screens/RankingScreen';
-import { RoomBrowserScreen } from './screens/RoomBrowserScreen';
 import { RoomLobbyScreen } from './screens/RoomLobbyScreen';
 import { TitleScreen } from './screens/TitleScreen';
 
@@ -42,9 +31,8 @@ export type AppScreen =
   /** Squad, deck and match history — everything you bring and everything you learned. */
   | 'dashboard'
   | 'practice'
-  | 'rooms'
-  | 'createRoom'
   | 'queue'
+  /** Rematch/round-transition seating for a queued match's session — never a pre-match room browser. */
   | 'lobby'
   | 'onlineMatch'
   | 'ranking'
@@ -102,11 +90,12 @@ function AppShell(props: AppProps): JSX.Element {
   const userRef = useRef<UserProfile | null>(user);
   userRef.current = user;
   const [room, setRoom] = useState<RoomDetail | null>(null);
-  const [rooms, setRooms] = useState<RoomSummary[]>(() => listLocalRooms());
-  const [selectedElement, setSelectedElement] = useState<ElementId>(props.selectedElement);
   const [netError, setNetError] = useState<string | null>(null);
-  const [online, setOnline] = useState(false);
-  const [isHost, setIsHost] = useState(false);
+  const [, setOnline] = useState(false);
+  // Only room creation ever made the local player a host, and that flow is
+  // gone — matchmaking never seats one (GDD §4). Kept as inert state rather
+  // than torn out, since RoomLobbyScreen still reads room.isHost.
+  const [isHost] = useState(false);
   const [spectating, setSpectating] = useState(false);
   const [claimNotice, setClaimNotice] = useState<string | null>(null);
   const [queueStatus, setQueueStatus] = useState<QueueStatusMsg | null>(null);
@@ -145,7 +134,6 @@ function AppShell(props: AppProps): JSX.Element {
   };
 
   const chooseElement = (element: ElementId): void => {
-    setSelectedElement(element);
     props.onSelectElement(element);
   };
 
@@ -174,10 +162,9 @@ function AppShell(props: AppProps): JSX.Element {
           setScreen('lobby');
         }
       },
-      onRoomList: (msg) => {
-        setRooms(summariesFromServer(msg.rooms));
-        setOnline(true);
-      },
+      // Room browsing no longer exists client-side; the handler stays only
+      // because LobbyBridgeHandlers requires one for every server message.
+      onRoomList: () => {},
       onMatchStart: () => {
         metaRef.current.awaitingResultDismiss = false;
         setScreen('onlineMatch');
@@ -274,16 +261,15 @@ function AppShell(props: AppProps): JSX.Element {
           localTeam: metaRef.current.localTeam,
           mapData,
           getTeamName: (wireTeam) => teamNamesRef.current[wireTeam] ?? null,
-          onLeaveMatch: (reason) => {
+          onLeaveMatch: () => {
+            // Matchmaking never seats a host (GDD §4: "sem lobby, sem
+            // ready-up, sem código"), so the round-end rematch lobby has no
+            // one who can click Start — every match end, not just an
+            // explicit quit, lands back home. Playing again means requeueing.
             metaRef.current.awaitingResultDismiss = false;
             onlineMatchRef.current?.dispose();
             onlineMatchRef.current = null;
-            if (reason === 'roundEnd') {
-              setScreen('lobby');
-            } else {
-              setScreen('rooms');
-              void refreshRooms();
-            }
+            setScreen('home');
           },
         });
       })
@@ -320,20 +306,6 @@ function AppShell(props: AppProps): JSX.Element {
     setScreen('title');
   };
 
-  const refreshRooms = async (): Promise<void> => {
-    setNetError(null);
-    try {
-      const bridge = getBridge();
-      await bridge.connect();
-      setOnline(true);
-      bridge.net.listRooms();
-    } catch (err) {
-      setNetError(err instanceof Error ? err.message : 'Could not reach server');
-      setRooms(listLocalRooms());
-      setOnline(false);
-    }
-  };
-
   /**
    * The one-button path into a match (GDD §4): the server pairs by arrival and
    * builds the room itself, so there is no code to share and nothing to ready up.
@@ -366,85 +338,6 @@ function AppShell(props: AppProps): JSX.Element {
     setScreen('home');
   };
 
-  const createOnlineRoom = async (opts: {
-    name: string;
-    teamSize: number;
-    fillBots: boolean;
-    botDifficulty: string;
-    element: ElementId;
-    hostName: string;
-  }): Promise<void> => {
-    setNetError(null);
-    metaRef.current.roomName = opts.name;
-    setIsHost(true);
-    metaRef.current.isHost = true;
-    try {
-      const bridge = getBridge();
-      await bridge.connect();
-      setOnline(true);
-      sendLoadout(bridge);
-      const createdP = bridge.waitForRoomState((m) => m.slots.length === 0 || m.state === 'lobby');
-      bridge.net.createRoom(opts.teamSize, opts.fillBots, opts.botDifficulty);
-      const created = await createdP;
-      const joinedP = bridge.waitForRoomState((m) => m.slots.some((s) => s.playerId === bridge.id));
-      bridge.net.joinRoom(created.roomId, opts.hostName);
-      bridge.net.selectTeam(0);
-      bridge.net.selectElement(opts.element);
-      await joinedP;
-      setScreen('lobby');
-    } catch (err) {
-      setNetError(err instanceof Error ? err.message : 'Create failed');
-      const local = createLocalRoom({
-        name: opts.name,
-        teamSize: opts.teamSize,
-        hostName: opts.hostName,
-        element: opts.element,
-        fillBots: opts.fillBots,
-      });
-      setRoom(local);
-      setIsHost(true);
-      setScreen('lobby');
-    }
-  };
-
-  const joinOnlineRoom = async (roomId: string, playerName: string, element: ElementId): Promise<void> => {
-    setNetError(null);
-    const code = roomId.trim().toUpperCase();
-    if (code.startsWith('HALL-')) {
-      setRoom(joinLocalRoom(code, playerName, element));
-      setIsHost(false);
-      setScreen('lobby');
-      return;
-    }
-    setIsHost(false);
-    metaRef.current.isHost = false;
-    metaRef.current.roomName = `Hall ${code}`;
-    try {
-      const bridge = getBridge();
-      await bridge.connect();
-      setOnline(true);
-      sendLoadout(bridge);
-      const joinedP = bridge.waitForRoomState((m) => m.roomId.toUpperCase() === code);
-      bridge.net.joinRoom(code, playerName);
-      const state = await joinedP;
-      if (state.state === 'lobby' && state.youRole !== 'spectator') {
-        try {
-          bridge.net.selectTeam(1);
-          bridge.net.selectElement(element);
-        } catch {
-          /* team may be full */
-        }
-      }
-      setSpectating(state.youRole === 'spectator' || state.state === 'in_progress');
-      setScreen(state.state === 'in_progress' ? 'onlineMatch' : 'lobby');
-    } catch (err) {
-      setNetError(err instanceof Error ? err.message : 'Join failed');
-      setRoom(joinLocalRoom(code, playerName, element));
-      setIsHost(false);
-      setScreen('lobby');
-    }
-  };
-
   return (
     <>
       <div class={styles.portalHost} ref={portalRef} />
@@ -466,10 +359,6 @@ function AppShell(props: AppProps): JSX.Element {
             onPractice={() => setScreen('practice')}
             onOpenDashboard={() => setScreen('dashboard')}
             onOpenRanking={() => setScreen('ranking')}
-            onCustomMatch={() => {
-              void refreshRooms();
-              setScreen('rooms');
-            }}
             onSignOut={signOut}
           />
         ) : null}
@@ -482,31 +371,6 @@ function AppShell(props: AppProps): JSX.Element {
           <QueueScreen status={queueStatus} found={queueFound} netError={netError} onCancel={leaveQueue} />
         ) : null}
         {screen === 'ranking' && user ? <RankingScreen onBack={() => setScreen('home')} /> : null}
-        {screen === 'rooms' && user ? (
-          <RoomBrowserScreen
-            rooms={rooms}
-            online={online}
-            netError={netError}
-            onBack={() => setScreen('home')}
-            onCreate={() => setScreen('createRoom')}
-            onJoin={(id) => void joinOnlineRoom(id, user.name, selectedElement)}
-            onRefresh={() => void refreshRooms()}
-          />
-        ) : null}
-        {screen === 'createRoom' && user ? (
-          <CreateRoomScreen
-            hostName={user.name}
-            netError={netError}
-            onBack={() => setScreen('home')}
-            onCreated={(opts) =>
-              void createOnlineRoom({
-                ...opts,
-                element: selectedElement,
-                hostName: user.name,
-              })
-            }
-          />
-        ) : null}
         {screen === 'lobby' && user && room ? (
           <RoomLobbyScreen
             room={room}
@@ -516,8 +380,7 @@ function AppShell(props: AppProps): JSX.Element {
             onLeave={() => {
               setRoom(null);
               setClaimNotice(null);
-              setScreen('rooms');
-              void refreshRooms();
+              setScreen('home');
             }}
             onSelectElement={(el) => {
               chooseElement(el);
