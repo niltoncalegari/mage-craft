@@ -174,6 +174,8 @@ export interface Balance {
     readonly suddenDeathDuration: number;
     readonly spellCastFxDuration: number;
     readonly spellGlobalCooldown: number;
+    /** Health fraction below which `marked` starts paying out. */
+    readonly executeThreshold: number;
     readonly obstacleTopHeight: Readonly<Record<string, number>>;
   };
   readonly structures: {

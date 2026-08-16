@@ -29,6 +29,7 @@ export type SpellId =
   | 'rejuvenating_breeze'
   | 'consecrated_ground'
   | 'blood_frenzy'
+  | 'executioners_mark'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -72,6 +73,7 @@ export const ALL_SPELLS: readonly SpellId[] = [
   'overload_field',
   'meteor_shower',
   'blood_frenzy',
+  'executioners_mark',
   'plague',
   'sticky_swamp',
   'entangling_roots',

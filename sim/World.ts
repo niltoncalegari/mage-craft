@@ -15,6 +15,7 @@ import {
   CHARGE_TIME,
   CORE_HEALTH,
   CORE_RADIUS,
+  EXECUTE_THRESHOLD,
   HEAL_INTERRUPT_DURATION,
   HEAL_INTERRUPT_KNOCKBACK,
   HIT_STUN,
@@ -61,6 +62,7 @@ import {
   damageDealtMultiplier,
   damageTakenMultiplier,
   isEffectKind,
+  magnitudeOf,
   moveSpeedMultiplier,
   removeEffect,
   tickEffects,
@@ -1331,7 +1333,17 @@ export class World {
     // `mages`, so both come back unmultiplied.
     const attacker = opts.attackerId ? this.mages.get(opts.attackerId) : undefined;
     const dealt = attacker ? damageDealtMultiplier(attacker) : 1;
-    let remaining = amount * dealt * damageTakenMultiplier(m);
+    // An execution mark is the one multiplier that asks about the *state* of the
+    // target rather than about an effect on it, so it cannot live in
+    // `damageTakenMultiplier` with the others — that function is handed a
+    // carrier and has no health to read. Measured before this hit lands: a mark
+    // that counted the damage it is currently applying would fire on the blow
+    // that brings the target under the line rather than on the one after, which
+    // is a finisher that finishes what was not yet dying.
+    const mark = magnitudeOf(m, 'marked');
+    const executing = mark > 0 && m.health <= m.maxHealth * EXECUTE_THRESHOLD;
+
+    let remaining = amount * dealt * damageTakenMultiplier(m) * (executing ? 1 + mark : 1);
     if (!opts.bypassShield) remaining = absorbWithShield(m, remaining);
     m.health -= remaining;
 

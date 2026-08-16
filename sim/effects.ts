@@ -55,7 +55,13 @@ export type EffectKind =
   /** Damage taken down by `magnitude` (0.3 = 30% less). Vulnerable's mirror. */
   | 'fortify'
   /** Damage *dealt* up by `magnitude`. Asked of the attacker, not the target. */
-  | 'empower';
+  | 'empower'
+  /**
+   * Marked for execution: `magnitude` more damage taken, but only once the
+   * target is already under {@link EXECUTE_THRESHOLD} of its health. Inert
+   * against anything healthy, which is the card's whole design.
+   */
+  | 'marked';
 
 /**
  * Iteration and wire order. Fixed so the effect list is canonical: a mage
@@ -73,6 +79,7 @@ export const EFFECT_ORDER: readonly EffectKind[] = [
   'vulnerable',
   'fortify',
   'empower',
+  'marked',
   'shield',
 ];
 

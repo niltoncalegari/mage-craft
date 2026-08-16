@@ -57,6 +57,20 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * Two dry ticks and nothing else — the shortest sound in the catalog, and the
+   * only one with no body under it. Everything else here is a swell, a squelch
+   * or an impact; this is a pair of clicks, which is what a card that does no
+   * damage on arrival has earned. When it eventually pays, the payment is heard
+   * as somebody dying, not as this.
+   */
+  executioners_mark: {
+    detune: 0.02,
+    layers: [
+      { kind: 'noise', filter: 'highpass', from: 2600, to: 3400, at: 0, duration: 0.05, gain: 0.04 },
+      { kind: 'noise', filter: 'highpass', from: 2200, to: 2800, at: 0.11, duration: 0.06, gain: 0.032 },
+    ],
+  },
+  /*
    * The one buff that should not sound kind. Bênção, Escudo Arcano and Solo
    * Consagrado are all consonant; this is a squad being wound up, so it is a
    * square snarling upward under a short hard noise — nearer Praga's family

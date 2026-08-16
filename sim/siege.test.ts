@@ -9,6 +9,7 @@ import { damageTakenMultiplier, magnitudeOf, moveSpeedMultiplier } from './effec
 import { defaultSquad } from './cards';
 import {
   CHARGE_TIME,
+  EXECUTE_THRESHOLD,
   HEAL_INTERRUPT_DURATION,
   MANA_MAX,
   MANA_REGEN_INTERVAL,
@@ -371,6 +372,35 @@ describe('spells (GDD §9)', () => {
 
     expect(plain).toBe(20);
     expect(empowered).toBeCloseTo(28, 5);
+  });
+
+  /**
+   * The first card in the game whose value depends on the situation rather than
+   * on the target. Campo de Sobrecarga is worth the same against a full-health
+   * mage and a dying one; this is worth nothing against the first and a great
+   * deal against the second, which is the whole point — a program that writes
+   * `SE vida do inimigo mais ferido ≤ 40% ENTÃO Marca` beats one that fires it
+   * on sight, and until now no card rewarded asking.
+   */
+  it('pays only against a target already below the execute threshold', () => {
+    const w = new World();
+    const healthy = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0));
+    const dying = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0.5));
+
+    w.castSpell(TEAM_A, 'executioners_mark', healthy.position);
+    expect(magnitudeOf(healthy, 'marked')).toBeGreaterThan(0);
+    expect(magnitudeOf(dying, 'marked')).toBeGreaterThan(0);
+
+    // Well above the threshold: the mark is inert and the hit is just a hit.
+    healthy.health = healthy.maxHealth;
+    w.dealDamage(healthy, 10);
+    expect(healthy.maxHealth - healthy.health).toBe(10);
+
+    // Under it: the same 10 lands for half again as much.
+    dying.health = dying.maxHealth * (EXECUTE_THRESHOLD - 0.05);
+    const before = dying.health;
+    w.dealDamage(dying, 10);
+    expect(before - dying.health).toBeCloseTo(15, 5);
   });
 
   it('shields absorb damage before health', () => {

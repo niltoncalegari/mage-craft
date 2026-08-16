@@ -26,6 +26,7 @@ const KNOWN_EFFECTS = new Set([
   'regen',
   'fortify',
   'empower',
+  'marked',
   'interrupt',
   'shield_break',
   'puddle',

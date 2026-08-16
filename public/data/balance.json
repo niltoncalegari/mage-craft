@@ -42,6 +42,7 @@
 
     "spellCastFxDuration": 1,
     "spellGlobalCooldown": 0.75,
+    "executeThreshold": 0.4,
 
     "obstacleTopHeight": {
       "tree": 2.4,
@@ -176,6 +177,7 @@
     "vulnerable": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "fortify": { "stacking": "refresh_strongest", "maxMagnitude": 0.5 },
     "empower": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
+    "marked": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "regen": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "stun": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "root": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
@@ -431,6 +433,16 @@
       "duration": 4,
       "target": "allies",
       "apply": [{ "effect": "empower", "magnitude": 0.4 }]
+    },
+    "executioners_mark": {
+      "name": "Marca do Carrasco",
+      "color": "red",
+      "kind": "curse",
+      "cost": 3,
+      "radius": 3.5,
+      "duration": 6,
+      "target": "enemies",
+      "apply": [{ "effect": "marked", "magnitude": 0.5 }]
     },
     "overload_field": {
       "name": "Campo de Sobrecarga",

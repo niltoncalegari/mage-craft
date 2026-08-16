@@ -237,6 +237,23 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     direction: -1,
   },
   /*
+   * The quietest beat in the catalog, and on purpose. A mark is not an event —
+   * nothing happens when it lands, which is exactly the card's bargain: you pay
+   * three mana now for damage that only exists if the target is already dying.
+   * A loud flash would promise a hit that did not occur.
+   *
+   * So: few motes, pressed down, no ground disc worth the name. It is the one
+   * red card that should read as bookkeeping rather than as violence.
+   */
+  executioners_mark: {
+    shape: 'burst',
+    ring: 0xd62839,
+    zone: 0x3d0a12,
+    motes: [0xff8fa3, 0xd62839, 0x6a040f],
+    moteCount: 14,
+    direction: -1,
+  },
+  /*
    * A burst, and red's only one. The two reds it sits between are a torus that
    * switches an area on and a column that drops rocks on it; this is neither —
    * it is a thing that happens *to the squad standing here*, once, and then

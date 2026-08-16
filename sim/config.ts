@@ -207,6 +207,14 @@ export const SPELL_CAST_FX_DURATION = S.spellCastFxDuration;
  * ticks to a few seconds.
  */
 export const SPELL_GLOBAL_COOLDOWN = S.spellGlobalCooldown;
+/**
+ * Health fraction at or below which an execution mark starts paying (GDD §9).
+ *
+ * A balance number rather than a constant in `effects.ts` because it is the
+ * dial that decides whether Marca do Carrasco is a finisher or a second Campo
+ * de Sobrecarga, and that is a question for tuning, not for code.
+ */
+export const EXECUTE_THRESHOLD = S.executeThreshold;
 
 /** Height of each obstacle type's top, mirroring the client's OBSTACLE_HEIGHT. */
 export const OBSTACLE_TOP_HEIGHT: Readonly<Record<'tree' | 'rock' | 'fort' | 'fence' | 'prop', number>> =
