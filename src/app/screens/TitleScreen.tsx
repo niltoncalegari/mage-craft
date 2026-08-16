@@ -3,13 +3,14 @@ import styles from '../App.module.css';
 
 /**
  * The front door. There is one way past it — an account (see ../auth) — so the
- * only other button here is the firing range, and that one is a dev surface:
- * `import.meta.env.DEV` keeps it out of the production bundle's UI entirely.
+ * only other buttons here are the two ranges, and those are dev surfaces:
+ * `import.meta.env.DEV` keeps them out of the production bundle's UI entirely.
  */
 export function TitleScreen(props: {
   onEnter(): void;
   onOpenRange(): void;
-  /** Whether to offer the dev-only firing range. */
+  onOpenSpellRange(): void;
+  /** Whether to offer the dev-only ranges. */
   showRange: boolean;
 }): JSX.Element {
   return (
@@ -24,9 +25,14 @@ export function TitleScreen(props: {
           Enter Hall
         </button>
         {props.showRange ? (
-          <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onOpenRange}>
-            Firing Range
-          </button>
+          <>
+            <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onOpenRange}>
+              Firing Range
+            </button>
+            <button type="button" class={`${styles.btn} ${styles.btnGhost}`} onClick={props.onOpenSpellRange}>
+              Card Range
+            </button>
+          </>
         ) : null}
       </div>
     </div>

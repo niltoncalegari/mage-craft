@@ -18,6 +18,7 @@ import { LoginScreen } from './screens/LoginScreen';
 import { PracticeScreen } from './screens/PracticeScreen';
 import { QueueScreen } from './screens/QueueScreen';
 import { RangeScreen } from './screens/RangeScreen';
+import { SpellRangeScreen } from './screens/SpellRangeScreen';
 import { RoomLobbyScreen } from './screens/RoomLobbyScreen';
 import { TitleScreen } from './screens/TitleScreen';
 import { useOrientationLock } from './useOrientationLock';
@@ -33,11 +34,13 @@ export type AppScreen =
   | 'lobby'
   | 'onlineMatch'
   /** Dev surface: the whole roster firing at a wall, for judging spell VFX. */
-  | 'range';
+  | 'range'
+  /** Dev surface: every card landing on one spot in turn, for judging cast VFX. */
+  | 'spellRange';
 
 /**
- * The firing range is a tool for tuning VFX, not a game mode — it bypasses the
- * account, the queue and the ranking. Production builds do not offer it.
+ * The two ranges are tools for tuning VFX, not game modes — they bypass the
+ * account, the queue and the ranking. Production builds do not offer them.
  */
 const SHOW_RANGE = import.meta.env.DEV;
 
@@ -248,7 +251,9 @@ function AppShell(props: AppProps): JSX.Element {
    * nothing at all.
    */
   useEffect(() => {
-    if (user || screen === 'title' || screen === 'login' || screen === 'range') return;
+    if (user || screen === 'title' || screen === 'login' || screen === 'range' || screen === 'spellRange') {
+      return;
+    }
     setScreen('title');
   }, [user, screen]);
 
@@ -365,6 +370,7 @@ function AppShell(props: AppProps): JSX.Element {
           <TitleScreen
             onEnter={() => setScreen(user ? 'home' : 'login')}
             onOpenRange={() => setScreen('range')}
+            onOpenSpellRange={() => setScreen('spellRange')}
             showRange={SHOW_RANGE}
           />
         ) : null}
@@ -379,6 +385,9 @@ function AppShell(props: AppProps): JSX.Element {
           />
         ) : null}
         {screen === 'range' && SHOW_RANGE ? <RangeScreen onExit={() => setScreen(user ? 'home' : 'title')} /> : null}
+        {screen === 'spellRange' && SHOW_RANGE ? (
+          <SpellRangeScreen onExit={() => setScreen(user ? 'home' : 'title')} />
+        ) : null}
         {screen === 'practice' && user ? (
           <PracticeScreen token={user.token} playerName={user.name} onExit={() => setScreen('home')} />
         ) : null}
