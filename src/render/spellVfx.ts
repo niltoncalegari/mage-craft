@@ -183,6 +183,21 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
    * damage and casts faster.
    */
   /*
+   * A dome, which makes it Escudo Arcano's sibling rather than Praga's — and
+   * that is the right family. Both are cast over your own squad and both leave
+   * something standing there afterwards; what separates them is colour, not
+   * form. The alternative was a fourth green burst, which would have put it in
+   * the same shape as the card that poisons a crowd.
+   */
+  rejuvenating_breeze: {
+    shape: 'dome',
+    ring: 0xcdefa0,
+    zone: 0x7fc06a,
+    motes: [0xeaffd0, 0xa8e06a, 0x6fb04a],
+    moteCount: 22,
+    direction: 1,
+  },
+  /*
    * The third green card, and the reason it is not a third green burst. Praga
    * and the swamp are already two bursts separated by palette alone, which is
    * the failure mode this type's docblock names outright — a third would make

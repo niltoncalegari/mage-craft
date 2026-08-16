@@ -134,6 +134,41 @@ describe('effects — ticking', () => {
     expect(tickEffects(carrier(), 1 / 60)).toBeNull();
   });
 
+  /**
+   * Healing over time rides the same cadence machinery as a burn, on its own
+   * channel rather than as negative damage. A signed `damage` would have to be
+   * threaded correctly through the shield, the vulnerability multiplier and
+   * kill credit — three places where "damage below zero" is a silent absurdity
+   * — so the tick says which of the two it is and the world reads the one it
+   * asked for.
+   */
+  it('yields heal ticks on their own channel, on the same cadence as a DoT', () => {
+    const m = carrier();
+    applyEffect(m, { kind: 'regen', duration: 3, tickInterval: 1, tickHeal: 6 });
+
+    let healed = 0;
+    let ticks = 0;
+    for (let i = 0; i < 60 * 3; i++) {
+      for (const t of tickEffects(m, 1 / 60) ?? []) {
+        expect(t.damage).toBe(0);
+        healed += t.heal;
+        ticks++;
+      }
+    }
+    expect(ticks).toBe(3);
+    expect(healed).toBeCloseTo(18, 5);
+  });
+
+  it('keeps damage and heal on separate channels, so a burn never heals', () => {
+    const m = carrier();
+    applyEffect(m, { kind: 'burn', duration: 1, tickInterval: 0.5, tickDamage: 4 });
+
+    const due = tickEffects(m, 0.5)!;
+    expect(due).toHaveLength(1);
+    expect(due[0].damage).toBe(4);
+    expect(due[0].heal).toBe(0);
+  });
+
   it('credits the DoT source so a burn can earn a kill', () => {
     const m = carrier();
     applyEffect(m, { kind: 'burn', duration: 1, tickInterval: 0.5, tickDamage: 4, sourceId: 'mage-3' });

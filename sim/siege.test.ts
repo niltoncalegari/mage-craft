@@ -293,6 +293,36 @@ describe('spells (GDD §9)', () => {
     expect(moveSpeedMultiplier(ally)).toBeGreaterThanOrEqual(1);
   });
 
+  /**
+   * Green's answer to Escudo Arcano, and deliberately the worse card to cast
+   * late. A shield is worth most the instant before the hit lands; a regen is
+   * worth nothing then and everything between fights. The sim has to make that
+   * true rather than merely say it, so the healing arrives on a cadence and the
+   * overflow is thrown away.
+   */
+  it('heals an ally on a cadence and stops at full health', () => {
+    const w = new World();
+    const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    // Less than the card's whole output (4 ticks x 8), so the last tick has an
+    // overflow to throw away and the clamp is actually exercised.
+    w.dealDamage(ally, 20);
+    const hurt = ally.health;
+
+    w.castSpell(TEAM_A, 'rejuvenating_breeze', ally.position);
+
+    // Gradual, not a lump sum: nothing has arrived before the first interval.
+    stepN(w, 2);
+    expect(ally.health).toBe(hurt);
+
+    stepN(w, Math.ceil(1 / SIM_DT));
+    expect(ally.health).toBeGreaterThan(hurt);
+    expect(ally.health).toBeLessThan(ally.maxHealth);
+
+    // Run past the card's duration; the overflow is discarded, not banked.
+    stepN(w, Math.ceil(6 / SIM_DT));
+    expect(ally.health).toBe(ally.maxHealth);
+  });
+
   it('shields absorb damage before health', () => {
     const w = new World();
     const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));

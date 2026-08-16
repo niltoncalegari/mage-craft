@@ -16,6 +16,7 @@
 import {
   ALL_DECK_COLORS,
   ALL_SPELLS,
+  colorsOf,
   isSpellId,
   spellFor,
   SPELLS_BY_COLOR,
@@ -70,22 +71,6 @@ export function colorLimitIsPlayable(): boolean {
   );
 }
 
-/**
- * The distinct colours a card list draws from, in catalog order.
- *
- * Order is fixed rather than first-seen so the deck builder's mix line reads
- * the same ("Branco + Verde") however the player happened to add the cards.
- * Unknown ids are skipped; `validateDeck` is what rejects them, and this is
- * also called on half-built decks in the UI.
- */
-export function colorsOf(cards: readonly string[]): DeckColor[] {
-  const present = new Set<DeckColor>();
-  for (const id of cards) {
-    if (isSpellId(id)) present.add(spellFor(id)!.color);
-  }
-  return ALL_DECK_COLORS.filter((c) => present.has(c));
-}
-
 export type DeckValidation = { ok: true } | { ok: false; reason: string };
 
 /** Enforces the GDD §7 construction rules before a deck is allowed into a match. */
@@ -109,8 +94,8 @@ export function validateDeck(cards: readonly string[]): DeckValidation {
   }
 
   const colors = colorsOf(cards);
-  if (colors.length > MAX_COLORS) {
-    return { ok: false, reason: `deck may draw from at most ${MAX_COLORS} colours, got ${colors.length}` };
+  if (colors.size > MAX_COLORS) {
+    return { ok: false, reason: `deck may draw from at most ${MAX_COLORS} colours, got ${colors.size}` };
   }
 
   return { ok: true };

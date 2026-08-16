@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { ALL_SPELLS, spellFor } from './spells';
 import {
   colorLimitIsPlayable,
-  colorsOf,
   Deck,
   DECK_SIZE,
   defaultDeck,
@@ -11,6 +10,7 @@ import {
   MAX_COPIES,
   validateDeck,
 } from './Deck';
+import { colorsOf } from './spells';
 import { Rng } from './rng';
 
 describe('deck construction (GDD §9)', () => {
@@ -134,7 +134,7 @@ describe('the two-colour rule (GDD §16.4)', () => {
   it('accepts a deck drawn from two colours', () => {
     // The default is White + Green.
     expect(validateDeck(defaultDeck())).toEqual({ ok: true });
-    expect(colorsOf(defaultDeck())).toHaveLength(2);
+    expect(colorsOf(defaultDeck()).size).toBe(2);
   });
 
   it('rejects a deck that reaches into a third colour', () => {
@@ -150,7 +150,7 @@ describe('the two-colour rule (GDD §16.4)', () => {
     ];
     // Legal on every other axis: eight cards, four distinct, two copies each.
     expect(threeColours).toHaveLength(DECK_SIZE);
-    expect(colorsOf(threeColours)).toHaveLength(3);
+    expect(colorsOf(threeColours).size).toBe(3);
 
     const result = validateDeck(threeColours);
     expect(result.ok).toBe(false);

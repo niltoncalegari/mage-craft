@@ -121,6 +121,7 @@ export interface SpellApplyRule {
   readonly radius?: number;
   readonly tickInterval?: number;
   readonly tickDamage?: number;
+  readonly tickHeal?: number;
   /** Ground hazards only: whether the damage goes through Escudo Arcano. */
   readonly bypassShield?: boolean;
 }

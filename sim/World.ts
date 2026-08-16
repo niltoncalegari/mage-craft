@@ -466,6 +466,7 @@ export class World {
             duration: app.duration ?? spell.duration,
             tickInterval: app.tickInterval,
             tickDamage: app.tickDamage,
+            tickHeal: app.tickHeal,
           });
         }
         continue;
@@ -580,7 +581,10 @@ export class World {
         // A DoT never re-applies hit-stun: it lands several times a second, and
         // stacking HIT_STUN on every tick would silently root anyone standing
         // in it. The flinch belongs to the hit that applied the effect.
-        this.dealDamage(m, t.damage, { attackerId: t.sourceId, noHitStun: true });
+        if (t.damage > 0) this.dealDamage(m, t.damage, { attackerId: t.sourceId, noHitStun: true });
+        // Overflow is discarded rather than banked: a regen cast on a healthy
+        // mage is a wasted card, which is what makes timing it a decision.
+        if (t.heal > 0) m.health = Math.min(m.maxHealth, m.health + t.heal);
       }
     }
 

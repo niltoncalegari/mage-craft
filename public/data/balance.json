@@ -396,6 +396,16 @@
       "target": "enemies",
       "apply": [{ "effect": "root" }]
     },
+    "rejuvenating_breeze": {
+      "name": "Brisa Rejuvenescedora",
+      "color": "green",
+      "kind": "buff",
+      "cost": 3,
+      "radius": 4,
+      "duration": 4,
+      "target": "allies",
+      "apply": [{ "effect": "regen", "tickInterval": 1, "tickHeal": 8 }]
+    },
     "overload_field": {
       "name": "Campo de Sobrecarga",
       "color": "red",

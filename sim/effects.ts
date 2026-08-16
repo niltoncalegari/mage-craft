@@ -49,7 +49,9 @@ export type EffectKind =
    * Held in place, but not silenced: move speed is pinned to the floor while
    * casting and shooting carry on. `magnitude` is unused — a root is a root.
    */
-  | 'root';
+  | 'root'
+  /** Healing over time; `tickHeal` per `tickInterval`. The DoT run backwards. */
+  | 'regen';
 
 /**
  * Iteration and wire order. Fixed so the effect list is canonical: a mage
@@ -63,6 +65,7 @@ export const EFFECT_ORDER: readonly EffectKind[] = [
   'cast_slow',
   'cast_haste',
   'burn',
+  'regen',
   'vulnerable',
   'shield',
 ];
@@ -83,6 +86,8 @@ export interface ActiveEffect {
   tickInterval: number;
   tickTimer: number;
   tickDamage: number;
+  /** HoT bookkeeping; 0 for everything that is not a HoT. */
+  tickHeal: number;
   /** Who to credit for a DoT kill; `null` when nobody can be. */
   sourceId: string | null;
 }
@@ -94,6 +99,7 @@ export interface EffectSpec {
   duration?: number;
   tickInterval?: number;
   tickDamage?: number;
+  tickHeal?: number;
   sourceId?: string | null;
 }
 
@@ -167,6 +173,7 @@ export function applyEffect(carrier: EffectCarrier, spec: EffectSpec): ActiveEff
     // target in fire does not push the next tick further away every hit.
     if (spec.tickInterval !== undefined) existing.tickInterval = spec.tickInterval;
     if (spec.tickDamage !== undefined) existing.tickDamage = spec.tickDamage;
+    if (spec.tickHeal !== undefined) existing.tickHeal = spec.tickHeal;
     if (spec.sourceId !== undefined) existing.sourceId = spec.sourceId;
     return existing;
   }
@@ -179,6 +186,7 @@ export function applyEffect(carrier: EffectCarrier, spec: EffectSpec): ActiveEff
     tickInterval: spec.tickInterval ?? 0,
     tickTimer: 0,
     tickDamage: spec.tickDamage ?? 0,
+    tickHeal: spec.tickHeal ?? 0,
     sourceId: spec.sourceId ?? null,
   };
 
@@ -199,10 +207,20 @@ export function clearEffects(carrier: EffectCarrier): void {
   carrier.effects.length = 0;
 }
 
-/** What a DoT wants to do this tick. The world turns it into actual damage. */
+/**
+ * What a periodic effect wants to do this tick. The world turns it into actual
+ * damage or actual healing.
+ *
+ * Two channels rather than one signed number. Damage runs a gauntlet healing
+ * has no business in — the vulnerability multiplier, the shield pool, hit-stun,
+ * kill credit — and a negative `damage` would have to mean the right thing at
+ * every one of those, or quietly mean the wrong one. Exactly one of the two is
+ * ever non-zero.
+ */
 export interface EffectTick {
   readonly kind: EffectKind;
   readonly damage: number;
+  readonly heal: number;
   readonly sourceId: string | null;
 }
 
@@ -219,7 +237,7 @@ export function tickEffects(carrier: EffectCarrier, dt: number): EffectTick[] | 
   for (let i = carrier.effects.length - 1; i >= 0; i--) {
     const e = carrier.effects[i];
 
-    if (e.tickInterval > 0 && e.tickDamage > 0) {
+    if (e.tickInterval > 0 && (e.tickDamage > 0 || e.tickHeal > 0)) {
       e.tickTimer += dt;
       // The epsilon is load-bearing, not defensive. A 4s burn ticking every
       // 0.5s must deal exactly 8 ticks; without it the eighth comes due on the
@@ -228,7 +246,12 @@ export function tickEffects(carrier: EffectCarrier, dt: number): EffectTick[] | 
       while (e.tickTimer >= e.tickInterval - EPSILON) {
         e.tickTimer -= e.tickInterval;
         due ??= [];
-        due.push({ kind: e.kind, damage: e.tickDamage * e.stacks, sourceId: e.sourceId });
+        due.push({
+          kind: e.kind,
+          damage: e.tickDamage * e.stacks,
+          heal: e.tickHeal * e.stacks,
+          sourceId: e.sourceId,
+        });
       }
     }
 

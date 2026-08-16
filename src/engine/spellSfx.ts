@@ -91,6 +91,20 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * The other card that is unambiguously good news, so it has to be told apart
+   * from Bênção de Ímpeto by ear and not by luck. Bênção is a triad struck at
+   * once — an announcement. This is one sine gliding up a fifth over moving air:
+   * a breath rather than a chord, which is also the difference between a burst
+   * of speed and something that keeps giving for four seconds.
+   */
+  rejuvenating_breeze: {
+    detune: 0.02,
+    layers: [
+      { kind: 'noise', filter: 'highpass', from: 400, to: 3000, at: 0, duration: 0.45, gain: 0.03 },
+      { kind: 'tone', wave: 'sine', freq: 392, toFreq: 587.33, at: 0.05, duration: 0.35, gain: 0.04 },
+    ],
+  },
+  /*
    * The third green, and the two it has to be told apart from both *fall*:
    * Praga's square drops 180→92, the swamp's triangle drops 160→58. So this one
    * climbs. Nothing else in the catalog does that except Campo de Sobrecarga,
