@@ -139,7 +139,19 @@ describe('SnapshotSync — match state', () => {
       suddenDeath: false,
       hand: ['stone_golem', 'pyromancer', 'cleric', 'wind_dervish'],
       next: 'arcane_archer',
+      // Omitted on the wire until a rule has actually cast, which is what an
+      // empty program should look like on screen.
+      firedRule: null,
     });
+  });
+
+  it('carries the rule that fired, so the HUD can name it', () => {
+    const { sync } = makeSync(TEAM_A);
+    const fired = { ruleId: 'answer-cluster', index: 0, cardId: 'plague', at: 'enemy_cluster' };
+
+    sync.applySnapshot(snapshot({ firedRule: fired }));
+
+    expect(sync.matchState.firedRule).toEqual(fired);
   });
 
   it('reports an empty hand before the first snapshot, not a stale one', () => {

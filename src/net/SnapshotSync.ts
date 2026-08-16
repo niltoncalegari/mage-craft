@@ -11,6 +11,7 @@ import type { World } from '../game/World';
 import { rotateTowards } from '../utils/math';
 import { Vector2 } from '../utils/Vector2';
 import type {
+  FiredRuleDTO,
   MageSnapshotDTO,
   ProjectileSnapshotDTO,
   PuddleSnapshotDTO,
@@ -52,6 +53,15 @@ export interface MatchState {
   hand: string[];
   /** The card entering the hand next, or null when unknown. */
   next: string | null;
+  /**
+   * The local player's rule that last actually cast, or null before one has.
+   *
+   * Since the idle pivot this is the only in-match feedback there is: nobody
+   * clicked, so being told which of their own rules spent their mana is what
+   * separates a match the player authored from one that merely happens near
+   * them. Null for a spectator, who has no program.
+   */
+  firedRule: FiredRuleDTO | null;
 }
 
 /**
@@ -90,6 +100,7 @@ const EMPTY_MATCH_STATE: MatchState = {
   suddenDeath: false,
   hand: [],
   next: null,
+  firedRule: null,
 };
 
 /**
@@ -223,6 +234,10 @@ export class SnapshotSync {
       suddenDeath: snap.suddenDeath,
       hand: snap.hand ?? [],
       next: snap.next ?? null,
+      // Handed straight through rather than copied into a retained object: the
+      // wire message is already a fresh parse, so referencing it costs nothing
+      // and the HUD reads it at most 20 times a second.
+      firedRule: snap.firedRule ?? null,
     };
 
     this.syncMages(snap.mages, dtSim);
