@@ -31,6 +31,13 @@ export interface MatchHudDeps {
    * construction would go stale.
    */
   getSideName: (team: Team) => string | null;
+  /**
+   * Whether sound is off, and the way to change it. Asked every frame rather
+   * than passed once because the keyboard can toggle it too — the button is a
+   * readout of the setting, not the owner of it.
+   */
+  isMuted: () => boolean;
+  onToggleMute: () => void;
 }
 
 interface CardRefs {
@@ -57,6 +64,7 @@ interface SideRefs {
 interface HudRefs {
   clock: HTMLElement;
   phase: HTMLElement;
+  sound: HTMLButtonElement;
   left: SideRefs;
   right: SideRefs;
   manaFill: HTMLElement;
@@ -116,7 +124,7 @@ function SideView({ refs, mirrored }: { refs: SideRefs; mirrored: boolean }): JS
  * Mounted once; every leaf the per-frame update writes to comes back through
  * `refs`, so a 60fps HUD never re-renders Preact (same approach as {@link HUD}).
  */
-function MatchHudView({ refs }: { refs: HudRefs }): JSX.Element {
+function MatchHudView({ refs, onToggleMute }: { refs: HudRefs; onToggleMute: () => void }): JSX.Element {
   return (
     <>
       <div class={styles.top}>
@@ -124,6 +132,13 @@ function MatchHudView({ refs }: { refs: HudRefs }): JSX.Element {
         <div class={styles.clockBox}>
           <span class={styles.clock} ref={keep(refs, 'clock')} />
           <span class={styles.phase} ref={keep(refs, 'phase')} />
+          {/*
+            The one pressable thing on an otherwise read-only HUD, and the only
+            one that is not a game action: an idle match is *listened to* for
+            minutes at a stretch, so the way to silence it cannot live behind a
+            pause menu in a match that does not actually pause.
+          */}
+          <button class={styles.sound} type="button" onClick={onToggleMute} ref={keep(refs, 'sound')} />
         </div>
         <SideView refs={refs.right} mirrored />
       </div>
@@ -187,6 +202,8 @@ export class MatchHUD implements GameRenderer {
    * for a string that is almost always the same one.
    */
   private tracedRuleId: string | null = null;
+  /** Same cache, same reason: the label changes on a click, not on a frame. */
+  private shownMuted: boolean | null = null;
   /**
    * The nested holders have to exist before the view mounts: a callback ref
    * fires during render and writes straight into them.
@@ -204,12 +221,14 @@ export class MatchHUD implements GameRenderer {
   ) {
     this.host = document.createElement('div');
     this.host.hidden = true;
-    // Set once and never lifted: the whole HUD is a readout since the idle
-    // pivot, so every click belongs to the arena underneath — which is still
-    // how the camera gets dragged.
+    // Set on the host and lifted by exactly one child. Everything the HUD says
+    // about the match is a readout since the idle pivot, so every click on it
+    // belongs to the arena underneath — which is still how the camera gets
+    // dragged. The sound toggle opts back in because it is chrome rather than a
+    // move in the game: silencing the match is not something the program does.
     this.host.style.pointerEvents = 'none';
     container.append(this.host);
-    render(<MatchHudView refs={this.refs} />, this.host);
+    render(<MatchHudView refs={this.refs} onToggleMute={() => this.deps.onToggleMute()} />, this.host);
   }
 
   sync(alpha: number): void {
@@ -219,6 +238,7 @@ export class MatchHUD implements GameRenderer {
     if (!visible) return;
 
     const state = this.deps.getState();
+    this.updateSound();
     this.updateClock(state);
     this.updateSides();
     this.updateHand(state);
@@ -228,6 +248,22 @@ export class MatchHUD implements GameRenderer {
   dispose(): void {
     render(null, this.host);
     this.host.remove();
+  }
+
+  /**
+   * Keeps the toggle honest about a setting it does not own — the same
+   * preference is reachable from the keyboard and from the practice menu, and
+   * a button that only knows about its own clicks would go stale on both.
+   */
+  private updateSound(): void {
+    const muted = this.deps.isMuted();
+    if (muted === this.shownMuted) return;
+    this.shownMuted = muted;
+
+    this.refs.sound.textContent = muted ? 'Sound off' : 'Sound on';
+    this.refs.sound.setAttribute('aria-pressed', String(muted));
+    this.refs.sound.setAttribute('aria-label', muted ? 'Unmute the match' : 'Mute the match');
+    this.refs.sound.classList.toggle(styles.soundOff, muted);
   }
 
   private updateClock(state: MatchState): void {

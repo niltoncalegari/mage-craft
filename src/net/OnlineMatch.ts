@@ -219,6 +219,8 @@ export class OnlineMatch {
           isSpectating: () => this.spectating,
           getMySide: () => this.sync.mySide,
           getSideName: (team) => this.teamName(team),
+          isMuted: () => this.settings.get('muted'),
+          onToggleMute: () => this.setMuted(!this.settings.get('muted')),
         }),
         new SquadPanel(container, {
           getSquad: () => this.sync.squad,
@@ -331,6 +333,18 @@ export class OnlineMatch {
     this.events.clear();
   }
 
+  /**
+   * The one audio setting, written down and applied.
+   *
+   * Kept here rather than in the HUD because the HUD is one of three ways in:
+   * the button, the `M` key, and the practice menu that has always had it. The
+   * setting is the truth and all three read it back.
+   */
+  private setMuted(muted: boolean): void {
+    this.settings.set('muted', muted);
+    this.audio.setMuted(muted);
+  }
+
   private setPaused(paused: boolean): void {
     if (this.paused === paused) return;
     this.paused = paused;
@@ -373,7 +387,12 @@ export class OnlineMatch {
 
     if ((ev.key === 'Escape' || ev.key === 'p' || ev.key === 'P') && !this.roundEnded) {
       this.setPaused(!this.paused);
+      return;
     }
+
+    // Sound is the one thing an idle player still has a reason to reach for
+    // mid-match, and the ranges have no HUD to reach it through.
+    if (ev.key === 'm' || ev.key === 'M') this.setMuted(!this.settings.get('muted'));
   }
 
   /**

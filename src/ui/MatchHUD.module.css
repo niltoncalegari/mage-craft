@@ -138,6 +138,39 @@
   color: #d8452f;
 }
 
+/*
+ * The only control on the HUD, so it is written to look like the readouts
+ * around it rather than like a button: no fill, no border until it is under the
+ * cursor. It has to be reachable — a match is watched for minutes and the
+ * player may want it quiet at any point — without competing with the clock it
+ * hangs under.
+ */
+.sound {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--glass-ink-soft);
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+  margin-top: 3px;
+  padding: 2px 8px;
+  pointer-events: auto;
+  text-transform: uppercase;
+}
+
+.sound:hover,
+.sound:focus-visible {
+  border-color: var(--glass-edge);
+  color: var(--glass-ink);
+}
+
+.soundOff {
+  color: var(--copper);
+}
+
 /* ---- bottom command bar ------------------------------------------------- */
 
 .bar {
