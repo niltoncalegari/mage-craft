@@ -1,7 +1,7 @@
 import type { EventBus } from '../core/EventBus';
 import { Team } from '../game/types';
 import { ENEMY_CAST_GAIN, spellSfxFor } from './spellSfx';
-import { playSound, VoiceBudget } from './synth';
+import { playSound, releaseOnEnd, VoiceBudget } from './synth';
 
 type Unsubscribe = () => void;
 type AudioContextConstructor = new () => AudioContext;
@@ -140,7 +140,7 @@ export class AudioManager {
 
     source.connect(filter).connect(gain).connect(this.requireMasterGain());
     source.start(now, this.randomNoiseOffset(), duration);
-    this.cleanupSource(source, [filter, gain], now + duration + 0.03);
+    releaseOnEnd(source, [filter, gain], now + duration + 0.03);
   }
 
   private playSnowPuff(hitPlayer: boolean): void {
@@ -164,7 +164,7 @@ export class AudioManager {
 
     source.connect(filter).connect(gain).connect(this.requireMasterGain());
     source.start(now, this.randomNoiseOffset(), duration);
-    this.cleanupSource(source, [filter, gain], now + duration + 0.03);
+    releaseOnEnd(source, [filter, gain], now + duration + 0.03);
   }
 
   private playHitSplat(damage: number): void {
@@ -188,7 +188,7 @@ export class AudioManager {
     oscillator.connect(gain).connect(this.requireMasterGain());
     oscillator.start(now);
     oscillator.stop(now + duration);
-    this.cleanupSource(oscillator, [gain], now + duration + 0.03);
+    releaseOnEnd(oscillator, [gain], now + duration + 0.03);
   }
 
   private playDefeated(): void {
@@ -241,7 +241,7 @@ export class AudioManager {
     oscillator.connect(gain).connect(this.requireMasterGain());
     oscillator.start(startTime);
     oscillator.stop(startTime + duration);
-    this.cleanupSource(oscillator, [gain], startTime + duration + 0.04);
+    releaseOnEnd(oscillator, [gain], startTime + duration + 0.04);
   }
 
   private startAmbient(): void {
@@ -350,21 +350,5 @@ export class AudioManager {
     const buffer = this.noiseBuffer;
     if (!buffer) return 0;
     return Math.random() * Math.max(0, buffer.duration - 0.25);
-  }
-
-  private cleanupSource(source: AudioScheduledSourceNode, nodes: AudioNode[], stopTime: number): void {
-    source.addEventListener(
-      'ended',
-      () => {
-        source.disconnect();
-        for (const node of nodes) node.disconnect();
-      },
-      { once: true },
-    );
-    try {
-      source.stop(stopTime);
-    } catch {
-      // Some sources may already have an explicit stop scheduled.
-    }
   }
 }

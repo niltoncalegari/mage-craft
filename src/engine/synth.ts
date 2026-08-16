@@ -68,8 +68,12 @@ const TAIL = 0.03;
  * graphs. Leaking one node per cast is a leak nobody hears until the context
  * starts glitching several minutes in, which is exactly the kind of bug that
  * survives a smoke test.
+ *
+ * Exported because {@link AudioManager}'s hand-written sounds need exactly the
+ * same thing, and two copies of "let go of the graph" is how one of them ends
+ * up fixed and the other not.
  */
-function releaseOnEnd(source: AudioScheduledSourceNode, nodes: readonly AudioNode[], stopAt: number): void {
+export function releaseOnEnd(source: AudioScheduledSourceNode, nodes: readonly AudioNode[], stopAt: number): void {
   source.addEventListener(
     'ended',
     () => {
