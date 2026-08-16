@@ -19,8 +19,9 @@ import type {
   SnapshotMsg,
 } from '../../sim/protocol';
 import { defaultSquad } from '../../sim/cards';
-import { SQUAD_SIZE } from '../../sim/config';
+import { SIM_DT, SQUAD_SIZE } from '../../sim/config';
 import { HAND_SIZE } from '../../sim/Deck';
+import { emptyStrategy, STRATEGY_VERSION } from '../../sim/strategy';
 import { BOT_FALLBACK_SECONDS } from './Matchmaker';
 import { App, type Transport } from './App';
 
@@ -196,11 +197,13 @@ describe('App — match protocol', () => {
    * stopped immediately so each test drives the sim tick by tick instead of
    * racing a timer.
    */
-  function startedMatch(): void {
-    hostRoom('host', 'Alice');
+  /** Returns the room code, for tests that need to seat a spectator in it. */
+  function startedMatch(): string {
+    const roomId = hostRoom('host', 'Alice');
     send('host', { type: 'add_bot', team: 1, difficulty: 'easy' });
     send('host', { type: 'start_match' });
     app.dispose();
+    return roomId;
   }
 
   it('announces match_start and pushes snapshots as the sim ticks', () => {
@@ -254,14 +257,15 @@ describe('App — match protocol', () => {
     expect(snap?.next).toBeTruthy();
   });
 
-  it('cycles the hand on the wire once a card is played', () => {
+  it('cycles the hand on the wire as the seat’s own program casts', () => {
     startedMatch();
     const session = getSession();
     const handBefore = session.deckFor(0)!.hand();
-    const played = handBefore[0];
 
-    send('host', { type: 'cast', cardId: played, position: { x: -12, y: 0 } });
-    for (let i = 0; i < 3; i++) session.tick();
+    // Nobody sends anything. A seat with a program plays itself, which is the
+    // whole claim of the idle pivot — the hand moving with no client message in
+    // between is the smallest end-to-end proof of it.
+    tickFor(session, 2);
 
     const snap = hub.last<SnapshotMsg>('host', 'snapshot');
     expect(snap?.hand).toHaveLength(HAND_SIZE);
@@ -270,7 +274,24 @@ describe('App — match protocol', () => {
     expect(snap?.hand).not.toEqual(handBefore);
   });
 
-  it('casts a spell from the sender’s hand — no unit is ever summoned (GDD §9)', () => {
+  it('names the rule that fired, on the caster’s own channel only', () => {
+    const roomId = startedMatch();
+    send('watcher', { type: 'join_room', roomId, name: 'Bob' });
+    const session = getSession();
+    tickFor(session, 2);
+
+    // The idle player's only account of the match: which of their rules just
+    // spent their mana, and where it aimed.
+    const mine = hub.last<SnapshotMsg>('host', 'snapshot')?.firedRule;
+    expect(mine).toMatchObject({ cardId: expect.any(String), at: expect.any(String) });
+    expect(mine?.index).toBeGreaterThanOrEqual(0);
+
+    // A spectator has no program, so there is nothing of theirs to report — and
+    // the host's must not leak onto their channel.
+    expect(hub.last<SnapshotMsg>('watcher', 'snapshot')?.firedRule).toBeUndefined();
+  });
+
+  it('refuses a by-hand cast — a match is played by the program now', () => {
     startedMatch();
     const session = getSession();
     const card = session.deckFor(0)!.hand()[0];
@@ -278,23 +299,12 @@ describe('App — match protocol', () => {
 
     send('host', { type: 'cast', cardId: card, position: { x: -10, y: 0 } });
 
+    expect(hub.last('host', 'error')).toMatchObject({
+      message: expect.stringContaining('idle_mode'),
+    });
+    // Answered rather than acted on: nothing about the match moved.
     expect(session.liveWorld?.mages.size).toBe(mageCountBefore);
     expect(mageCountBefore).toBe(SQUAD_SIZE * 2);
-  });
-
-  it('tells the caster why a cast was rejected', () => {
-    startedMatch();
-    const session = getSession();
-    const card = session.deckFor(0)!.hand()[0];
-    const mageCountBefore = session.liveWorld?.mages.size;
-
-    // Off the edge of the arena — there is no deploy zone since the pivot (GDD §5).
-    send('host', { type: 'cast', cardId: card, position: { x: 9999, y: 9999 } });
-
-    expect(session.liveWorld?.mages.size).toBe(mageCountBefore);
-    expect(hub.last('host', 'error')).toMatchObject({
-      message: expect.stringContaining('out_of_bounds'),
-    });
   });
 
   it('survives a malformed cast without disturbing the match', () => {
@@ -406,17 +416,21 @@ describe('App — matchmaking queue', () => {
     expect(hub.last<SnapshotMsg>('solo', 'snapshot')).toBeTruthy();
   });
 
-  it('lets both queued players cast from their own hand', () => {
+  it('plays both queued seats from their own programs, with nobody clicking', () => {
     send('c1', { type: 'join_queue', name: 'Alice' });
     send('c2', { type: 'join_queue', name: 'Bob' });
     app.dispose();
 
     const session = getSession();
-    send('c1', { type: 'cast', cardId: session.deckFor(0)!.hand()[0], position: { x: -12, y: 0 } });
-    send('c2', { type: 'cast', cardId: session.deckFor(1)!.hand()[0], position: { x: 12, y: 0 } });
+    const handsBefore = [session.deckFor(0)!.hand(), session.deckFor(1)!.hand()];
+    tickFor(session, 2);
 
     expect(hub.to<ErrorMsg>('c1', 'error')).toEqual([]);
     expect(hub.to<ErrorMsg>('c2', 'error')).toEqual([]);
+    // Neither player sent a thing, and both hands moved — a queued match is
+    // contested on both sides by the programs their players brought.
+    expect(session.deckFor(0)!.hand()).not.toEqual(handsBefore[0]);
+    expect(session.deckFor(1)!.hand()).not.toEqual(handsBefore[1]);
     // Casts never summon anything (GDD §9) — both squads are already full.
     expect(session.liveWorld?.mages.size).toBe(SQUAD_SIZE * 2);
   });
@@ -424,6 +438,17 @@ describe('App — matchmaking queue', () => {
 
 describe('App — loadout', () => {
   const SQUAD = ['ice_sentinel', 'wind_dervish', 'alchemist', 'arcane_bard'];
+  /** A legal two-colour deck that deliberately holds no green — so no `plague`. */
+  const WHITE_RED_DECK = [
+    'blessing',
+    'blessing',
+    'arcane_shield',
+    'arcane_shield',
+    'overload_field',
+    'overload_field',
+    'meteor_shower',
+    'meteor_shower',
+  ];
 
   it('fields the squad a queued player registered before joining the queue', () => {
     send('c1', { type: 'set_loadout', squad: SQUAD });
@@ -466,6 +491,41 @@ describe('App — loadout', () => {
     send('c1', { type: 'join_queue', name: 'Alice' });
     expect(hub.to<ErrorMsg>('c1', 'error')).toEqual([]);
     expect(hub.last<QueueStatusMsg>('c1', 'queue_status')).toMatchObject({ position: 1 });
+  });
+
+  it('fields the strategy a player registered, and lets it beat an empty one', () => {
+    // Deliberately the AFK baseline: the only program whose effect is legible
+    // from outside without reading the caster is the one that casts nothing.
+    send('c1', { type: 'set_loadout', strategy: emptyStrategy() });
+    send('c1', { type: 'join_queue', name: 'Alice' });
+    send('c2', { type: 'join_queue', name: 'Bob' });
+    app.dispose();
+
+    const session = getSession();
+    const mine = session.deckFor(0)!.hand();
+    const theirs = session.deckFor(1)!.hand();
+    tickFor(session, 4);
+
+    expect(hub.to<ErrorMsg>('c1', 'error')).toEqual([]);
+    expect(session.deckFor(0)!.hand()).toEqual(mine);
+    // The opponent, who registered nothing, still gets the default program —
+    // an idle match where neither side casts would be a screensaver.
+    expect(session.deckFor(1)!.hand()).not.toEqual(theirs);
+  });
+
+  it('rejects a strategy that names a card the deck does not hold', () => {
+    // A rule on a card you did not bring can never fire. Refusing it is the
+    // difference between a program that is wrong and one that is silently inert.
+    const orphan = {
+      version: STRATEGY_VERSION,
+      name: 'orphan',
+      rules: [
+        { id: 'r1', enabled: true, card: 'plague', when: { kind: 'always' }, at: 'enemy_cluster' },
+      ],
+    };
+    send('c1', { type: 'set_loadout', deck: WHITE_RED_DECK, strategy: orphan });
+
+    expect(hub.last<ErrorMsg>('c1', 'error')?.message).toMatch(/invalid strategy/);
   });
 
   it('applies a loadout all at once, so an illegal deck takes the squad down with it', () => {
@@ -519,6 +579,15 @@ describe('App — match result', () => {
 });
 
 /** Reaches into App for the one live session, so tests can tick deterministically. */
+/**
+ * Advances a session by real simulated seconds. Needed since the idle pivot:
+ * a caster thinks on its own clock, so "has anything happened yet" is a
+ * question about elapsed time rather than about a handful of ticks.
+ */
+function tickFor(session: import('./Session').Session, seconds: number): void {
+  for (let i = 0; i < Math.round(seconds / SIM_DT); i++) session.tick();
+}
+
 function getSession(): import('./Session').Session {
   const sessions = (app as unknown as { sessions: Map<string, import('./Session').Session> })
     .sessions;

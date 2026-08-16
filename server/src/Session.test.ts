@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { defaultSquad } from '../../sim/cards';
-import { SQUAD_SIZE } from '../../sim/config';
+import { SIM_DT, SQUAD_SIZE } from '../../sim/config';
+import { defaultDeck } from '../../sim/Deck';
 import { TEAM_A, TEAM_B } from '../../sim/entities';
 import type { MatchSummary } from '../../sim/matchStats';
 import { Rng } from '../../sim/rng';
+import { emptyStrategy } from '../../sim/strategy';
 import { Vec2 } from '../../sim/Vec2';
 import { RoomManager } from './RoomManager';
 import { Session, SNAPSHOT_EVERY_N_TICKS, type SessionCallbacks, type Snapshot } from './Session';
@@ -23,6 +25,11 @@ function startedSession(cb: SessionCallbacks = {}): Session {
   s.selectElement('p2', 'ice');
   s.startMatch();
   return s;
+}
+
+/** Advances a session by real simulated seconds — a caster thinks on its own clock. */
+function tickFor(s: Session, seconds: number): void {
+  for (let i = 0; i < Math.round(seconds / SIM_DT); i++) s.tick();
 }
 
 /** Razes a team's structures, which is now the only way a match ends (GDD §4). */
@@ -284,6 +291,58 @@ describe('Session — match result', () => {
     s.tick();
 
     expect(summaries[0].perTeam[TEAM_A].casts).toContainEqual({ cardId: card, casts: 1 });
+  });
+});
+
+/*
+ * Every seat is played by something since the idle pivot: a human seat by the
+ * program its player wrote, a bot or empty seat by the AI commander. These are
+ * the tests that a seat gets the *right* one, and that the strategy handed to
+ * `setStrategy` is the one that actually runs.
+ */
+describe('Session — the caster on each seat', () => {
+  it('plays a human seat with nobody sending anything', () => {
+    const s = startedSession();
+    const before = s.deckFor(TEAM_A)!.hand();
+
+    tickFor(s, 2);
+
+    expect(s.deckFor(TEAM_A)!.hand()).not.toEqual(before);
+  });
+
+  it('honours the strategy the player registered — an empty one casts nothing', () => {
+    const s = newSession();
+    s.join('p1', 'Alice');
+    s.selectTeam('p1', TEAM_A);
+    s.selectElement('p1', 'fire');
+    s.addBot(TEAM_B, 'normal');
+    // The AFK baseline is a representable program, not a missing one: this is
+    // what `agency.test.ts` measures authored play against.
+    s.setStrategy('p1', emptyStrategy());
+    s.startMatch();
+
+    const mine = s.deckFor(TEAM_A)!.hand();
+    const theirs = s.deckFor(TEAM_B)!.hand();
+    tickFor(s, 4);
+
+    expect(s.deckFor(TEAM_A)!.hand()).toEqual(mine);
+    expect(s.firedRuleFor(TEAM_A)).toBeNull();
+    // The bot seat still has its Commander, so the match is contested even
+    // when one side brought no program at all.
+    expect(s.deckFor(TEAM_B)!.hand()).not.toEqual(theirs);
+  });
+
+  it('reports the rule behind a cast, and only once one has actually cast', () => {
+    const s = startedSession();
+    expect(s.firedRuleFor(TEAM_A)).toBeNull();
+
+    tickFor(s, 2);
+
+    const fired = s.firedRuleFor(TEAM_A);
+    expect(fired).toMatchObject({ ruleId: expect.any(String), at: expect.any(String) });
+    // It names a card the deck was actually holding — a rule cannot fire a card
+    // the player never brought.
+    expect(defaultDeck()).toContain(fired!.cardId);
   });
 });
 

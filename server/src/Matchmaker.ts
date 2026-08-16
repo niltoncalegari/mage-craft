@@ -11,6 +11,7 @@
 
 import type { RosterId } from '../../sim/cards';
 import type { CardId } from '../../sim/spells';
+import type { Strategy } from '../../sim/strategy';
 
 /** How long a player waits for a human before the server gives them a bot. */
 export const BOT_FALLBACK_SECONDS = 12;
@@ -19,8 +20,14 @@ export interface QueueEntry {
   clientId: string;
   name: string;
   deck: CardId[];
-  /** Undefined keeps the default squad — the other half of the loadout. */
+  /** Undefined keeps the default squad — the other third of the loadout. */
   squad?: RosterId[];
+  /**
+   * The program that plays this seat's hand. Undefined falls back to
+   * `defaultStrategy(deck)` in Session — a queued player is never asked for
+   * one, and an idle match with no program at all would cast nothing.
+   */
+  strategy?: Strategy;
   /** Epoch seconds, injected so tests can drive the clock. */
   joinedAt: number;
   /** Elo at queue time, passed through to the paired opponent's match_found. */

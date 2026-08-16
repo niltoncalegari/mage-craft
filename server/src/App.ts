@@ -12,9 +12,9 @@ import { PICKABLE_ELEMENTS } from '../../sim/elements';
 import type { MatchSummary } from '../../sim/matchStats';
 import { validateSquad } from '../../sim/squad';
 import { isSpellId, type CardId } from '../../sim/spells';
+import { validateStrategy, type Strategy } from '../../sim/strategy';
 import type {
   AddBotMsg,
-  CastMsg,
   ClaimSlotMsg,
   CreateRoomMsg,
   JoinQueueMsg,
@@ -30,11 +30,9 @@ import type {
   SetReadyMsg,
   SpectatorDTO,
   TeamSummaryDTO,
-  Vec2DTO,
 } from '../../sim/protocol';
 import { peekType } from '../../sim/protocol';
 import { toSnapshotMsg } from '../../sim/snapshot';
-import { Vec2 } from '../../sim/Vec2';
 import { Matchmaker, type Pairing } from './Matchmaker';
 import { RoomManager } from './RoomManager';
 import { Session, type Snapshot } from './Session';
@@ -67,7 +65,10 @@ export class App {
    * pre-join — the queue seats you with no lobby at all — so this cannot live on
    * a Session the way decks used to.
    */
-  private readonly loadouts = new Map<string, { deck?: CardId[]; squad?: RosterId[] }>();
+  private readonly loadouts = new Map<
+    string,
+    { deck?: CardId[]; squad?: RosterId[]; strategy?: Strategy }
+  >();
   private readonly matchmaker = new Matchmaker();
   private queueTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -185,7 +186,11 @@ export class App {
         this.handleSetLoadout(clientId, msg as SetLoadoutMsg);
         break;
       case 'cast':
-        this.handleCast(clientId, msg as CastMsg);
+        // Since the idle pivot a seat is played by the program its player wrote
+        // before the match, so there is no by-hand cast to route. Answered
+        // rather than dropped: an older client still sends this, and silence
+        // would read to it as a lost message worth retrying.
+        this.sendError(clientId, 'cast rejected: idle_mode');
         break;
       case 'send_emote':
         this.withRoom(clientId, (_sess, roomId) => {
@@ -280,23 +285,6 @@ export class App {
     });
   }
 
-  /**
-   * The one in-match action (GDD §13). Unlike the ~60 Hz input it replaced this
-   * is a sparse, discrete event, so a rejection is worth telling the player
-   * about — they just tried to spend mana and nothing happened.
-   */
-  private handleCast(clientId: string, msg: CastMsg): void {
-    const sess = this.sessionForClient(clientId);
-    if (!sess) return;
-
-    try {
-      const result = sess.submitCast(clientId, msg.cardId, toVec2(msg.position));
-      if (!result.ok) this.sendError(clientId, `cast rejected: ${result.reason}`);
-    } catch {
-      // A cast that lands before the match starts isn't worth a round-trip.
-    }
-  }
-
   /* ---- matchmaking (GDD §4) ---------------------------------------------- */
 
   private handleJoinQueue(clientId: string, msg: JoinQueueMsg): void {
@@ -311,6 +299,7 @@ export class App {
       name: msg.name || 'Conjurer',
       deck,
       squad: stored?.squad,
+      strategy: this.strategyFor(clientId, deck),
       joinedAt: this.now() / 1000,
       rating: msg.rating,
     });
@@ -343,13 +332,47 @@ export class App {
   }
 
   /**
+   * Validates a submitted strategy program against the deck it will be played
+   * with. Like a squad, absence means "keep what you had".
+   *
+   * The deck argument is not optional for a reason: a rule naming a card the
+   * player did not bring can never fire, so a program is only meaningful
+   * relative to a deck. `validateStrategy` enforces that, which is what turns a
+   * silently inert program into a rejected one.
+   */
+  private resolveStrategy(clientId: string, value: unknown, deck: readonly CardId[]): Strategy | null {
+    const check = validateStrategy(value, deck);
+    if (!check.ok) {
+      this.sendError(clientId, `invalid strategy: ${check.reason}`);
+      return null;
+    }
+    return value as Strategy;
+  }
+
+  /**
+   * The stored program for a client, but only when it is still legal against
+   * the deck actually being fielded.
+   *
+   * The two halves arrive as separate messages and in either order, so a deck
+   * that lands after a program can orphan rules that name cards it dropped.
+   * Withholding the program then is what makes Session fall back to
+   * `defaultStrategy(deck)` — a seat that plays badly beats one that has a
+   * program and casts nothing.
+   */
+  private strategyFor(clientId: string, deck: readonly CardId[]): Strategy | undefined {
+    const stored = this.loadouts.get(clientId)?.strategy;
+    if (!stored) return undefined;
+    return validateStrategy(stored, deck).ok ? stored : undefined;
+  }
+
+  /**
    * Records what this client brings to their next match. Deliberately outside
    * `withRoom`: it arrives before a room exists on the queue path, and applying
    * it to an already-joined room is handled here too so the order of the two
    * messages never matters.
    */
   private handleSetLoadout(clientId: string, msg: SetLoadoutMsg): void {
-    // Validate both halves before committing either: a message that half-applies
+    // Validate every part before committing any: a message that half-applies
     // would leave the player fielding a squad they can see and a deck they
     // cannot, with only an error message to explain the difference.
     const deck = msg.deck ? this.resolveDeck(clientId, msg.deck) : undefined;
@@ -359,8 +382,17 @@ export class App {
     if (msg.squad && !squad) return;
 
     const stored = this.loadouts.get(clientId) ?? {};
+    // Checked against the deck this very message settles on, not against
+    // whatever was stored before it — otherwise sending both at once would
+    // validate the new program against the old cards.
+    const against = deck ?? stored.deck ?? defaultDeck();
+    const strategy =
+      msg.strategy !== undefined ? this.resolveStrategy(clientId, msg.strategy, against) : undefined;
+    if (msg.strategy !== undefined && !strategy) return;
+
     if (deck) stored.deck = deck;
     if (squad) stored.squad = squad;
+    if (strategy) stored.strategy = strategy;
 
     this.loadouts.set(clientId, stored);
     this.applyLoadout(clientId);
@@ -377,6 +409,9 @@ export class App {
 
     if (loadout.deck) sess.setDeck(clientId, loadout.deck);
     if (loadout.squad) sess.setSquad(clientId, loadout.squad);
+
+    const strategy = this.strategyFor(clientId, loadout.deck ?? defaultDeck());
+    if (strategy) sess.setStrategy(clientId, strategy);
   }
 
   private sendQueueStatus(clientId: string): void {
@@ -438,6 +473,7 @@ export class App {
         session.selectElement(entry.clientId, QUEUE_ELEMENT);
         session.setDeck(entry.clientId, entry.deck);
         if (entry.squad) session.setSquad(entry.clientId, entry.squad);
+        if (entry.strategy) session.setStrategy(entry.clientId, entry.strategy);
         session.setReady(entry.clientId, true);
         this.clientRoom.set(entry.clientId, roomId);
       }
@@ -489,11 +525,6 @@ export class App {
     } catch (err) {
       this.sendError(clientId, errorMessage(err));
     }
-  }
-
-  private sessionForClient(clientId: string): Session | undefined {
-    const roomId = this.clientRoom.get(clientId);
-    return roomId ? this.sessions.get(roomId) : undefined;
   }
 
   /* ---- broadcasts ------------------------------------------------------- */
@@ -561,6 +592,10 @@ export class App {
           mana: snap.mana[team] ?? 0,
           hand: deck?.hand() ?? [],
           next: deck?.next() ?? null,
+          // Per-recipient like the hand: which of *your* rules just fired is
+          // the only in-match feedback an idle player gets, and the opponent
+          // must not be able to read your program off the wire.
+          firedRule: sess?.firedRuleFor(team) ?? null,
         }),
       );
     }
@@ -630,11 +665,6 @@ export class App {
   private sendJSON(clientId: string, msg: ServerMsg): void {
     this.hub.sendTo(clientId, JSON.stringify(msg));
   }
-}
-
-function toVec2(v: Vec2DTO | undefined): Vec2 {
-  if (!v || typeof v.x !== 'number' || typeof v.y !== 'number') return Vec2.zero;
-  return new Vec2(v.x, v.y);
 }
 
 function teamFromWire(team: number): Team {
