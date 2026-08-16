@@ -72,8 +72,14 @@ export type NumericConditionKind =
   | 'our_towers'
   | 'enemy_towers';
 
-/** Inclusive bounds the authored value must fall in, per fact. */
-const NUMERIC_RANGE: Readonly<Record<NumericConditionKind, readonly [number, number]>> = {
+/**
+ * Inclusive bounds the authored value must fall in, per fact.
+ *
+ * Exported because the editor's number field has to offer exactly this range.
+ * Restating the bounds in the UI would give two places to change and, in the
+ * meantime, a stepper that happily reaches values the validator refuses.
+ */
+export const NUMERIC_RANGE: Readonly<Record<NumericConditionKind, readonly [number, number]>> = {
   mana: [0, MANA_MAX],
   elapsed: [0, 600],
   ally_count: [0, SQUAD_SIZE],
