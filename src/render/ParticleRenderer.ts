@@ -1684,6 +1684,21 @@ export class ParticleRenderer implements GameRenderer {
       case 'burst':
         this.spawnSpellMotes(x, y, radius, cfg);
         break;
+      default: {
+        /*
+         * Exhaustiveness, not defence. `cfg.shape` narrows to `never` here only
+         * while every member of the union has a case above, so adding a shape
+         * without a spawner is a compile error in this line — instead of a card
+         * that quietly draws the shared footprint and nothing else, which is the
+         * same silent no-op `spells.ts` refuses to allow in the catalog.
+         * The runtime fallback is the burst, because throwing inside the render
+         * loop would take the whole match down over a cosmetic gap.
+         */
+        const unhandled: never = cfg.shape;
+        void unhandled;
+        this.spawnSpellMotes(x, y, radius, cfg);
+        break;
+      }
     }
   }
 
