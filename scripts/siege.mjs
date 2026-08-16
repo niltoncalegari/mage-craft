@@ -9,10 +9,14 @@
  * itself — mana is spent, the hand cycles, and the HUD names which of their own
  * rules did it.
  *
- * It drives the actual UI — Enter Hall, guest sign-in, Battle, wait out the
- * queue — and reads the WebSocket traffic in the page. Needs both dev servers up:
- *   npm run dev:server   # :8080
- *   npm run dev          # :5173
+ * It drives the actual UI — Enter Hall, register, Find Match, wait out the
+ * queue — and reads the WebSocket traffic in the page. Playing needs an account
+ * now, so it registers a throwaway one per run; that means the API and its
+ * Mongo have to be up alongside the two dev servers:
+ *   docker compose up -d mongo
+ *   cd api && npm run dev   # :4000, proxied at /api by the Vite dev server
+ *   npm run dev:server      # :8080
+ *   npm run dev             # :5173
  *   node scripts/siege.mjs
  *
  * Set CHROME_PATH to use an installed browser instead of Playwright's own (the
@@ -69,12 +73,19 @@ try {
 
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
+  // A throwaway account per run: nick, e-mail, password, in that field order.
+  const stamp = Date.now().toString().slice(-8);
   await page.getByRole('button', { name: 'Enter Hall' }).click();
-  await page.getByRole('textbox').first().fill('Smoke Conjuror');
-  await page.getByRole('button', { name: /^(Continue|Enter|Sign in|Play)/ }).click();
+  await page.getByRole('button', { name: 'Register' }).click();
+  const fields = page.locator('input');
+  await fields.nth(0).fill(`Smoke${stamp.slice(-4)}`);
+  await fields.nth(1).fill(`smoke${stamp}@example.com`);
+  await fields.nth(2).fill('Passw0rd!23');
+  await page.getByRole('button', { name: /^(Create account|Register|Sign up)/ }).last().click();
+  await page.getByRole('button', { name: /Sign out/ }).waitFor({ timeout: 10_000 });
+  step('registered', true);
 
-  await page.getByRole('button', { name: /Battle/ }).click();
-  step('queued', await page.getByText(/Finding an opponent/).isVisible());
+  await page.getByRole('button', { name: /Find Match/ }).click();
 
   // No second human is searching, so the server hands the other side to an AI.
   await page.waitForFunction(() => window.__wire.types.includes('match_start'), null, {
@@ -95,7 +106,6 @@ try {
   await cards.first().waitFor({ timeout: 10_000 });
   step(`cards drawn: ${await cards.count()}`, (await cards.count()) === 4);
 
-  const before = await page.evaluate(() => window.__wire.snapshots.at(-1));
   const myTeam = await page.evaluate(() => window.__wire.found.yourTeam);
 
   // Nothing is clicked from here on. That is the test.
@@ -124,9 +134,16 @@ try {
     .catch(() => false);
   step('the HUD names the rule that fired', traced);
 
-  step(`mana spent: ${before.mana} -> ${after.mana}`, after.mana !== before.mana);
-  step(`hand cycled: ${before.hand.join(', ')} -> ${after.hand.join(', ')}`,
-    JSON.stringify(after.hand) !== JSON.stringify(before.hand));
+  // Asked of the whole recorded history rather than of two sampled snapshots:
+  // the first rule fires within a second of match start, so anything captured
+  // after the card bar has rendered is already past it.
+  const history = await page.evaluate(() =>
+    window.__wire.snapshots.map((s) => ({ mana: s.mana, hand: s.hand.join(',') })),
+  );
+  const manaFell = history.some((s, i) => i > 0 && s.mana < history[i - 1].mana);
+  const hands = new Set(history.map((s) => s.hand));
+  step(`mana was spent (${history.length} snapshots)`, manaFell);
+  step(`hand cycled: ${hands.size} distinct hands`, hands.size > 1);
   step(`our squad is in the arena (team ${myTeam})`, after.mages.some((m) => m.team === myTeam));
 
   // Clicking the arena has to be inert now — the camera may pan, but no cast
