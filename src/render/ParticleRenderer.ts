@@ -19,6 +19,7 @@ import {
   UPRIGHT_SPIN_SHAPES,
   type ProjectileShape,
 } from './projectileGeometry';
+import { spellVfxFor, type SpellVfx } from './spellVfx';
 
 const SNOWBALL_POOL_SIZE = 64;
 const PARTICLE_POOL_SIZE = 900;
@@ -62,6 +63,18 @@ const BUBBLE_POP_COLOR = 0xa6ff5c;
 const MIST_COLOR = 0x3f7d20;
 /** Fraction of bubbles that come up as a slow, wide drifting mist puff instead. */
 const MIST_CHANCE = 0.22;
+
+/* ---- Cast shapes (GDD §17) ------------------------------------------------- */
+/** Where a falling `column` starts, in world units above the ground. */
+const COLUMN_HEIGHT = 6.5;
+/** Particles in the shaft. The wide part of the beat is the shared zone + rings. */
+const COLUMN_SHAFT_COUNT = 22;
+/** How far off the axis the shaft may wander, as a fraction of the cast radius. */
+const COLUMN_SHAFT_SPREAD = 0.28;
+const COLUMN_SPEED = 9;
+const COLUMN_LIFE = 0.5;
+/** Tangential speed of a `torus`'s rim motes — what makes the rim read as turning. */
+const TORUS_RIM_SPEED = 2.2;
 
 /* ---- Status effect emission (GDD §8) --------------------------------------- */
 /*
@@ -349,73 +362,6 @@ const ELEMENT_VFX: Readonly<Record<ElementId, ElementVfx>> = {
 function vfxFor(element: ElementId | undefined): ElementVfx {
   return element ? ELEMENT_VFX[element] : DEFAULT_VFX;
 }
-
-/**
- * Per-spell look for the four cards in the deck (GDD §9). Only Praga left
- * anything on screen before this — it spawns a puddle, so it got a renderer
- * for free — while a Bênção, a Maldição or an Escudo landed completely
- * silently. The shared grammar is: a ground zone marking the radius it
- * covered, a shockwave ring, and motes that *rise* for a blessing or *fall*
- * for a curse, so which half of the deck was played reads without knowing the
- * colors.
- */
-interface SpellVfx {
-  /** Shockwave ring + the brighter accents. */
-  ring: number;
-  /** Flat ground disc marking the affected radius. */
-  zone: number;
-  motes: readonly number[];
-  moteCount: number;
-  /** +1 for a buff (motes lift), -1 for a curse (motes press down). */
-  direction: 1 | -1;
-  /** Escudo Arcano only: a translucent dome snapping over the area it protected. */
-  dome: boolean;
-}
-
-const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
-  blessing: {
-    ring: 0xffe9a8,
-    zone: 0xffb703,
-    motes: [0xfff3c4, 0xffd166, 0xffb703],
-    moteCount: 26,
-    direction: 1,
-    dome: false,
-  },
-  slow_curse: {
-    ring: 0xcaf0f8,
-    zone: 0x4361ee,
-    motes: [0xcaf0f8, 0x8ecae6, 0x4895ef],
-    moteCount: 22,
-    direction: -1,
-    dome: false,
-  },
-  arcane_shield: {
-    ring: 0xe0fbfc,
-    zone: 0x4cc9f0,
-    motes: [0xe0fbfc, 0x7dd3fc, 0x9b5de5],
-    moteCount: 20,
-    direction: 1,
-    dome: true,
-  },
-  plague: {
-    ring: 0xb6e84a,
-    zone: 0x4f772d,
-    motes: [0xb6e84a, 0x80b918, 0x2f6b1a],
-    moteCount: 26,
-    direction: 1,
-    dome: false,
-  },
-};
-
-/** An unknown card still gets a cast beat rather than nothing at all. */
-const DEFAULT_SPELL_VFX: SpellVfx = {
-  ring: 0xe6d1ff,
-  zone: 0x9b5de5,
-  motes: [0xe6d1ff, 0x9b5de5, 0x6a2fb0],
-  moteCount: 18,
-  direction: 1,
-  dome: false,
-};
 
 interface SnowballSlot {
   readonly mesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
@@ -1610,12 +1556,18 @@ export class ParticleRenderer implements GameRenderer {
   /* ---- Spell casts (GDD §9) ------------------------------------------------ */
 
   /**
-   * The one beat that tells both players a card was spent and where it landed.
-   * Everything here is driven off {@link SPELL_VFX}, so retuning a spell's look
-   * is a table edit.
+   * The one beat that tells both players a card was spent and where it landed —
+   * and, since the idle pivot, the only thing on the field that connects a rule
+   * the player wrote to a thing that happened. Everything here is driven off
+   * {@link spellVfxFor}, so retuning a spell's look is a table edit.
+   *
+   * The ground footprint (zone, two rings, the friendly flash) is shared by
+   * every card, because *where* and *whose* are the two questions the answer
+   * must never depend on knowing the card. `shape` answers the third — *which
+   * card* — and is the only part that branches.
    */
   private spawnSpellCast(spellId: string, x: number, y: number, radius: number, friendly: boolean): void {
-    const cfg = SPELL_VFX[spellId] ?? DEFAULT_SPELL_VFX;
+    const cfg = spellVfxFor(spellId);
 
     this.spawnZone(x, y, radius, cfg.zone, 0.85);
     this.spawnRing(x, y, cfg.ring, radius, 0.5);
@@ -1625,8 +1577,93 @@ export class ParticleRenderer implements GameRenderer {
     // small — these all blend additively, and a wide white disc on top of the
     // zone blows the whole area out to a featureless glare.
     if (friendly) this.spawnRing(x, y, WHITE, radius * 0.26, 0.18);
-    if (cfg.dome) this.spawnDome(x, y, radius, cfg.ring);
-    this.spawnSpellMotes(x, y, radius, cfg);
+
+    switch (cfg.shape) {
+      case 'dome':
+        this.spawnDome(x, y, radius, cfg.ring);
+        this.spawnSpellMotes(x, y, radius, cfg);
+        break;
+      case 'column':
+        this.spawnColumnShaft(x, y, radius, cfg);
+        this.spawnSpellMotes(x, y, radius, cfg);
+        break;
+      case 'torus':
+        this.spawnRimMotes(x, y, radius, cfg);
+        break;
+      case 'burst':
+        this.spawnSpellMotes(x, y, radius, cfg);
+        break;
+    }
+  }
+
+  /**
+   * The shaft of a `column` cast: a narrow vertical stream through the middle
+   * of the zone, falling for a curse and rising for a buff.
+   *
+   * Narrow on purpose. Spread across the whole radius it becomes the burst it
+   * is meant to be distinguishable from; the wide part of a meteor is already
+   * drawn by the shared zone and rings underneath it. What the shaft adds is
+   * the one thing a flat burst cannot say — that this came from somewhere.
+   */
+  private spawnColumnShaft(x: number, y: number, radius: number, cfg: SpellVfx): void {
+    const falling = cfg.direction < 0;
+    for (let i = 0; i < COLUMN_SHAFT_COUNT; i++) {
+      const angle = Math.random() * SPARKLE_TWO_PI;
+      const dist = Math.sqrt(Math.random()) * radius * COLUMN_SHAFT_SPREAD;
+      // Staggered up the shaft rather than all released from one end, so it
+      // reads as a stream already in progress instead of a single clump.
+      const along = i / COLUMN_SHAFT_COUNT;
+      toThree(
+        this.tmp,
+        x + Math.cos(angle) * dist,
+        y + Math.sin(angle) * dist,
+        falling ? COLUMN_HEIGHT * (0.12 + along * 0.88) : 0.06 + along * 0.4,
+      );
+      this.spawnParticle(
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        Math.cos(angle) * 0.15,
+        falling ? -COLUMN_SPEED : COLUMN_SPEED * 0.55,
+        Math.sin(angle) * 0.15,
+        0.12 + (i % 3) * 0.05,
+        COLUMN_LIFE,
+        cfg.motes[i % cfg.motes.length],
+        // Nearly weightless: the speed above is the whole motion, and letting
+        // gravity add to a 9 u/s fall turns the shaft into a blur.
+        falling ? 0.15 : 0.45,
+      );
+    }
+  }
+
+  /**
+   * Motes for a `torus`: they hug the rim and travel around it instead of
+   * filling the disc.
+   *
+   * That difference is the whole shape. A filled disc says "this was thrown at
+   * the people standing here"; a turning rim says "this area is now switched
+   * on", which is what a field card actually does — and, for Campo de
+   * Sobrecarga, the reason it must not read as an attack on one squad is that
+   * it catches both.
+   */
+  private spawnRimMotes(x: number, y: number, radius: number, cfg: SpellVfx): void {
+    for (let i = 0; i < cfg.moteCount; i++) {
+      const angle = (i / cfg.moteCount) * Math.PI * 2;
+      const dist = radius * (0.82 + Math.random() * 0.18);
+      toThree(this.tmp, x + Math.cos(angle) * dist, y + Math.sin(angle) * dist, 0.1 + Math.random() * 0.5);
+      this.spawnParticle(
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        -Math.sin(angle) * TORUS_RIM_SPEED,
+        cfg.direction * (0.5 + Math.random() * 0.5),
+        Math.cos(angle) * TORUS_RIM_SPEED,
+        0.08 + (i % 3) * 0.03,
+        0.75 + Math.random() * 0.3,
+        cfg.motes[i % cfg.motes.length],
+        0.1,
+      );
+    }
   }
 
   /** Motes filling the affected disc: they lift for a buff and rain down for a curse. */
