@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SPELL_GLOBAL_COOLDOWN } from '../../sim/config';
 import { ALL_SPELLS, spellFor } from '../../sim/spells';
 import { DEFAULT_SPELL_SFX, ENEMY_CAST_GAIN, SPELL_SFX, spellSfxFor } from '../engine/spellSfx';
+import { planColumnFall } from './columnFall';
 import { DEFAULT_SPELL_VFX, SPELL_VFX, spellVfxFor, type SpellShape } from './spellVfx';
 
 /**
@@ -219,5 +220,52 @@ describe('trauma stays inside what a watched game can take', () => {
   it('spends it on the heavy cards only', () => {
     const shaking = ALL_SPELLS.filter((id) => (spellVfxFor(id).trauma ?? 0) > 0);
     expect(shaking).toEqual(['meteor_shower']);
+  });
+});
+
+/**
+ * A `column` card is one that hits from above, and every card that reaches for
+ * that shape so far is a *shower*: several impacts scattered over an area, not
+ * one shaft down the middle. The first cut drew the shaft, which contradicted
+ * both halves of Chuva de Meteoros — its name, and the hazard it leaves (18
+ * damage every half second across a radius of five).
+ *
+ * The shape's own field says how many fall and over how long, and both numbers
+ * are held against the card in `balance.json` here, because a shower still
+ * raining after its hazard has expired is the same species of lie as a
+ * telegraph the simulation does not honour.
+ */
+describe('a column falls as a shower, not as a shaft', () => {
+  const columns = ALL_SPELLS.filter((id) => spellVfxFor(id).shape === 'column');
+
+  it('is the shape Chuva de Meteoros uses', () => {
+    expect(columns).toContain('meteor_shower');
+  });
+
+  it('never claims to be a shower of one', () => {
+    for (const id of columns) {
+      expect(spellVfxFor(id).impacts ?? 1).toBeGreaterThan(1);
+    }
+  });
+
+  it('stops raining before the card it belongs to is over', () => {
+    for (const id of columns) {
+      const card = spellFor(id);
+      expect(card).toBeDefined();
+      const window = spellVfxFor(id).impactWindow ?? 0;
+      expect(window).toBeGreaterThan(0);
+      expect(window).toBeLessThanOrEqual(card!.duration);
+    }
+  });
+
+  it('scatters across the radius the card actually covers', () => {
+    // Not a fraction of it: the hazard ticks over the whole disc, so meteors
+    // landing in the middle third would show a smaller card than the one that
+    // is hurting people.
+    for (const id of columns) {
+      const impacts = planColumnFall(24, spellFor(id)!.radius, 1, () => 0.97);
+      const furthest = Math.max(...impacts.map((i) => Math.hypot(i.dx, i.dy)));
+      expect(furthest).toBeGreaterThan(spellFor(id)!.radius * 0.9);
+    }
   });
 });

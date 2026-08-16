@@ -20,6 +20,7 @@ import {
   UPRIGHT_SPIN_SHAPES,
   type ProjectileShape,
 } from './projectileGeometry';
+import { planColumnFall } from './columnFall';
 import { spellVfxFor, type SpellVfx } from './spellVfx';
 
 const SNOWBALL_POOL_SIZE = 64;
@@ -66,14 +67,17 @@ const MIST_COLOR = 0x3f7d20;
 const MIST_CHANCE = 0.22;
 
 /* ---- Cast shapes (GDD §17) ------------------------------------------------- */
-/** Where a falling `column` starts, in world units above the ground. */
-const COLUMN_HEIGHT = 6.5;
-/** Particles in the shaft. The wide part of the beat is the shared zone + rings. */
-const COLUMN_SHAFT_COUNT = 22;
-/** How far off the axis the shaft may wander, as a fraction of the cast radius. */
-const COLUMN_SHAFT_SPREAD = 0.28;
-const COLUMN_SPEED = 9;
-const COLUMN_LIFE = 0.5;
+/** Where a falling meteor starts, in world units above the ground. */
+const METEOR_HEIGHT = 6.5;
+/** Seconds a body spends in the air, between its two scheduled beats. */
+const METEOR_FALL_TIME = 0.28;
+const METEOR_SPEED = METEOR_HEIGHT / METEOR_FALL_TIME;
+/** Particles strung along one falling body — the head plus its tail. */
+const METEOR_BODY_COUNT = 5;
+/** The spray where a body breaks, and the ring it leaves. */
+const METEOR_HIT_COUNT = 9;
+const METEOR_HIT_SPEED = 2.1;
+const METEOR_HIT_RING = 1.3;
 /** Tangential speed of a `torus`'s rim motes — what makes the rim read as turning. */
 const TORUS_RIM_SPEED = 2.2;
 /**
@@ -550,6 +554,18 @@ interface DomeSlot {
   active: boolean;
 }
 
+/** Which beat of a falling meteor a queued entry is: the body, or the break. */
+type PendingKind = 'fall' | 'hit';
+
+/** One scheduled beat of a `column` shower. */
+interface PendingImpact {
+  x: number;
+  y: number;
+  remaining: number;
+  kind: PendingKind;
+  cfg: SpellVfx;
+}
+
 interface PlayerFxState {
   playerId: number;
   footprintTimer: number;
@@ -588,6 +604,8 @@ export class ParticleRenderer implements GameRenderer {
   private readonly domeSlots: DomeSlot[] = [];
   private readonly playerFxStates: PlayerFxState[] = [];
   private readonly puddleBubbleTimers = new Map<EntityId, number>();
+  /** Beats of a `column` shower still to come; see {@link spawnColumnShaft}. */
+  private readonly pendingImpacts: PendingImpact[] = [];
   private readonly defaultBallMaterial: THREE.MeshStandardMaterial;
   private readonly offSnowballImpact: () => void;
   private readonly offPlayerHit: () => void;
@@ -880,6 +898,7 @@ export class ParticleRenderer implements GameRenderer {
     this.updateRings();
     this.updateZones();
     this.updateDomes();
+    this.updatePendingImpacts();
     this.updatePuddleBubbles();
   }
 
@@ -1703,42 +1722,102 @@ export class ParticleRenderer implements GameRenderer {
   }
 
   /**
-   * The shaft of a `column` cast: a narrow vertical stream through the middle
-   * of the zone, falling for a curse and rising for a buff.
+   * A `column` cast: a shower of separate impacts scattered over the disc and
+   * spread over a second, each one a body falling out of the sky and breaking
+   * on the ground.
    *
-   * Narrow on purpose. Spread across the whole radius it becomes the burst it
-   * is meant to be distinguishable from; the wide part of a meteor is already
-   * drawn by the shared zone and rings underneath it. What the shaft adds is
-   * the one thing a flat burst cannot say — that this came from somewhere.
+   * The first cut of this drew a single narrow shaft down the middle, which was
+   * wrong about the only card that uses the shape. Chuva de Meteoros covers a
+   * radius of five and ticks three times — a lone shaft showed a pinprick where
+   * the card covers a disc, and one arrival where the card has several. Where
+   * and when each one lands is {@link planColumnFall}, which is tested; this
+   * method is only the drawing.
    */
   private spawnColumnShaft(x: number, y: number, radius: number, cfg: SpellVfx): void {
-    const falling = cfg.direction < 0;
-    const total = this.moteBudget(COLUMN_SHAFT_COUNT);
-    for (let i = 0; i < total; i++) {
-      const angle = Math.random() * SPARKLE_TWO_PI;
-      const dist = Math.sqrt(Math.random()) * radius * COLUMN_SHAFT_SPREAD;
-      // Staggered up the shaft rather than all released from one end, so it
-      // reads as a stream already in progress instead of a single clump.
-      const along = i / total;
+    const count = this.moteBudget(cfg.impacts ?? 1);
+    const window = cfg.impactWindow ?? 0;
+    const fall = planColumnFall(count, radius, window);
+
+    for (const impact of fall) {
+      // Two beats per meteor: the body on its way down, then the break when it
+      // arrives. Scheduling the second rather than drawing both at once is what
+      // makes the thing read as *falling* instead of as a flash at altitude.
+      this.schedule(x + impact.dx, y + impact.dy, impact.at, 'fall', cfg);
+      this.schedule(x + impact.dx, y + impact.dy, impact.at + METEOR_FALL_TIME, 'hit', cfg);
+    }
+  }
+
+  /**
+   * Queues one beat of a shower. Allocates, unlike everything else in this
+   * file — but a shower is cast at most every few seconds and costs a dozen of
+   * these, against a particle pool that turns over hundreds per second. Pooling
+   * it would buy nothing and cost a slot budget to get wrong.
+   */
+  private schedule(x: number, y: number, at: number, kind: PendingKind, cfg: SpellVfx): void {
+    this.pendingImpacts.push({ x, y, remaining: at, kind, cfg });
+  }
+
+  /** Advances the shower queue and fires whatever has come due this frame. */
+  private updatePendingImpacts(): void {
+    for (let i = this.pendingImpacts.length - 1; i >= 0; i--) {
+      const pending = this.pendingImpacts[i];
+      pending.remaining -= PARTICLE_DT;
+      if (pending.remaining > 0) continue;
+
+      this.pendingImpacts.splice(i, 1);
+      if (pending.kind === 'fall') this.spawnMeteorBody(pending.x, pending.y, pending.cfg);
+      else this.spawnMeteorHit(pending.x, pending.y, pending.cfg);
+    }
+  }
+
+  /** The body on its way down: a tight, bright clump with a short tail. */
+  private spawnMeteorBody(x: number, y: number, cfg: SpellVfx): void {
+    for (let i = 0; i < METEOR_BODY_COUNT; i++) {
+      // Strung out along the fall rather than clustered, so it reads as one
+      // object with a tail instead of a handful of sparks dropping together.
+      const along = i / METEOR_BODY_COUNT;
       toThree(
         this.tmp,
-        x + Math.cos(angle) * dist,
-        y + Math.sin(angle) * dist,
-        falling ? COLUMN_HEIGHT * (0.12 + along * 0.88) : 0.06 + along * 0.4,
+        x + (Math.random() - 0.5) * 0.2,
+        y + (Math.random() - 0.5) * 0.2,
+        METEOR_HEIGHT * (1 - along * 0.35),
       );
       this.spawnParticle(
         this.tmp.x,
         this.tmp.y,
         this.tmp.z,
-        Math.cos(angle) * 0.15,
-        falling ? -COLUMN_SPEED : COLUMN_SPEED * 0.55,
-        Math.sin(angle) * 0.15,
-        0.12 + (i % 3) * 0.05,
-        COLUMN_LIFE,
+        0,
+        -METEOR_SPEED,
+        0,
+        (0.22 - along * 0.1) * (0.85 + Math.random() * 0.3),
+        METEOR_FALL_TIME * (1 - along * 0.2),
         cfg.motes[i % cfg.motes.length],
-        // Nearly weightless: the speed above is the whole motion, and letting
-        // gravity add to a 9 u/s fall turns the shaft into a blur.
-        falling ? 0.15 : 0.45,
+        // Weightless: the fall speed above is the whole motion, and gravity on
+        // top of it would land the body before its own scheduled impact.
+        0,
+      );
+    }
+  }
+
+  /** The break: a low outward spray and a small ring where it hit. */
+  private spawnMeteorHit(x: number, y: number, cfg: SpellVfx): void {
+    this.spawnRing(x, y, cfg.ring, METEOR_HIT_RING, 0.26);
+    const count = this.moteBudget(METEOR_HIT_COUNT);
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+      const speed = METEOR_HIT_SPEED * (0.7 + Math.random() * 0.6);
+      toThree(this.tmp, x, y, 0.12);
+      this.spawnParticle(
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        Math.cos(angle) * speed,
+        1.4 + Math.random() * 0.8,
+        Math.sin(angle) * speed,
+        0.1 + (i % 3) * 0.04,
+        0.38 + Math.random() * 0.2,
+        cfg.motes[i % cfg.motes.length],
+        1,
       );
     }
   }

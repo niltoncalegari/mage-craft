@@ -48,6 +48,22 @@ export interface SpellVfx {
   /** +1 for a buff (motes lift), -1 for a curse (motes press down). */
   direction: 1 | -1;
   /**
+   * `column` only: how many separate impacts fall, and over how many seconds
+   * they are spread.
+   *
+   * The first cut of this shape drew a single narrow shaft down the middle of
+   * the zone, which was wrong about the only card that uses it. Chuva de
+   * Meteoros is a *shower* — the name says so, and so does the hazard, which
+   * ticks 18 damage across a radius of five. One shaft showed a pinprick where
+   * the card covers a disc, and showed one arrival where the card has three.
+   *
+   * `impactWindow` is held against the card's own `duration` by
+   * `spellVfx.test.ts`: meteors still falling after the hazard has expired are
+   * the same species of lie as a telegraph the simulation never honours.
+   */
+  impacts?: number;
+  impactWindow?: number;
+  /**
    * Ground warning before the impact, in seconds; absent or 0 for a card that
    * lands the moment it is cast.
    *
@@ -161,6 +177,15 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     motes: [0xffe066, 0xff6a2e, 0x9d0208],
     moteCount: 28,
     direction: -1,
+    /*
+     * Seven, over a second: the card's hazard lasts 1.5s and ticks three
+     * times, so the rain has to outlast the first tick and stop before the
+     * last. Seven rather than three, because the impacts a player counts are
+     * not the ticks a player takes — a shower reads as weather, not as a
+     * countdown.
+     */
+    impacts: 7,
+    impactWindow: 1,
     trauma: 0.35,
   },
 };
