@@ -269,3 +269,45 @@ describe('a column falls as a shower, not as a shaft', () => {
     }
   });
 });
+
+/**
+ * A card that leaves a hazard on the ground owns how that hazard *looks*.
+ *
+ * `PuddleRenderer` painted every puddle in Praga's poison green, unconditionally
+ * — which was right while Praga was the only card that left one. Chuva de
+ * Meteoros leaves one too, and inherited the green: a crater of burning rock
+ * drawn as a pool of poison, for the second and a half that outlives the cast
+ * beat. The element-borne puddle (the Alchemist's flask) still falls to the
+ * green default, because for that one the default is correct.
+ */
+describe('a card that leaves a hazard says what colour it is', () => {
+  /** Cards whose `apply` list puts a puddle on the ground. */
+  const hazards = ALL_SPELLS.filter((id) =>
+    spellFor(id)?.apply.some((app) => app.effect === 'puddle'),
+  );
+
+  it('finds the cards that leave one', () => {
+    expect(hazards).toEqual(['meteor_shower', 'plague']);
+  });
+
+  it('gives each of them a palette of its own', () => {
+    for (const id of hazards) {
+      const hazard = spellVfxFor(id).hazard;
+      expect(hazard, id).toBeDefined();
+      for (const channel of [hazard!.base, hazard!.core, hazard!.rim]) {
+        expect(Number.isInteger(channel), id).toBe(true);
+        expect(channel, id).toBeGreaterThanOrEqual(0);
+        expect(channel, id).toBeLessThanOrEqual(0xffffff);
+      }
+    }
+  });
+
+  it('does not hand one to a card that leaves nothing behind', () => {
+    // A palette on a card with no hazard is a value nothing reads, which is how
+    // a table starts lying about what it controls.
+    for (const id of ALL_SPELLS) {
+      if (hazards.includes(id)) continue;
+      expect(spellVfxFor(id).hazard, id).toBeUndefined();
+    }
+  });
+});

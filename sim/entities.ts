@@ -156,6 +156,16 @@ export interface Projectile {
 export interface Puddle {
   readonly id: string;
   readonly ownerId: string;
+  /**
+   * The card that put this here, or null when an *element* did (the
+   * Alchemist's flask leaves one on hit).
+   *
+   * Carried purely so the client can draw it: every ground hazard used to be
+   * painted in Praga's poison green, because the wire never said which card was
+   * responsible — which turned Chuva de Meteoros' crater of burning rock into a
+   * pool of poison. Nothing in the simulation reads it.
+   */
+  readonly spellId: string | null;
 
   position: Vec2;
   radius: number;

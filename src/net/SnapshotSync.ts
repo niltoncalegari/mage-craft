@@ -657,6 +657,9 @@ export class SnapshotSync {
         position: new Vector2(p.position.x, p.position.y),
         radius: p.radius,
         remaining: p.remaining,
+        // Set once, on the frame the hazard appears: what left it cannot change
+        // under it, and the renderer builds its materials from this.
+        spellId: p.spellId ?? null,
       };
       this.world.puddles.push(puddle);
       this.puddleIds.set(p.id, puddle.id);

@@ -64,6 +64,28 @@ export interface SpellVfx {
   impacts?: number;
   impactWindow?: number;
   /**
+   * The ground hazard this card leaves, for the cards whose `apply` list puts a
+   * puddle down.
+   *
+   * `PuddleRenderer` used to paint every puddle in Praga's poison green with no
+   * way to say otherwise, which was right while Praga was the only card that
+   * left one. Chuva de Meteoros leaves one too and inherited it — a crater of
+   * burning rock drawn as a pool of poison, for the second and a half that
+   * outlives the cast beat.
+   *
+   * Absent for a card that leaves nothing, and held that way by a test: a
+   * palette on a card with no hazard is a value nothing reads, which is how a
+   * table starts lying about what it controls. The puddle an *element* leaves
+   * (the Alchemist's flask) carries no card at all and keeps the green default,
+   * because for that one the default is correct.
+   */
+  hazard?: {
+    /** The wide fill, the darker pool inside it, and the bright rim. */
+    readonly base: number;
+    readonly core: number;
+    readonly rim: number;
+  };
+  /**
    * Ground warning before the impact, in seconds; absent or 0 for a card that
    * lands the moment it is cast.
    *
@@ -136,6 +158,9 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     motes: [0xb6e84a, 0x80b918, 0x2f6b1a],
     moteCount: 26,
     direction: 1,
+    // The three values `PuddleRenderer` used to hardcode, moved here verbatim
+    // so Praga's pool comes out exactly as it always has.
+    hazard: { base: 0x6fd15a, core: 0x2f6b1a, rim: 0xb6e84a },
   },
   /*
    * Read against Praga, which is the card it is most likely to be confused
@@ -186,6 +211,13 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
      */
     impacts: 7,
     impactWindow: 1,
+    /*
+     * Scorched ground rather than a pool: a dull ember-red fill over a near
+     * black burn, rimmed in the same amber the cast rings use. It has to read
+     * as *hot* next to Praga's toxic green, since the two are the only ground
+     * hazards in the deck and a player has to tell them apart at a glance.
+     */
+    hazard: { base: 0xe8632a, core: 0x5c1704, rim: 0xffb703 },
     trauma: 0.35,
   },
 };

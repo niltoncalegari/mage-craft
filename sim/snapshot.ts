@@ -110,6 +110,8 @@ export interface PuddleSnapshotState {
   position: Vec2;
   radius: number;
   remaining: number;
+  /** The card that left it, or null when an element did; see {@link Puddle}. */
+  spellId: string | null;
 }
 
 /** Reads the whole world into a transport-free snapshot. */
@@ -162,6 +164,7 @@ export function buildSnapshot(world: World, tick: number): Snapshot {
       position: pu.position,
       radius: pu.radius,
       remaining: pu.duration - pu.elapsed,
+      spellId: pu.spellId,
     })),
     spells: [...world.spellCasts.values()].map((fx) => ({
       id: fx.id,
@@ -242,6 +245,7 @@ export function toSnapshotMsg(snap: Snapshot, view: SnapshotView): SnapshotMsg {
       position: fromVec2(pu.position),
       radius: pu.radius,
       remaining: pu.remaining,
+      spellId: pu.spellId,
     })),
     spells: snap.spells.map((fx) => ({
       id: fx.id,

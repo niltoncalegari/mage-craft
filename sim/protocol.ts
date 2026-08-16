@@ -233,6 +233,13 @@ export type PuddleSnapshotDTO = {
   position: Vec2DTO;
   radius: number;
   remaining: number;
+  /**
+   * The card that left it, or null when an element did.
+   *
+   * Cosmetic only — the client draws every ground hazard the same without it,
+   * which is how Chuva de Meteoros' crater came out painted as Praga's poison.
+   */
+  spellId: string | null;
 };
 
 /**

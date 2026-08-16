@@ -497,6 +497,8 @@ export class World {
   spawnSpellPuddle(
     position: Vec2,
     opts: {
+      /** The card responsible, for the client's benefit only; see {@link Puddle}. */
+      spellId: string;
       radius: number;
       duration: number;
       tickInterval: number;
@@ -509,6 +511,7 @@ export class World {
       id,
       // Not a mage id, so `kill` credits nobody — a zone cannot take a kill.
       ownerId: 'spell',
+      spellId: opts.spellId,
       position,
       radius: opts.radius,
       duration: opts.duration,
@@ -1258,6 +1261,8 @@ export class World {
     this.puddles.set(id, {
       id,
       ownerId,
+      // An element, not a card: the client's green default is right for it.
+      spellId: null,
       position: pos,
       radius: rule.radius ?? 0,
       duration: rule.duration ?? 0,

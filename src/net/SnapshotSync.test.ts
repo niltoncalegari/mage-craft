@@ -521,3 +521,34 @@ describe('SnapshotSync — which half of the arena is yours', () => {
     expect(sync.mySide).toBe('left');
   });
 });
+
+/**
+ * The colour of a ground hazard belongs to the card that left it, and the wire
+ * is the only place the client can learn which card that was. Without it every
+ * puddle was drawn in Praga's poison green, including Chuva de Meteoros'
+ * crater of burning rock.
+ */
+describe('SnapshotSync — ground hazards', () => {
+  const puddle = {
+    id: 'puddle-1',
+    position: { x: 2, y: -1 },
+    radius: 3.5,
+    remaining: 4,
+    spellId: 'meteor_shower',
+  };
+
+  it('carries the card that left the puddle', () => {
+    const { sync, world } = makeSync(TEAM_A);
+    sync.applySnapshot(snapshot({ puddles: [puddle] }));
+
+    expect(world.puddles).toHaveLength(1);
+    expect(world.puddles[0].spellId).toBe('meteor_shower');
+  });
+
+  it('leaves an element-borne puddle unattributed', () => {
+    const { sync, world } = makeSync(TEAM_A);
+    sync.applySnapshot(snapshot({ puddles: [{ ...puddle, spellId: null }] }));
+
+    expect(world.puddles[0].spellId).toBeNull();
+  });
+});

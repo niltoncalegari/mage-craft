@@ -135,6 +135,12 @@ export interface Puddle {
   radius: number;
   /** Seconds of effect remaining. */
   remaining: number;
+  /**
+   * The card that left it, or null when an element did — the flask the
+   * Alchemist throws leaves one too. Read only by `PuddleRenderer`, to tint a
+   * hazard in its own card's colours instead of Praga's poison green.
+   */
+  spellId: string | null;
 }
 
 export type StructureKind = 'core' | 'tower';

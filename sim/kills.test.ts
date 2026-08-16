@@ -54,6 +54,8 @@ function plantPuddle(w: World, ownerId: string, position: Vec2): void {
   w.puddles.set(id, {
     id,
     ownerId,
+    // A flask, not a card — the same thing `spawnPuddle` records.
+    spellId: null,
     position,
     radius: 2,
     duration: 10,

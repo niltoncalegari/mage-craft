@@ -5,10 +5,21 @@ import type { EntityId } from '../ecs/Entity';
 import type { Puddle } from '../game/types';
 import type { World } from '../game/World';
 import { toThree } from './coords';
+import { spellVfxFor } from './spellVfx';
 
-const PUDDLE_COLOR = 0x6fd15a;
-const PUDDLE_DEEP_COLOR = 0x2f6b1a;
-const PUDDLE_RIM_COLOR = 0xb6e84a;
+/**
+ * What a hazard looks like when nothing names the card that left it — an
+ * element-borne pool, which today means the Alchemist's flask. Poison green,
+ * because for that one it is the right answer.
+ *
+ * It used to be the *only* answer, applied to every puddle on the field. That
+ * was correct while Praga was the only card leaving one; once Chuva de Meteoros
+ * did too, its crater of burning rock came out drawn as a pool of poison for
+ * the second and a half it outlives the cast beat. A card's own palette now
+ * comes off {@link spellVfxFor}, and Praga's row holds these exact three values
+ * so its pool is unchanged.
+ */
+const DEFAULT_HAZARD = { base: 0x6fd15a, core: 0x2f6b1a, rim: 0xb6e84a } as const;
 const GROUND_LIFT = 0.02;
 /** Seconds of fade-out before a puddle expires, so it drains instead of vanishing. */
 const FADE_OUT = 0.8;
@@ -61,7 +72,7 @@ export class PuddleRenderer implements GameRenderer {
     const seen = new Set<EntityId>();
     for (const puddle of this.world.puddles) {
       seen.add(puddle.id);
-      this.updateView(this.ensureView(puddle.id), puddle);
+      this.updateView(this.ensureView(puddle), puddle);
     }
     for (const [id, view] of this.views) {
       if (seen.has(id)) continue;
@@ -102,27 +113,39 @@ export class PuddleRenderer implements GameRenderer {
     view.rim.material.opacity = 0.38 * strength;
   }
 
-  private ensureView(id: EntityId): PuddleView {
-    const existing = this.views.get(id);
+  /**
+   * The palette for one hazard: its card's, or the poison default when an
+   * element left it and there is no card to ask.
+   */
+  private paletteFor(puddle: Puddle): { base: number; core: number; rim: number } {
+    if (puddle.spellId === null) return DEFAULT_HAZARD;
+    return spellVfxFor(puddle.spellId).hazard ?? DEFAULT_HAZARD;
+  }
+
+  private ensureView(puddle: Puddle): PuddleView {
+    const existing = this.views.get(puddle.id);
     if (existing) return existing;
 
+    // Read once, at creation: these materials are built per view rather than
+    // shared, and what left a hazard cannot change underneath it.
+    const palette = this.paletteFor(puddle);
     const root = new THREE.Group();
-    const base = this.disc('puddle-disc', PUDDLE_COLOR, 0.4, 0);
-    const core = this.disc('puddle-disc', PUDDLE_DEEP_COLOR, 0.35, 0.004);
+    const base = this.disc('puddle-disc', palette.base, 0.4, 0);
+    const core = this.disc('puddle-disc', palette.core, 0.35, 0.004);
     const rim = new THREE.Mesh(
       this.assets.geometry('puddle-rim', () => {
         const geo = new THREE.RingGeometry(0.86, 1, 32);
         geo.rotateX(-Math.PI / 2);
         return geo;
       }),
-      this.rimMaterial(),
+      this.rimMaterial(palette.rim),
     );
     rim.position.y = 0.008;
     root.add(base, core, rim);
     this.group.add(root);
 
     const view: PuddleView = { root, base, core, rim, phase: Math.random() * Math.PI * 2, spin: 0 };
-    this.views.set(id, view);
+    this.views.set(puddle.id, view);
     return view;
   }
 
@@ -152,9 +175,9 @@ export class PuddleRenderer implements GameRenderer {
     return mesh;
   }
 
-  private rimMaterial(): THREE.MeshBasicMaterial {
+  private rimMaterial(color: number): THREE.MeshBasicMaterial {
     return new THREE.MeshBasicMaterial({
-      color: PUDDLE_RIM_COLOR,
+      color,
       transparent: true,
       opacity: 0.5,
       side: THREE.DoubleSide,

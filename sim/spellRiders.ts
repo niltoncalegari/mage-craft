@@ -41,6 +41,7 @@ export type SpellRider = (w: World, ctx: SpellRiderContext) => void;
  */
 const puddle: SpellRider = (w, { spell, app, position }) => {
   w.spawnSpellPuddle(position, {
+    spellId: spell.id,
     radius: app.radius ?? spell.radius,
     duration: app.duration ?? spell.duration,
     tickInterval: app.tickInterval ?? 1,
