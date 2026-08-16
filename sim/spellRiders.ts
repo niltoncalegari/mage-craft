@@ -50,7 +50,27 @@ const puddle: SpellRider = (w, { spell, app, position }) => {
   });
 };
 
-const RIDERS: Readonly<Record<string, SpellRider>> = { puddle };
+/**
+ * Instant damage to everyone the card caught.
+ *
+ * The first card damage in the game that is not a hazard underfoot. Praga and
+ * Chuva de Meteoros hurt you for *standing* somewhere and tick while you do;
+ * this hurts you for having been there at the moment it landed, and then it is
+ * over. That is a different card, so it is a different rider rather than a
+ * puddle with a one-tick duration — a hazard that expires immediately would
+ * still be a hazard, and would still miss anyone who walked in a frame later.
+ *
+ * Credited to `'spell'` rather than to a mage, the same string Praga's zone
+ * uses: no caster is on the field for a card, so `kill` finds nobody to score
+ * it and the death goes uncredited instead of to an arbitrary body.
+ */
+const strike: SpellRider = (w, { app, targets }) => {
+  const damage = app.magnitude ?? 0;
+  if (damage <= 0) return;
+  for (const m of targets) w.dealDamage(m, damage, { attackerId: 'spell' });
+};
+
+const RIDERS: Readonly<Record<string, SpellRider>> = { puddle, strike };
 
 export function isSpellRider(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(RIDERS, name);

@@ -474,6 +474,15 @@ export class World {
             tickDamage: app.tickDamage,
             tickHeal: app.tickHeal,
           });
+
+          // A cast stun has to root the body, not merely decorate it.
+          // `updateMage` reads `stunTimer`, so an effect on its own would show
+          // the motes over the head and let the mage walk away — the element
+          // path already mirrors it for exactly this reason (see `applyOnHit`).
+          if (app.effect === 'stun') {
+            const duration = app.duration ?? spell.duration;
+            m.stunTimer = Math.max(m.stunTimer, duration);
+          }
         }
         continue;
       }

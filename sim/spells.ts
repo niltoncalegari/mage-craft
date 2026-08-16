@@ -31,6 +31,7 @@ export type SpellId =
   | 'blood_frenzy'
   | 'executioners_mark'
   | 'petrify'
+  | 'thunderstrike'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -76,6 +77,7 @@ export const ALL_SPELLS: readonly SpellId[] = [
   'blood_frenzy',
   'executioners_mark',
   'petrify',
+  'thunderstrike',
   'plague',
   'sticky_swamp',
   'entangling_roots',

@@ -40,7 +40,9 @@ export type SpellShape =
    * withdrawing — the only shape whose body outlives the cast beat. See
    * {@link SpellVfx.persist}.
    */
-  | 'roots';
+  | 'roots'
+  /** A bolt out of an open sky onto the spot, with a white flash under it. */
+  | 'strike';
 
 export interface SpellVfx {
   /** Which beat to draw. See {@link SpellShape}. */
@@ -205,6 +207,28 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     motes: [0xc7ced6, 0x7d8894, 0x4a525c],
     moteCount: 16,
     direction: -1,
+  },
+  /*
+   * Blue's second card, and the only shape in the catalog that arrives from
+   * *outside* the arena. Every other beat happens on the ground the cards are
+   * played on; a strike comes down through the roof, which is what buys it the
+   * right to be the loudest thing on screen for a tenth of a second.
+   *
+   * Read against Chuva de Meteoros, the other card that falls: that one is seven
+   * bodies over a second, weather rather than an event. This is one arrival,
+   * once — the difference between a bombardment and a verdict.
+   */
+  thunderstrike: {
+    shape: 'strike',
+    ring: 0x00f0ff,
+    zone: 0x1b2a6b,
+    motes: [0xffffff, 0x8ce8ff, 0xe0a0ff],
+    moteCount: 18,
+    direction: -1,
+    // The one card besides the meteor allowed to move the camera, and less than
+    // it: a bolt is sharp rather than heavy, and the shake should read as a
+    // flinch, not as a landslide.
+    trauma: 0.22,
   },
   plague: {
     shape: 'burst',

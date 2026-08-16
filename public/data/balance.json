@@ -455,6 +455,19 @@
       "target": "enemies",
       "apply": [{ "effect": "petrify" }]
     },
+    "thunderstrike": {
+      "name": "Fúria do Trovão",
+      "color": "blue",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 2.5,
+      "duration": 0.9,
+      "target": "enemies",
+      "apply": [
+        { "effect": "strike", "magnitude": 26 },
+        { "effect": "stun" }
+      ]
+    },
     "overload_field": {
       "name": "Campo de Sobrecarga",
       "color": "red",

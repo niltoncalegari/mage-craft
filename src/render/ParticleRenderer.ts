@@ -31,6 +31,7 @@ import {
   planColumnFall,
   VOXEL_POOL_SIZE,
 } from './columnFall';
+import { BOLT_POINTS, planBoltPath } from './boltPath';
 import {
   planRootGrowth,
   rootVoxelScale,
@@ -49,6 +50,21 @@ const SPARKLE_POOL_SIZE = 72;
 const RING_POOL_SIZE = 32;
 const ZONE_POOL_SIZE = 8;
 const DOME_POOL_SIZE = 4;
+
+/**
+ * Bolts a `strike` cast keeps.
+ *
+ * Small on purpose. A strike lasts {@link STRIKE_LIFE} against a global cast
+ * cooldown four times longer, so two overlapping needs both teams to fire the
+ * same card within a couple of frames of each other — and unlike a zone, a
+ * dropped bolt costs a flash nobody was going to look at twice.
+ */
+const STRIKE_POOL_SIZE = 3;
+/** How long the arc hangs before it is gone, in seconds. */
+const STRIKE_LIFE = 0.22;
+/** Ribbon widths for the white core and the coloured aura around it. */
+const STRIKE_CORE_WIDTH = 0.16;
+const STRIKE_GLOW_WIDTH = 0.42;
 const PLAYER_FX_STATE_SIZE = 32;
 const PARTICLE_DT = 1 / 60;
 const PARTICLE_GRAVITY = 7.5;
@@ -621,6 +637,16 @@ interface RootSystemSlot {
   active: boolean;
 }
 
+/** A bolt hanging in the air after a `strike` cast, crackling as it fades. */
+interface StrikeSlot {
+  readonly core: LightningBolt;
+  readonly glow: LightningBolt;
+  /** The traced arc, kept so both layers re-skin the same path every frame. */
+  readonly path: Float32Array;
+  life: number;
+  active: boolean;
+}
+
 /** Which beat of a falling meteor a queued entry is: the body, or the break. */
 type PendingKind = 'fall' | 'hit';
 
@@ -694,6 +720,8 @@ export class ParticleRenderer implements GameRenderer {
   private readonly meteorSlots: MeteorSlot[] = [];
   /** Cube particles: the fire a meteor sheds and the chunks it throws. */
   private readonly voxelSlots: ParticleSlot[] = [];
+  /** Bolts of a `strike` cast; two per slot, a white core inside a coloured aura. */
+  private readonly strikeSlots: StrikeSlot[] = [];
   /** Root systems, and the one instanced mesh all of their cubes are drawn from. */
   private readonly rootSlots: RootSystemSlot[] = [];
   private rootMesh: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | null = null;
@@ -912,6 +940,22 @@ export class ParticleRenderer implements GameRenderer {
       });
     }
 
+    // Two bolts per strike, the same core-and-aura pair the Stormcaller's
+    // projectile uses. A small pool: a strike lasts a fifth of a second against
+    // a global cast cooldown four times that, so overlap needs both teams to
+    // fire the same card within a frame or two of each other.
+    for (let i = 0; i < STRIKE_POOL_SIZE; i++) {
+      const core = this.createBolt(WHITE, 1);
+      const glow = this.createBolt(WHITE, 0.5);
+      this.strikeSlots.push({
+        core,
+        glow,
+        path: new Float32Array(BOLT_POINTS * 3),
+        life: 0,
+        active: false,
+      });
+    }
+
     // Roots are instanced rather than pooled as individual meshes: a system is
     // over a hundred cubes and three can be alive at once, which is a scale the
     // one-mesh-per-particle pools here were never meant to reach. Not additive,
@@ -1072,6 +1116,7 @@ export class ParticleRenderer implements GameRenderer {
     this.updateDomes();
     this.updatePendingImpacts();
     this.updateRoots();
+    this.updateStrikes();
     this.updateMeteors();
     this.updatePuddleBubbles();
   }
@@ -1917,6 +1962,10 @@ export class ParticleRenderer implements GameRenderer {
       case 'roots':
         this.spawnRoots(x, y, radius, cfg);
         break;
+      case 'strike':
+        this.spawnBoltStrike(x, y, radius, cfg);
+        this.spawnSpellMotes(x, y, radius, cfg);
+        break;
       case 'burst':
         this.spawnSpellMotes(x, y, radius, cfg);
         break;
@@ -2374,6 +2423,69 @@ export class ParticleRenderer implements GameRenderer {
 
     mesh.instanceMatrix.needsUpdate = true;
     mesh.visible = anyActive;
+  }
+
+  /**
+   * A `strike` cast: one bolt down through the roof of the arena onto the spot.
+   *
+   * The only beat in the catalog that arrives from outside the play space, and
+   * the only one drawn as a line rather than as an area — which is the point.
+   * Chuva de Meteoros also falls, but as seven bodies over a second: weather.
+   * This is one arrival, once. A bombardment against a verdict.
+   *
+   * Reuses the two-bolt core-and-glow pair the Stormcaller's projectile already
+   * has, welded to a single traced path through `updateFrom` so the aura sits on
+   * the arc instead of wandering off on its own walk. The path itself is
+   * {@link planBoltPath}, which is tested; this is only the drawing.
+   */
+  private spawnBoltStrike(x: number, y: number, radius: number, cfg: SpellVfx): void {
+    const slot = this.strikeSlots.find((s) => !s.active) ?? this.strikeSlots[0];
+    if (!slot) return;
+
+    toThree(this.tmp, x, y, 0);
+    slot.path.set(planBoltPath(this.tmp.x, this.tmp.z, 1 + radius * 0.25));
+    slot.life = STRIKE_LIFE;
+    slot.active = true;
+
+    slot.core.mesh.material.color.setHex(WHITE);
+    slot.glow.mesh.material.color.setHex(cfg.ring);
+    slot.core.mesh.visible = true;
+    slot.glow.mesh.visible = true;
+
+    // The flash at the foot of the bolt. Small and bright rather than wide: the
+    // strike's radius is already drawn by the shared zone disc, and a second
+    // wide white disc on top of it blows the whole area to a flat glare.
+    this.spawnRing(x, y, WHITE, radius * 0.5, 0.22);
+  }
+
+  /**
+   * Re-jitters every live strike and fades it out.
+   *
+   * The arc is re-traced every frame rather than drawn once, which is what makes a
+   * discharge crackle instead of sitting there as a static ribbon — the same
+   * reason `LightningBolt.update` re-jitters a projectile's trail.
+   */
+  private updateStrikes(): void {
+    for (const slot of this.strikeSlots) {
+      if (!slot.active) continue;
+
+      slot.life -= PARTICLE_DT;
+      if (slot.life <= 0) {
+        slot.active = false;
+        slot.core.mesh.visible = false;
+        slot.glow.mesh.visible = false;
+        continue;
+      }
+
+      const t = slot.life / STRIKE_LIFE;
+      // Re-traced from the same endpoints, so the bolt stays anchored on the
+      // spot the card was aimed at while everything between the ends moves.
+      const head = slot.path;
+      slot.core.updateFrom(head, 1, 0, STRIKE_CORE_WIDTH * t);
+      slot.glow.updateFrom(head, 1, 0, STRIKE_GLOW_WIDTH * t);
+      slot.core.mesh.material.opacity = t;
+      slot.glow.mesh.material.opacity = t * 0.5;
+    }
   }
 
   private spawnDome(x: number, y: number, radius: number, color: number): void {

@@ -163,6 +163,22 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * A crack, then the roll after it. The crack is the shortest, brightest noise
+   * in the catalog — a highpass slammed open and shut in 40ms — and the roll
+   * underneath is the only layer here that *starts late* rather than at zero,
+   * which is what makes the two read as one event at a distance rather than as
+   * two sounds. Petrificar is the other card that begins with a hard tick; that
+   * one stops dead where this one keeps rumbling.
+   */
+  thunderstrike: {
+    detune: 0.04,
+    layers: [
+      { kind: 'noise', filter: 'highpass', from: 3600, to: 1200, at: 0, duration: 0.04, gain: 0.07 },
+      { kind: 'tone', wave: 'sawtooth', freq: 320, toFreq: 60, at: 0, duration: 0.18, gain: 0.05 },
+      { kind: 'noise', filter: 'lowpass', from: 800, to: 120, at: 0.06, duration: 0.42, gain: 0.055 },
+    ],
+  },
+  /*
    * The only consonant thing in the game. A major triad, played straight, is
    * the fastest way to say "this one was for us" to someone who is not looking
    * — every other card is noise or a sweep.

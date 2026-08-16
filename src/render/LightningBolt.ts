@@ -1,10 +1,16 @@
 import * as THREE from 'three';
+import { BOLT_POINTS } from './boltPath';
 
 /**
  * Number of points along the bolt's path. Segments = POINTS - 1; more points
  * read as noise at this scale rather than as more detail.
+ *
+ * Taken from {@link BOLT_POINTS} rather than declared here, because a cast
+ * strike traces its own arc with {@link planBoltPath} and hands it to
+ * {@link LightningBolt.updateFrom} — two independent counts would mean a path
+ * that silently half-fills the buffer, drawing a bolt with a stump on the end.
  */
-const POINTS = 10;
+const POINTS = BOLT_POINTS;
 const SEGMENTS = POINTS - 1;
 /** Two crossed ribbons (one flat, one upright) per segment, 2 triangles each. */
 const VERTS_PER_POINT = 4;

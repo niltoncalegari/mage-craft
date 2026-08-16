@@ -19,7 +19,7 @@ import { DEFAULT_SPELL_VFX, SPELL_VFX, spellVfxFor, type SpellShape } from './sp
  * card that is missing from one is usually missing from the other.
  */
 
-const KNOWN_SHAPES: readonly SpellShape[] = ['burst', 'dome', 'column', 'torus', 'roots'];
+const KNOWN_SHAPES: readonly SpellShape[] = ['burst', 'dome', 'column', 'torus', 'roots', 'strike'];
 
 /**
  * Cards that are meant to fall through to {@link DEFAULT_SPELL_VFX}.
@@ -265,9 +265,21 @@ describe('trauma stays inside what a watched game can take', () => {
     }
   });
 
+  /*
+   * An allowlist rather than a threshold, so widening it is a decision somebody
+   * had to type. Two cards may move the camera, and they are the two that
+   * arrive from outside the arena: Chuva de Meteoros, which is the heaviest card
+   * in the game, and Fúria do Trovão, which is the sharpest. Everything else
+   * happens on the ground the cards are played on and has no business moving the
+   * instrument the player is reading his program through.
+   *
+   * Their numbers are not equal and should not be: a meteor shower is weight and
+   * a bolt is a flinch.
+   */
   it('spends it on the heavy cards only', () => {
     const shaking = ALL_SPELLS.filter((id) => (spellVfxFor(id).trauma ?? 0) > 0);
-    expect(shaking).toEqual(['meteor_shower']);
+    expect([...shaking].sort()).toEqual(['meteor_shower', 'thunderstrike']);
+    expect(spellVfxFor('thunderstrike').trauma!).toBeLessThan(spellVfxFor('meteor_shower').trauma!);
   });
 });
 
