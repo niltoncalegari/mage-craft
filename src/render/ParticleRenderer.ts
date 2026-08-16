@@ -3,6 +3,7 @@ import type { EventBus } from '../core/EventBus';
 import type { GameRenderer } from '../core/Game';
 import type { EntityId } from '../ecs/Entity';
 import type { AssetManager } from '../engine/AssetManager';
+import { prefersReducedMotion } from '../engine/reducedMotion';
 import { PLAYER, SNOWBALL, BUFF_COLORS } from '../game/config';
 import { fxStacks, type FxKind } from '../game/effects';
 import type { ElementId } from '../game/elements';
@@ -75,6 +76,17 @@ const COLUMN_SPEED = 9;
 const COLUMN_LIFE = 0.5;
 /** Tangential speed of a `torus`'s rim motes — what makes the rim read as turning. */
 const TORUS_RIM_SPEED = 2.2;
+/**
+ * What a cast's mote count is multiplied by under `prefers-reduced-motion`.
+ *
+ * The motes are thinned and the ground footprint — zone, rings, the white
+ * friendly flash — is left completely alone, because those are not decoration:
+ * they are the answer to *where* and *whose*, and a player who has asked for
+ * less motion has not asked to be told less. Same reason the continuous status
+ * emission is untouched: a stream of embers is how you know a mage is burning.
+ * What goes is the scatter over the top of it.
+ */
+const REDUCED_MOTE_SCALE = 0.4;
 
 /* ---- Status effect emission (GDD §8) --------------------------------------- */
 
@@ -1686,12 +1698,13 @@ export class ParticleRenderer implements GameRenderer {
    */
   private spawnColumnShaft(x: number, y: number, radius: number, cfg: SpellVfx): void {
     const falling = cfg.direction < 0;
-    for (let i = 0; i < COLUMN_SHAFT_COUNT; i++) {
+    const total = this.moteBudget(COLUMN_SHAFT_COUNT);
+    for (let i = 0; i < total; i++) {
       const angle = Math.random() * SPARKLE_TWO_PI;
       const dist = Math.sqrt(Math.random()) * radius * COLUMN_SHAFT_SPREAD;
       // Staggered up the shaft rather than all released from one end, so it
       // reads as a stream already in progress instead of a single clump.
-      const along = i / COLUMN_SHAFT_COUNT;
+      const along = i / total;
       toThree(
         this.tmp,
         x + Math.cos(angle) * dist,
@@ -1726,8 +1739,9 @@ export class ParticleRenderer implements GameRenderer {
    * it catches both.
    */
   private spawnRimMotes(x: number, y: number, radius: number, cfg: SpellVfx): void {
-    for (let i = 0; i < cfg.moteCount; i++) {
-      const angle = (i / cfg.moteCount) * Math.PI * 2;
+    const total = this.moteBudget(cfg.moteCount);
+    for (let i = 0; i < total; i++) {
+      const angle = (i / total) * Math.PI * 2;
       const dist = radius * (0.82 + Math.random() * 0.18);
       toThree(this.tmp, x + Math.cos(angle) * dist, y + Math.sin(angle) * dist, 0.1 + Math.random() * 0.5);
       this.spawnParticle(
@@ -1745,11 +1759,22 @@ export class ParticleRenderer implements GameRenderer {
     }
   }
 
+  /**
+   * How many motes a cast is allowed, after the motion preference. Read per
+   * cast rather than cached at construction — {@link prefersReducedMotion} is
+   * itself cached behind a change listener, so this costs nothing and picks up
+   * a player changing the setting mid-match.
+   */
+  private moteBudget(count: number): number {
+    return prefersReducedMotion() ? Math.max(1, Math.round(count * REDUCED_MOTE_SCALE)) : count;
+  }
+
   /** Motes filling the affected disc: they lift for a buff and rain down for a curse. */
   private spawnSpellMotes(x: number, y: number, radius: number, cfg: SpellVfx): void {
     const rising = cfg.direction > 0;
-    for (let i = 0; i < cfg.moteCount; i++) {
-      const angle = (i / cfg.moteCount) * Math.PI * 2 + Math.random() * 0.5;
+    const total = this.moteBudget(cfg.moteCount);
+    for (let i = 0; i < total; i++) {
+      const angle = (i / total) * Math.PI * 2 + Math.random() * 0.5;
       const dist = Math.sqrt(Math.random()) * radius;
       toThree(
         this.tmp,
