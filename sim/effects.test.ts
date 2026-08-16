@@ -11,6 +11,7 @@ import {
   applyEffect,
   chargeRateMultiplier,
   clearEffects,
+  damageDealtMultiplier,
   damageTakenMultiplier,
   effectOf,
   EFFECT_ORDER,
@@ -259,6 +260,20 @@ describe('effects — derived stats', () => {
     applyEffect(m, { kind: 'vulnerable', magnitude: 0.5, duration: 4 });
     // Still above 1: Campo de Sobrecarga wins the exchange, but only barely.
     expect(damageTakenMultiplier(m)).toBeCloseTo(1.05, 5);
+  });
+
+  /**
+   * The mirror of `damageTakenMultiplier`, and deliberately a separate
+   * question. One is asked of the body being hit and one of the body doing the
+   * hitting, and a card that confused them would buff the wrong squad.
+   */
+  it('raises damage dealt while empowered, leaving damage taken alone', () => {
+    const m = carrier();
+    expect(damageDealtMultiplier(m)).toBe(1);
+
+    applyEffect(m, { kind: 'empower', magnitude: 0.4, duration: 4 });
+    expect(damageDealtMultiplier(m)).toBeCloseTo(1.4, 5);
+    expect(damageTakenMultiplier(m)).toBe(1);
   });
 
   it('drains the shield pool and drops it once empty', () => {

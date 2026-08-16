@@ -58,6 +58,7 @@ import {
   applyEffect,
   chargeRateMultiplier,
   clearEffects,
+  damageDealtMultiplier,
   damageTakenMultiplier,
   isEffectKind,
   moveSpeedMultiplier,
@@ -1321,7 +1322,16 @@ export class World {
     // Arcane marks a target so the rest of the squad hits harder (GDD §8.7) —
     // applied before the shield, so vulnerability burns through Escudo Arcano
     // faster too.
-    let remaining = amount * damageTakenMultiplier(m);
+    //
+    // The attacker's own multiplier joins it here, resolved at the moment the
+    // damage lands rather than when it was set in motion. That is the same rule
+    // vulnerability already follows, and it keeps one clock for both sides of
+    // the exchange. `attackerId` is not always a mage — a Tower bolt carries the
+    // structure's id and a Praga zone the literal 'spell' — and neither is in
+    // `mages`, so both come back unmultiplied.
+    const attacker = opts.attackerId ? this.mages.get(opts.attackerId) : undefined;
+    const dealt = attacker ? damageDealtMultiplier(attacker) : 1;
+    let remaining = amount * dealt * damageTakenMultiplier(m);
     if (!opts.bypassShield) remaining = absorbWithShield(m, remaining);
     m.health -= remaining;
 

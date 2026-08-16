@@ -53,7 +53,9 @@ export type EffectKind =
   /** Healing over time; `tickHeal` per `tickInterval`. The DoT run backwards. */
   | 'regen'
   /** Damage taken down by `magnitude` (0.3 = 30% less). Vulnerable's mirror. */
-  | 'fortify';
+  | 'fortify'
+  /** Damage *dealt* up by `magnitude`. Asked of the attacker, not the target. */
+  | 'empower';
 
 /**
  * Iteration and wire order. Fixed so the effect list is canonical: a mage
@@ -70,6 +72,7 @@ export const EFFECT_ORDER: readonly EffectKind[] = [
   'regen',
   'vulnerable',
   'fortify',
+  'empower',
   'shield',
 ];
 
@@ -315,6 +318,18 @@ export function chargeRateMultiplier(carrier: EffectCarrier, auraBonus = 0): num
  */
 export function damageTakenMultiplier(carrier: EffectCarrier): number {
   return (1 + magnitudeOf(carrier, 'vulnerable')) * (1 - magnitudeOf(carrier, 'fortify'));
+}
+
+/**
+ * Multiplier on damage this carrier *deals*.
+ *
+ * Kept a separate question from {@link damageTakenMultiplier} rather than a
+ * signed version of it: one is asked of the body being hit and one of the body
+ * doing the hitting, and the only thing stopping a card from buffing the wrong
+ * squad is that the two never share a function.
+ */
+export function damageDealtMultiplier(carrier: EffectCarrier): number {
+  return 1 + magnitudeOf(carrier, 'empower');
 }
 
 /** Damage left after the shield pool ate what it could; drains the pool. */

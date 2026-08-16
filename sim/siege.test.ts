@@ -347,6 +347,32 @@ describe('spells (GDD §9)', () => {
     expect(ally.health).toBeGreaterThan(hurt);
   });
 
+  /**
+   * The first card that changes what a mage's *own* attacks are worth, rather
+   * than what happens to it. Red already had Campo de Sobrecarga making a
+   * target softer; this makes a shooter harder, and the two have to be
+   * separable — a bug that swapped them would buff whoever you aimed at.
+   */
+  it('makes an empowered mage hit harder, and leaves the rest of the squad alone', () => {
+    const w = new World();
+    const frenzied = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    const plainAlly = w.summon(TEAM_A, 'pyromancer', new Vec2(10, 0));
+    const target = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+
+    w.castSpell(TEAM_A, 'blood_frenzy', frenzied.position);
+
+    target.health = target.maxHealth;
+    w.dealDamage(target, 20, { attackerId: frenzied.id });
+    const empowered = target.maxHealth - target.health;
+
+    target.health = target.maxHealth;
+    w.dealDamage(target, 20, { attackerId: plainAlly.id });
+    const plain = target.maxHealth - target.health;
+
+    expect(plain).toBe(20);
+    expect(empowered).toBeCloseTo(28, 5);
+  });
+
   it('shields absorb damage before health', () => {
     const w = new World();
     const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));

@@ -236,6 +236,21 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     moteCount: 20,
     direction: -1,
   },
+  /*
+   * A burst, and red's only one. The two reds it sits between are a torus that
+   * switches an area on and a column that drops rocks on it; this is neither —
+   * it is a thing that happens *to the squad standing here*, once, and then
+   * they go and do something about it. Direction lifts, because for once the
+   * red card is good news for whoever it caught.
+   */
+  blood_frenzy: {
+    shape: 'burst',
+    ring: 0xff5c5c,
+    zone: 0x7a1020,
+    motes: [0xffb3b3, 0xe63946, 0x8b0d1f],
+    moteCount: 24,
+    direction: 1,
+  },
   overload_field: {
     shape: 'torus',
     ring: 0xffd166,

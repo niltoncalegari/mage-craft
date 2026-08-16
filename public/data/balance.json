@@ -175,6 +175,7 @@
     "cast_haste": { "stacking": "refresh_strongest", "maxMagnitude": 1.5 },
     "vulnerable": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "fortify": { "stacking": "refresh_strongest", "maxMagnitude": 0.5 },
+    "empower": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "regen": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "stun": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "root": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
@@ -420,6 +421,16 @@
         { "effect": "regen", "tickInterval": 1, "tickHeal": 5 },
         { "effect": "fortify", "magnitude": 0.3 }
       ]
+    },
+    "blood_frenzy": {
+      "name": "Frenesi Sanguinário",
+      "color": "red",
+      "kind": "buff",
+      "cost": 4,
+      "radius": 3.5,
+      "duration": 4,
+      "target": "allies",
+      "apply": [{ "effect": "empower", "magnitude": 0.4 }]
     },
     "overload_field": {
       "name": "Campo de Sobrecarga",

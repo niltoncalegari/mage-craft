@@ -28,6 +28,7 @@ export type SpellId =
   | 'entangling_roots'
   | 'rejuvenating_breeze'
   | 'consecrated_ground'
+  | 'blood_frenzy'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -70,6 +71,7 @@ export interface SpellCard {
 export const ALL_SPELLS: readonly SpellId[] = [
   'overload_field',
   'meteor_shower',
+  'blood_frenzy',
   'plague',
   'sticky_swamp',
   'entangling_roots',

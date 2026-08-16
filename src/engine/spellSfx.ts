@@ -57,6 +57,19 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * The one buff that should not sound kind. Bênção, Escudo Arcano and Solo
+   * Consagrado are all consonant; this is a squad being wound up, so it is a
+   * square snarling upward under a short hard noise — nearer Praga's family
+   * than to the other three cards that help you.
+   */
+  blood_frenzy: {
+    detune: 0.06,
+    layers: [
+      { kind: 'tone', wave: 'square', freq: 98, toFreq: 196, at: 0, duration: 0.32, gain: 0.05 },
+      { kind: 'noise', filter: 'bandpass', from: 1600, to: 700, at: 0, duration: 0.16, gain: 0.045, q: 2 },
+    ],
+  },
+  /*
    * The heaviest card in the deck, the only one allowed to move the camera, and
    * the only one with a sub under it. Everything else here lives above 100Hz;
    * the boom is what makes five mana audible as five mana.

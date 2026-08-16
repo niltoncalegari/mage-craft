@@ -158,6 +158,7 @@ export const EFFECT_LABEL: Readonly<Record<EffectKind, string>> = {
   root: 'enraizamento',
   regen: 'regeneração',
   fortify: 'fortificação',
+  empower: 'fúria',
 };
 
 export const EFFECT_CHOICES: readonly EffectKind[] = EFFECT_ORDER;
