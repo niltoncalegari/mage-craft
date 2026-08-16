@@ -47,6 +47,15 @@ const STUN_MOTE_HEIGHT = 1.55;
  * hat's own origin would slide the brim off the head instead.
  */
 const HAT_PIVOT_Y = 1.1;
+
+/**
+ * Height of Marca do Carrasco's drop above the mage's origin.
+ *
+ * Clear of the tallest hat in the roster: the mark has to be findable by
+ * sweeping the field, and one that hides behind a cone on some mages and not
+ * others is a mark the player learns not to trust.
+ */
+const MARK_DROP_Y = 2.05;
 /**
  * Spring driving the hat tip's lag (see {@link PlayerRenderer.applySecondaryMotion}).
  * Tuned to settle in roughly a third of a second without ringing: a hat that
@@ -97,6 +106,14 @@ interface PlayerView {
   /** Escudo Arcano indicator (GDD §9): a ring on the ground plus the bubble it implies. */
   readonly shieldRing: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
   readonly shieldDome: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+  /**
+   * Marca do Carrasco's drop, floating over the crown.
+   *
+   * Its own material rather than a shared one, like the frost wash and the
+   * vulnerability shell, because its opacity breathes per mage — a shared
+   * material would make every marked mage pulse in lockstep with the first.
+   */
+  readonly markDrop: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   /** Bênção de Ímpeto (GDD §9) — spins fast, the way haste should read. */
   readonly hasteRing: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
   /** Maldição da Lentidão or an ice hit (GDD §8.3, §9) — drags the other way. */
@@ -327,6 +344,35 @@ export class PlayerRenderer implements GameRenderer {
     shieldDome.visible = false;
     root.add(shieldDome);
 
+    /*
+     * Marca do Carrasco is the one card that does nothing you can see when it
+     * lands — it only pays later, and only against a target already dying. So
+     * the single question it has to answer on screen is *who is carrying it*,
+     * and that has to be legible from the camera's height across a whole squad.
+     *
+     * Above the crown rather than on the ground: every other status here owns a
+     * ring at the feet, and a fourth one would be a fourth stripe in a stack the
+     * eye already has to parse. Overhead is empty space, and a mark is the one
+     * status that is genuinely *about* the individual rather than about the
+     * fight around them.
+     *
+     * A cone pointed down, which at this size is a drop hanging. Not additive:
+     * the drop should read as blood rather than as glow, and everything else
+     * bright on this mage is already additive.
+     */
+    const markDrop = new THREE.Mesh(
+      this.assets.geometry('player-mark-drop', () => {
+        const geo = new THREE.ConeGeometry(0.1, 0.26, 8);
+        // Point the tip at the ground: a drop hangs, it does not stand.
+        geo.rotateX(Math.PI);
+        return geo;
+      }),
+      new THREE.MeshBasicMaterial({ color: 0xd62839, transparent: true, opacity: 0 }),
+    );
+    markDrop.position.y = MARK_DROP_Y;
+    markDrop.visible = false;
+    root.add(markDrop);
+
     const hasteRing = this.buffRing('player-haste-ring', 0.9, 1.0, 0xffd166);
     root.add(hasteRing);
 
@@ -433,6 +479,7 @@ export class PlayerRenderer implements GameRenderer {
       ring,
       shieldRing,
       shieldDome,
+      markDrop,
       hasteRing,
       slowRing,
       vulnerableShell,
@@ -448,7 +495,13 @@ export class PlayerRenderer implements GameRenderer {
       fadeMaterials,
       baseColors: fadeMaterials.map((m) => m.color.clone()),
       tint: 0,
-      ownedMaterials: [...fadeMaterials, gemHalo.material, vulnerableShell.material, stunMoteMaterial],
+      ownedMaterials: [
+        ...fadeMaterials,
+        gemHalo.material,
+        vulnerableShell.material,
+        stunMoteMaterial,
+        markDrop.material,
+      ],
       opacity: 1,
       swayX: 0,
       swayZ: 0,
@@ -866,6 +919,7 @@ export class PlayerRenderer implements GameRenderer {
     if (slowed) view.slowRing.rotation.y = -t * 0.9;
     if (shielded) view.shieldDome.rotation.y = t * 0.6;
 
+    this.updateMarkDrop(view, player, defeated);
     this.updateBodyTint(view, player, defeated);
     this.updateVulnerableShell(view, player, defeated);
     this.updateStunMotes(view, player, defeated);
@@ -908,6 +962,33 @@ export class PlayerRenderer implements GameRenderer {
     // static shell disappears into the scene after a second of looking at it.
     view.vulnerableShell.material.opacity = 0.16 + Math.sin(this.clock * 3.4) * 0.07;
     view.vulnerableShell.rotation.y = this.clock * 0.8;
+  }
+
+  /**
+   * Marca do Carrasco's drop: hangs over the crown for as long as the mark
+   * runs, bobbing and breathing.
+   *
+   * Kept alive for the whole mark rather than only while it is *paying* — the
+   * mark is inert until the target drops under the execute threshold, and the
+   * player's decision (send the squad at this one) has to be makeable before
+   * that, not after. Showing it only once it pays would light up exactly when
+   * the information stopped being actionable.
+   */
+  private updateMarkDrop(view: PlayerView, player: Player, defeated: boolean): void {
+    const marked = hasFx(player, 'marked') && !defeated;
+    view.markDrop.visible = marked;
+    if (!marked) {
+      view.markDrop.material.opacity = 0;
+      return;
+    }
+
+    const t = this.clock;
+    // A slow swell rather than a blink: this is a standing condition, and a
+    // blinking overhead marker reads as an alert that wants clicking — which is
+    // the one thing the player cannot do in this game.
+    view.markDrop.material.opacity = 0.72 + Math.sin(t * 3) * 0.22;
+    view.markDrop.position.y = MARK_DROP_Y + Math.sin(t * 2) * 0.05;
+    view.markDrop.rotation.y = t * 1.2;
   }
 
   private updateStunMotes(view: PlayerView, player: Player, defeated: boolean): void {

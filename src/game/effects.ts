@@ -18,7 +18,13 @@ export type FxKind =
   | 'burn'
   | 'vulnerable'
   | 'shield'
-  | 'stun';
+  | 'stun'
+  | 'root'
+  | 'regen'
+  | 'fortify'
+  | 'empower'
+  | 'marked'
+  | 'petrify';
 
 export interface MageFx {
   readonly kind: string;
