@@ -59,6 +59,13 @@ export interface SpellVfx {
    * card is delayed, which makes that assertion vacuous in one direction today
    * and exactly the point: it is a trap set for the Tier 2 cards (Erupção
    * Vulcânica, Chuva de Meteoros) that bring the `delayed` rider with them.
+   *
+   * **Declared, not yet drawn.** `ParticleRenderer` does not read this field —
+   * there is nothing in the simulation to warn about, so a warning built now
+   * would be a beat nobody has ever seen fire, in the one part of the codebase
+   * whose bugs are only findable by looking. The commit that adds the `delayed`
+   * rider owns the drawing, and the second assertion in the test file is what
+   * stops anything from setting a telegraph before then and getting silence.
    */
   telegraph?: number;
   /**
