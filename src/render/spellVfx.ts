@@ -169,6 +169,25 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     moteCount: 24,
     direction: 1,
   },
+  /*
+   * Blue's first card, in a colour the field has never shown — Maldição da
+   * Lentidão is drawn blue but belongs to the black deck, so this is the first
+   * time the palette and the deck agree.
+   *
+   * A dome, because what the card does is put a body inside something. Escudo
+   * Arcano's dome protects what it covers and so, awkwardly and deliberately,
+   * does this one: petrify makes its victim untouchable. Reading the same is
+   * the honest outcome, and direction is what stops them being confused — the
+   * shield lifts, the stone presses down and holds.
+   */
+  petrify: {
+    shape: 'dome',
+    ring: 0x9aa5b1,
+    zone: 0x39404a,
+    motes: [0xc7ced6, 0x7d8894, 0x4a525c],
+    moteCount: 16,
+    direction: -1,
+  },
   plague: {
     shape: 'burst',
     ring: 0xb6e84a,

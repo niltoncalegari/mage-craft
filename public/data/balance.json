@@ -178,6 +178,7 @@
     "fortify": { "stacking": "refresh_strongest", "maxMagnitude": 0.5 },
     "empower": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "marked": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
+    "petrify": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "regen": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "stun": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "root": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
@@ -443,6 +444,16 @@
       "duration": 6,
       "target": "enemies",
       "apply": [{ "effect": "marked", "magnitude": 0.5 }]
+    },
+    "petrify": {
+      "name": "Petrificar",
+      "color": "blue",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 2.5,
+      "duration": 2.5,
+      "target": "enemies",
+      "apply": [{ "effect": "petrify" }]
     },
     "overload_field": {
       "name": "Campo de Sobrecarga",

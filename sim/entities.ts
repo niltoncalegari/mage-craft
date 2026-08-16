@@ -20,7 +20,7 @@ export function opponentOf(team: Team): Team {
  * `charging` and `recovering` do *not* root a mage — only `stunned`/`dead` do,
  * matching the client's `canAcceptOrders`.
  */
-export type MageState = 'idle' | 'moving' | 'charging' | 'recovering' | 'stunned' | 'dead';
+export type MageState = 'idle' | 'moving' | 'charging' | 'recovering' | 'stunned' | 'petrified' | 'dead';
 
 /** The latest input command for a mage, applied at the start of a tick (GDD §6). */
 export interface MageInput {

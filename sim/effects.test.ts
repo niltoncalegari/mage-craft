@@ -9,9 +9,11 @@ import { describe, expect, it } from 'vitest';
 import {
   absorbWithShield,
   applyEffect,
+  canAct,
   chargeRateMultiplier,
   clearEffects,
   damageDealtMultiplier,
+  damageImmune,
   damageTakenMultiplier,
   effectOf,
   EFFECT_ORDER,
@@ -274,6 +276,36 @@ describe('effects — derived stats', () => {
     applyEffect(m, { kind: 'empower', magnitude: 0.4, duration: 4 });
     expect(damageDealtMultiplier(m)).toBeCloseTo(1.4, 5);
     expect(damageTakenMultiplier(m)).toBe(1);
+  });
+
+  /**
+   * Petrify is the only effect that cuts both ways, and the two halves have to
+   * be asked separately or the card cannot be reasoned about. Stone does not
+   * act; stone also does not bleed. A player who petrifies the enemy carry has
+   * bought three seconds of silence and paid for them by making it unkillable
+   * for the same three seconds — that trade only exists if `canAct` and
+   * `damageImmune` are both true at once, and it is why this is not just a
+   * longer stun.
+   */
+  it('takes a petrified mage out of the fight in both directions at once', () => {
+    const m = carrier();
+    expect(canAct(m)).toBe(true);
+    expect(damageImmune(m)).toBe(false);
+
+    applyEffect(m, { kind: 'petrify', duration: 2 });
+
+    expect(canAct(m)).toBe(false);
+    expect(damageImmune(m)).toBe(true);
+    // Stone is also rooted, without needing a second effect to say so.
+    expect(moveSpeedMultiplier(m)).toBe(0.1);
+  });
+
+  it('stops a stunned mage acting without making it safe to stand there', () => {
+    const m = carrier();
+    applyEffect(m, { kind: 'stun', duration: 1 });
+
+    expect(canAct(m)).toBe(false);
+    expect(damageImmune(m)).toBe(false);
   });
 
   it('drains the shield pool and drops it once empty', () => {

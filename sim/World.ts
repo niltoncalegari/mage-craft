@@ -57,10 +57,13 @@ import { defaultArena } from './defaultMap';
 import {
   absorbWithShield,
   applyEffect,
+  canAct,
   chargeRateMultiplier,
   clearEffects,
   damageDealtMultiplier,
+  damageImmune,
   damageTakenMultiplier,
+  hasEffect,
   isEffectKind,
   magnitudeOf,
   moveSpeedMultiplier,
@@ -596,6 +599,17 @@ export class World {
         m.respawnTimer = decay(m.respawnTimer, dt);
         if (m.respawnTimer === 0) this.respawn(m);
       }
+      return;
+    }
+
+    // Checked before the stun block, and without the knockback slide: a stunned
+    // mage is a body being shoved, a petrified one is scenery. Nothing moves it
+    // and nothing it was doing survives — the charge is dropped rather than
+    // paused, so stone never resumes mid-throw when it cracks.
+    if (!canAct(m) && hasEffect(m, 'petrify')) {
+      m.knockbackVelocity = Vec2.zero;
+      m.charge = 0;
+      m.state = 'petrified';
       return;
     }
 
@@ -1319,7 +1333,10 @@ export class World {
    * own whether that earns a kill.
    */
   dealDamage(m: Mage, amount: number, opts: DamageOptions = {}): void {
-    if (!m.alive || m.immunityTimer > 0) return;
+    // Stone is not a legal target, so this returns before the shield is touched
+    // and before anything can be credited a kill — see `damageImmune`, which is
+    // a separate question from a multiplier of zero for exactly that reason.
+    if (!m.alive || m.immunityTimer > 0 || damageImmune(m)) return;
 
     // Arcane marks a target so the rest of the squad hits harder (GDD §8.7) —
     // applied before the shield, so vulnerability burns through Escudo Arcano

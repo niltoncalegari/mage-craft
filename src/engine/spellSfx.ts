@@ -150,6 +150,19 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * A slab landing and then nothing. One very short low thud with a lowpass
+   * slammed shut over it — no tail, no ring, no motion after the first 80ms,
+   * which is the only sound in the catalog that simply stops. Everything else
+   * decays; stone does not decay, it is just suddenly there.
+   */
+  petrify: {
+    detune: 0.015,
+    layers: [
+      { kind: 'noise', filter: 'lowpass', from: 900, to: 90, at: 0, duration: 0.08, gain: 0.055 },
+      { kind: 'tone', wave: 'triangle', freq: 84, toFreq: 52, at: 0, duration: 0.14, gain: 0.05 },
+    ],
+  },
+  /*
    * The only consonant thing in the game. A major triad, played straight, is
    * the fastest way to say "this one was for us" to someone who is not looking
    * — every other card is noise or a sweep.

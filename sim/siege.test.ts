@@ -403,6 +403,34 @@ describe('spells (GDD §9)', () => {
     expect(before - dying.health).toBeCloseTo(15, 5);
   });
 
+  /**
+   * Blue's first card, and the only one in the game that is a bad idea half the
+   * time. Petrifying the enemy carry buys silence and pays for it by making that
+   * carry unkillable for the same window — so this is the card that punishes a
+   * program which fires on sight hardest, because the wrong moment is not merely
+   * wasteful, it is a rescue.
+   */
+  it('turns a mage to stone: it neither acts nor can be hurt, until it wears off', () => {
+    const w = new World();
+    const victim = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0));
+
+    w.castSpell(TEAM_A, 'petrify', victim.position);
+    const full = victim.health;
+
+    w.dealDamage(victim, 40);
+    expect(victim.health).toBe(full);
+    expect(moveSpeedMultiplier(victim)).toBe(0.1);
+
+    // `state` is assigned in updateMage, so it takes a tick to show.
+    w.step(SIM_DT);
+    expect(victim.state).toBe('petrified');
+
+    // Past the duration the stone is gone and so is the protection.
+    stepN(w, Math.ceil(3 / SIM_DT));
+    w.dealDamage(victim, 40);
+    expect(victim.health).toBeLessThan(full);
+  });
+
   it('shields absorb damage before health', () => {
     const w = new World();
     const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));

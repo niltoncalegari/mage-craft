@@ -61,13 +61,21 @@ export type EffectKind =
    * target is already under {@link EXECUTE_THRESHOLD} of its health. Inert
    * against anything healthy, which is the card's whole design.
    */
-  | 'marked';
+  | 'marked'
+  /**
+   * Turned to stone. Cannot move, cannot act, and cannot be hurt — the only
+   * effect in the game that cuts both ways at once, which is the whole of the
+   * card that applies it: three seconds of silence bought by three seconds of
+   * invulnerability.
+   */
+  | 'petrify';
 
 /**
  * Iteration and wire order. Fixed so the effect list is canonical: a mage
  * slowed-then-burned and one burned-then-slowed serialise identically.
  */
 export const EFFECT_ORDER: readonly EffectKind[] = [
+  'petrify',
   'stun',
   'root',
   'slow',
@@ -297,7 +305,7 @@ export function tickEffects(carrier: EffectCarrier, dt: number): EffectTick[] | 
  * root.
  */
 export function moveSpeedMultiplier(carrier: EffectCarrier): number {
-  if (hasEffect(carrier, 'root')) return 0.1;
+  if (hasEffect(carrier, 'root') || hasEffect(carrier, 'petrify')) return 0.1;
   const slow = magnitudeOf(carrier, 'slow');
   const haste = magnitudeOf(carrier, 'haste');
   return Math.max(0.1, 1 - slow) * (1 + haste);
@@ -337,6 +345,30 @@ export function damageTakenMultiplier(carrier: EffectCarrier): number {
  */
 export function damageDealtMultiplier(carrier: EffectCarrier): number {
   return 1 + magnitudeOf(carrier, 'empower');
+}
+
+/**
+ * Whether this carrier may shoot, charge or otherwise take its turn.
+ *
+ * Two kinds say no, and they are not interchangeable. A stun is a flinch — it
+ * costs a moment and leaves the body exactly as hittable as it was. Petrify
+ * takes the mage off the board entirely, which is why {@link damageImmune} is a
+ * separate question with a different answer for each.
+ */
+export function canAct(carrier: EffectCarrier): boolean {
+  return !hasEffect(carrier, 'petrify') && !hasEffect(carrier, 'stun');
+}
+
+/**
+ * Whether damage simply does not land on this carrier.
+ *
+ * Deliberately not a multiplier of zero in {@link damageTakenMultiplier}: a
+ * zero there would still drain a shield, still credit a kill on a corpse that
+ * took no damage, and still read as "took 0 damage" rather than "was not a
+ * legal target". Immunity is a different sentence from a very small number.
+ */
+export function damageImmune(carrier: EffectCarrier): boolean {
+  return hasEffect(carrier, 'petrify');
 }
 
 /** Damage left after the shield pool ate what it could; drains the pool. */
