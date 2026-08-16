@@ -5,7 +5,7 @@ import type { EntityId } from '../ecs/Entity';
 import type { AssetManager } from '../engine/AssetManager';
 import { prefersReducedMotion } from '../engine/reducedMotion';
 import { PLAYER, SNOWBALL, BUFF_COLORS } from '../game/config';
-import { fxStacks, type FxKind } from '../game/effects';
+import { fxStacks } from '../game/effects';
 import type { ElementId } from '../game/elements';
 import type { Player, Puddle, Snowball } from '../game/types';
 import type { World } from '../game/World';
@@ -32,6 +32,7 @@ import {
   VOXEL_POOL_SIZE,
 } from './columnFall';
 import { BOLT_POINTS, planBoltPath } from './boltPath';
+import { EFFECT_VFX, newEmissionTimers, type EffectEmission } from './effectVfx';
 import {
   planRootGrowth,
   rootVoxelScale,
@@ -153,114 +154,6 @@ const TORUS_RIM_SPEED = 2.2;
  * What goes is the scatter over the top of it.
  */
 const REDUCED_MOTE_SCALE = 0.4;
-
-/* ---- Status effect emission (GDD §8) --------------------------------------- */
-
-/**
- * What an effect running *on* a mage sheds, one row per {@link FxKind}.
- *
- * This was two hand-written branches, which was the right size for two
- * effects and the wrong shape for what is coming: Tier 2 alone brings eight
- * new kinds (petrify, root, silence, regen, fortify, marked, empower), and
- * eight more branches in a method nobody reads is how an effect ends up
- * shipping invisible.
- *
- * **Emission only.** The rings, the body tint and the vulnerability shell live
- * in `PlayerRenderer`, because they are per-mage cloned materials and this
- * class owns none of them. So a kind belongs here when a *stream of particles*
- * says something the silhouette does not — which is why `shield`, `haste`,
- * `slow` and `stun` are absent rather than forgotten: all four already have a
- * ring or a shell on the mage, and a second cue would only cost pool slots.
- *
- * The particle pool is a shared 900 and `spawnParticle` silently drops a
- * request when it is full, so a continuous emission has to be cheap: a burning
- * squad of four must not starve the impact bursts of their own fight. The
- * intervals are that budget — burn's ~55ms per stack, three stacks deep, is at
- * worst ~55 particles/sec across a whole team.
- */
-interface EffectEmission {
-  readonly kind: FxKind;
-  /** Seconds between motes at one stack. */
-  readonly interval: number;
-  /**
-   * Whether deeper stacks emit proportionally faster. On for burn — the only
-   * cue that a mage is three stacks deep rather than one — and meaningless for
-   * anything that does not stack.
-   */
-  readonly perStack: boolean;
-  readonly colors: readonly number[];
-  /** Ring around the mage the mote appears on: base radius plus random spread. */
-  readonly radius: number;
-  readonly spread: number;
-  /** Height band above the ground it appears in. */
-  readonly height: number;
-  readonly heightSpread: number;
-  /** Outward horizontal speed, and vertical speed (negative sinks). */
-  readonly drift: number;
-  readonly rise: number;
-  readonly size: number;
-  readonly life: number;
-  readonly gravityScale: number;
-}
-
-const EFFECT_VFX: readonly EffectEmission[] = [
-  {
-    kind: 'burn',
-    interval: 0.055,
-    perStack: true,
-    colors: [0xffb238, 0xff5a1f, 0xffe9a8],
-    radius: 0.1,
-    spread: 0.28,
-    height: 0.15,
-    heightSpread: 0.7,
-    drift: 0.25,
-    rise: 1.25,
-    size: 0.09,
-    life: 0.42,
-    /** Flames rise, so gravity works against them rather than for them. */
-    gravityScale: -0.35,
-  },
-  {
-    /** A note sagging off a mage whose concentration is being jammed. */
-    kind: 'cast_slow',
-    interval: 0.34,
-    perStack: false,
-    colors: [0xf72585],
-    radius: 0.34,
-    spread: 0,
-    height: 1.25,
-    heightSpread: 0.25,
-    drift: 0.12,
-    rise: -0.15,
-    size: 0.06,
-    life: 0.75,
-    gravityScale: 0.12,
-  },
-  {
-    /*
-     * The one effect in the Tier 1 deck with no tell at all before this. Two of
-     * the seven cards apply it (Bênção de Ímpeto, Campo de Sobrecarga), and a
-     * mage charging faster looks exactly like a mage charging — which makes
-     * "did my buff land?" unanswerable from the field.
-     *
-     * Deliberately the mirror of `cast_slow` above: same band, same size, rises
-     * where that one sags. The pair is the read.
-     */
-    kind: 'cast_haste',
-    interval: 0.3,
-    perStack: false,
-    colors: [0xffe9a8, 0xffd166],
-    radius: 0.34,
-    spread: 0,
-    height: 0.9,
-    heightSpread: 0.3,
-    drift: 0.12,
-    rise: 0.85,
-    size: 0.06,
-    life: 0.7,
-    gravityScale: -0.05,
-  },
-];
 
 const SHIELD_BREAK_COLOR = 0xfff3c4;
 
@@ -1013,7 +906,7 @@ export class ParticleRenderer implements GameRenderer {
         wasMoving: false,
         lastVx: 0,
         lastVy: 0,
-        timers: new Array<number>(EFFECT_VFX.length).fill(0),
+        timers: newEmissionTimers(),
       });
     }
 
