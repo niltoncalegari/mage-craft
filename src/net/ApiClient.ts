@@ -85,6 +85,27 @@ export interface CardStat {
   casts: number;
 }
 
+/**
+ * A saved loadout as the account stores it.
+ *
+ * `strategy` is carried through untyped-ish on purpose: the API stores a rule's
+ * condition opaquely (it cannot import the game's rule vocabulary), so the
+ * shape that comes back is only as good as whatever wrote it. `loadout.ts`
+ * runs `validateStrategy` over it before anything else sees it.
+ */
+export interface LoadoutProfileDTO {
+  id: string;
+  name: string;
+  squad: string[];
+  deck: string[];
+  strategy: { version: number; name: string; rules: unknown[] };
+}
+
+export interface LoadoutResponse {
+  loadouts: LoadoutProfileDTO[];
+  activeLoadoutId: string | null;
+}
+
 export interface RankingEntry {
   userId: string;
   username: string;
@@ -154,6 +175,19 @@ export const ApiClient = {
 
   myCardStats(token: string): Promise<{ cards: CardStat[] }> {
     return request('/api/me/stats/cards', { headers: { Authorization: `Bearer ${token}` } });
+  },
+
+  myLoadout(token: string): Promise<LoadoutResponse> {
+    return request('/api/me/loadout', { headers: { Authorization: `Bearer ${token}` } });
+  },
+
+  /** Total replacement — the account holds exactly what is sent. */
+  putLoadout(token: string, body: { loadouts: unknown[]; activeLoadoutId: string | null }): Promise<LoadoutResponse> {
+    return request('/api/me/loadout', {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
   },
 
   ranking(sort: 'rating' | 'wins' | 'kdr' = 'rating', page = 1, limit = 20): Promise<{ entries: RankingEntry[] }> {

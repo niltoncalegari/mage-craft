@@ -14,7 +14,7 @@ const CURSE_COLOR = '#c9853e';
  * opposite of a squad): the deck is a rotating queue with no hidden randomness
  * (`sim/Deck.ts`), so doubling a card is how you guarantee it comes back around.
  */
-export function DeckBuilder(): JSX.Element {
+export function DeckBuilder(props: { onSaved?: () => void } = {}): JSX.Element {
   const [deck, setDeck] = useState<CardId[]>(() => loadLoadout().deck);
   const [saved, setSaved] = useState(false);
 
@@ -31,6 +31,7 @@ export function DeckBuilder(): JSX.Element {
     if (!validation.ok) return;
     saveDeck(deck);
     setSaved(true);
+    props.onSaved?.();
   };
 
   const totalCost = deck.reduce((sum, id) => sum + (spellFor(id)?.cost ?? 0), 0);

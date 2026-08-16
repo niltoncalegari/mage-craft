@@ -4,6 +4,7 @@ import { defaultSquad, isRosterId, rosterFor } from '../../../sim/cards';
 import { getElement, toCssColor } from '../../game/elements';
 import { ApiClient, type UserSummary } from '../../net/ApiClient';
 import type { UserProfile } from '../auth';
+import { pushLoadoutToServer, syncLoadoutFromServer } from '../loadout';
 import styles from '../App.module.css';
 import { DeckBuilder } from './DeckBuilder';
 import { HistoryPanel } from './HistoryPanel';
@@ -44,10 +45,21 @@ export function HomeScreen(props: {
       .catch(() => {
         /* the tiles matter more than the stat row; the dashboard reports errors */
       });
+
+    // The account's loadout wins on boot, so signing in on a new machine brings
+    // your squad, deck and program with you. Fire-and-forget: a pull that fails
+    // leaves this device playing its own copy, which is not worth a banner.
+    syncLoadoutFromServer(props.user.token).catch(() => {});
+
     return () => {
       cancelled = true;
     };
   }, [props.user.token]);
+
+  /** The local copy wins on save — push it, and never block the builder on it. */
+  const pushLoadout = (): void => {
+    pushLoadoutToServer(props.user.token).catch(() => {});
+  };
 
   const wins = serverStats?.wins ?? props.stats?.wins ?? props.user.wins;
   const losses = serverStats?.losses ?? props.stats?.losses ?? props.user.losses;
@@ -146,8 +158,8 @@ export function HomeScreen(props: {
           </button>
         ))}
       </div>
-      {loadoutTab === 'squad' ? <SquadBuilder /> : null}
-      {loadoutTab === 'deck' ? <DeckBuilder /> : null}
+      {loadoutTab === 'squad' ? <SquadBuilder onSaved={pushLoadout} /> : null}
+      {loadoutTab === 'deck' ? <DeckBuilder onSaved={pushLoadout} /> : null}
       {loadoutTab === 'history' ? <HistoryPanel user={props.user} /> : null}
 
       <div class={styles.panelHeader} style={{ marginTop: 28 }}>
