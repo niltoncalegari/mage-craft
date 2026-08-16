@@ -18,9 +18,19 @@ import {
   projectileGeometry,
   runeRingGeometry,
   UPRIGHT_SPIN_SHAPES,
+  voxelRockGeometry,
   type ProjectileShape,
 } from './projectileGeometry';
-import { METEOR_FALL_TIME, METEOR_POOL_SIZE, planColumnFall } from './columnFall';
+import {
+  METEOR_DEBRIS_COUNT,
+  METEOR_DEBRIS_LIFE,
+  METEOR_FALL_TIME,
+  METEOR_POOL_SIZE,
+  METEOR_TRAIL_LIFE,
+  METEOR_TRAIL_RATE,
+  planColumnFall,
+  VOXEL_POOL_SIZE,
+} from './columnFall';
 import { spellVfxFor, type SpellVfx } from './spellVfx';
 
 const SNOWBALL_POOL_SIZE = 64;
@@ -68,7 +78,7 @@ const MIST_CHANCE = 0.22;
 
 /* ---- Cast shapes (GDD §17) ------------------------------------------------- */
 /** Where a falling meteor starts, in world units above the ground. */
-const METEOR_HEIGHT = 6.5;
+const METEOR_HEIGHT = 5.5;
 /**
  * The stone itself: charcoal body, hot glow, and it tumbles.
  *
@@ -78,20 +88,31 @@ const METEOR_HEIGHT = 6.5;
  * pass already learned about the Golem's boulder — a rock with a spell's glow
  * reads as a grey orb — so the fire is the tail behind it, never the body.
  */
-const METEOR_BODY_COLOR = 0x2a211c;
+const METEOR_BODY_COLOR = 0x222222;
+/** Deep red rather than the trail's yellow: the body glows, the fire burns. */
+const METEOR_BODY_GLOW = 0xff3300;
 /*
- * Big enough to be a body rather than a spark, small enough to still be debris.
- * A meteor should out-read the Golem's boulder (~0.3 world units) because it
- * falls from six units up, but at 0.9 it came down the size of a mage and read
- * as a boulder dropped by a crane.
+ * Small enough to still be debris. The voxel lump spans about 1.9 units before
+ * scaling, so this lands it a little over half a unit across — bigger than the
+ * Golem's thrown boulder, because it falls from five units up, and well short
+ * of the mage it is falling next to. Twice this read as masonry dropped by a
+ * crane.
  */
-const METEOR_SCALE = 0.5;
+const METEOR_SCALE = 0.3;
 const METEOR_SPIN = 7.5;
-/** Fire shed per second while falling. The trail is what makes it a *fire* stone. */
-const METEOR_TRAIL_RATE = 60;
-const METEOR_TRAIL_LIFE = 0.3;
+/**
+ * The fire itself. Three temperatures rather than one, so the trail has depth
+ * instead of reading as a single coloured smear.
+ */
+const METEOR_FIRE_COLORS = [0xffdd00, 0xff6600, 0xff2200];
+/** Cold rock thrown out of the crater, as opposed to the fire around it. */
+const METEOR_DEBRIS_COLOR = 0x6b6560;
+/** Fraction of the impact spray that is rock rather than flame. */
+const METEOR_DEBRIS_SHARE = 0.4;
+/** Where a settled chunk sits, and how fast it stops sliding once it lands. */
+const DEBRIS_REST_HEIGHT = 0.07;
+const DEBRIS_SKID = 0.86;
 /** The spray where a body breaks, and the ring it leaves. */
-const METEOR_HIT_COUNT = 9;
 const METEOR_HIT_SPEED = 2.1;
 const METEOR_HIT_RING = 1.3;
 /** Tangential speed of a `torus`'s rim motes — what makes the rim read as turning. */
@@ -520,6 +541,8 @@ interface ParticleSlot {
   size: number;
   /** Multiplier on world gravity; <1 lets smoke/bubbles hang and drift up longer. */
   gravityScale: number;
+  /** Whether it settles on the ground instead of falling through it. */
+  floor: boolean;
   active: boolean;
 }
 
@@ -579,14 +602,14 @@ interface MeteorSlot {
   life: number;
   x: number;
   y: number;
-  trailColor: number;
-  emberColor: number;
   /** Fractional embers owed from the last frame; see updateMeteors. */
   trailDebt: number;
-  spinAxisX: number;
-  spinAxisY: number;
-  spinAxisZ: number;
-  spinPhase: number;
+  spinX: number;
+  spinY: number;
+  spinZ: number;
+  rateX: number;
+  rateY: number;
+  rateZ: number;
   active: boolean;
 }
 
@@ -640,6 +663,8 @@ export class ParticleRenderer implements GameRenderer {
   /** Beats of a `column` shower still to come; see {@link spawnColumnShaft}. */
   private readonly pendingImpacts: PendingImpact[] = [];
   private readonly meteorSlots: MeteorSlot[] = [];
+  /** Cube particles: the fire a meteor sheds and the chunks it throws. */
+  private readonly voxelSlots: ParticleSlot[] = [];
   private readonly defaultBallMaterial: THREE.MeshStandardMaterial;
   private readonly offSnowballImpact: () => void;
   private readonly offPlayerHit: () => void;
@@ -727,6 +752,7 @@ export class ParticleRenderer implements GameRenderer {
         maxLife: 1,
         size: 1,
         gravityScale: 1,
+        floor: false,
         active: false,
       });
     }
@@ -822,9 +848,41 @@ export class ParticleRenderer implements GameRenderer {
       this.domeSlots.push({ mesh, life: 0, maxLife: 1, radius: 1, active: false });
     }
 
-    // Real geometry, not a sprite: a stone has to be lit by the arena to read
-    // as a stone. Shared with the Golem's boulder, which is the same object.
-    const meteorGeometry = projectileGeometry(assets, 'rock');
+    // Cubes rather than the shared sphere: the meteor's fire and debris are
+    // voxels, so they hold their corners while everything else in the game
+    // stays round. Its own pool, so a long shower cannot eat the slots the
+    // impact bursts of an ordinary fight are drawing from.
+    const voxelGeometry = assets.geometry(
+      'particle-renderer-voxel-cube',
+      () => new THREE.BoxGeometry(1, 1, 1),
+    );
+    for (let i = 0; i < VOXEL_POOL_SIZE; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color: WHITE,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const mesh = new THREE.Mesh(voxelGeometry, material);
+      mesh.visible = false;
+      this.group.add(mesh);
+      this.voxelSlots.push({
+        mesh,
+        x: 0, y: 0, z: 0,
+        vx: 0, vy: 0, vz: 0,
+        life: 0,
+        maxLife: 1,
+        size: 1,
+        gravityScale: 1,
+        floor: false,
+        active: false,
+      });
+    }
+
+    // A voxel lump, not the Golem's smoothed boulder: a meteor is debris, and
+    // corners survive being small, tumbling and half-hidden behind fire.
+    const meteorGeometry = voxelRockGeometry(assets);
     for (let i = 0; i < METEOR_POOL_SIZE; i++) {
       const mesh = new THREE.Mesh(meteorGeometry, this.defaultBallMaterial);
       mesh.castShadow = true;
@@ -835,13 +893,13 @@ export class ParticleRenderer implements GameRenderer {
         life: 0,
         x: 0,
         y: 0,
-        trailColor: WHITE,
-        emberColor: WHITE,
         trailDebt: 0,
-        spinAxisX: 0,
-        spinAxisY: 1,
-        spinAxisZ: 0,
-        spinPhase: 0,
+        spinX: 0,
+        spinY: 0,
+        spinZ: 0,
+        rateX: 0,
+        rateY: 0,
+        rateZ: 0,
         active: false,
       });
     }
@@ -983,6 +1041,9 @@ export class ParticleRenderer implements GameRenderer {
     }
     for (const particle of this.particleSlots) {
       particle.mesh.material.dispose();
+    }
+    for (const voxel of this.voxelSlots) {
+      voxel.mesh.material.dispose();
     }
     for (const footprint of this.footprintSlots) {
       footprint.mesh.material.dispose();
@@ -1365,7 +1426,28 @@ export class ParticleRenderer implements GameRenderer {
     color: number,
     gravityScale = 1,
   ): void {
-    for (const particle of this.particleSlots) {
+    this.emit(this.particleSlots, x, y, z, vx, vy, vz, size, life, color, gravityScale);
+  }
+
+  /**
+   * Claims a slot from a given pool. Returns it so a caller can set the few
+   * per-particle behaviours that are not worth another positional argument —
+   * `floor`, so far — without allocating an options object on a hot path.
+   */
+  private emit(
+    slots: readonly ParticleSlot[],
+    x: number,
+    y: number,
+    z: number,
+    vx: number,
+    vy: number,
+    vz: number,
+    size: number,
+    life: number,
+    color: number,
+    gravityScale = 1,
+  ): ParticleSlot | null {
+    for (const particle of slots) {
       if (particle.active) continue;
       particle.x = x;
       particle.y = y;
@@ -1383,12 +1465,19 @@ export class ParticleRenderer implements GameRenderer {
       particle.mesh.position.set(x, y, z);
       particle.mesh.scale.setScalar(size);
       particle.mesh.visible = true;
-      return;
+      particle.floor = false;
+      return particle;
     }
+    return null;
   }
 
   private updateParticles(): void {
-    for (const particle of this.particleSlots) {
+    this.stepParticles(this.particleSlots);
+    this.stepParticles(this.voxelSlots);
+  }
+
+  private stepParticles(slots: readonly ParticleSlot[]): void {
+    for (const particle of slots) {
       if (!particle.active) continue;
 
       particle.life -= PARTICLE_DT;
@@ -1403,6 +1492,15 @@ export class ParticleRenderer implements GameRenderer {
       particle.x += particle.vx * PARTICLE_DT;
       particle.y += particle.vy * PARTICLE_DT;
       particle.z += particle.vz * PARTICLE_DT;
+
+      // Debris lands and stays landed rather than sinking through the floor:
+      // chunks lying where a meteor broke are half of what says it broke.
+      if (particle.floor && particle.y <= DEBRIS_REST_HEIGHT) {
+        particle.y = DEBRIS_REST_HEIGHT;
+        particle.vx *= DEBRIS_SKID;
+        particle.vy = 0;
+        particle.vz *= DEBRIS_SKID;
+      }
 
       const t = particle.life / particle.maxLife;
       particle.mesh.position.set(particle.x, particle.y, particle.z);
@@ -1824,7 +1922,7 @@ export class ParticleRenderer implements GameRenderer {
       if (pending.remaining > 0) continue;
 
       this.pendingImpacts.splice(i, 1);
-      if (pending.kind === 'fall') this.spawnMeteorBody(pending.x, pending.y, pending.cfg);
+      if (pending.kind === 'fall') this.spawnMeteorBody(pending.x, pending.y);
       else this.spawnMeteorHit(pending.x, pending.y, pending.cfg);
     }
   }
@@ -1837,7 +1935,7 @@ export class ParticleRenderer implements GameRenderer {
    * it for projectiles — slots are reused, and a stone inheriting the last
    * one's rotation pops on the frame it appears.
    */
-  private spawnMeteorBody(x: number, y: number, cfg: SpellVfx): void {
+  private spawnMeteorBody(x: number, y: number): void {
     for (const meteor of this.meteorSlots) {
       if (meteor.active) continue;
 
@@ -1845,19 +1943,18 @@ export class ParticleRenderer implements GameRenderer {
       meteor.active = true;
       meteor.x = x;
       meteor.y = y;
-      meteor.trailColor = cfg.motes[0];
-      meteor.emberColor = cfg.motes[1 % cfg.motes.length];
       meteor.trailDebt = 0;
 
-      const theta = Math.random() * SPARKLE_TWO_PI;
-      const z = Math.random() * 2 - 1;
-      const r = Math.sqrt(1 - z * z);
-      meteor.spinAxisX = r * Math.cos(theta);
-      meteor.spinAxisY = r * Math.sin(theta);
-      meteor.spinAxisZ = z;
-      meteor.spinPhase = Math.random() * SPARKLE_TWO_PI;
+      // Three independent rates rather than one axis: a cube tumbling about a
+      // single axis reads as a wheel, and the corners are the whole point.
+      meteor.spinX = Math.random() * SPARKLE_TWO_PI;
+      meteor.spinY = Math.random() * SPARKLE_TWO_PI;
+      meteor.spinZ = Math.random() * SPARKLE_TWO_PI;
+      meteor.rateX = (0.5 + Math.random()) * METEOR_SPIN;
+      meteor.rateY = (0.5 + Math.random()) * METEOR_SPIN;
+      meteor.rateZ = (0.5 + Math.random()) * METEOR_SPIN;
 
-      meteor.mesh.material = this.meteorMaterialFor(meteor.emberColor);
+      meteor.mesh.material = this.meteorMaterial();
       meteor.mesh.scale.setScalar(METEOR_SCALE * (0.8 + Math.random() * 0.45));
       meteor.mesh.visible = true;
       return;
@@ -1890,10 +1987,11 @@ export class ParticleRenderer implements GameRenderer {
       toThree(this.tmp, meteor.x, meteor.y, height);
       meteor.mesh.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
 
-      this.tmpDir.set(meteor.spinAxisX, meteor.spinAxisY, meteor.spinAxisZ);
-      meteor.mesh.quaternion.setFromAxisAngle(
-        this.tmpDir,
-        meteor.spinPhase + (METEOR_FALL_TIME - meteor.life) * METEOR_SPIN,
+      const spun = METEOR_FALL_TIME - meteor.life;
+      meteor.mesh.rotation.set(
+        meteor.spinX + spun * meteor.rateX,
+        meteor.spinY + spun * meteor.rateY,
+        meteor.spinZ + spun * meteor.rateZ,
       );
 
       // Debt rather than a timer: at this speed a frame owes more than one
@@ -1909,72 +2007,90 @@ export class ParticleRenderer implements GameRenderer {
 
   /** One ember peeling off a falling stone and hanging in its wake. */
   private spawnMeteorEmber(meteor: MeteorSlot, height: number): void {
-    const spread = METEOR_SCALE * 0.9;
+    const spread = METEOR_SCALE * 1.1;
     toThree(
       this.tmp,
       meteor.x + (Math.random() - 0.5) * spread,
       meteor.y + (Math.random() - 0.5) * spread,
       // Behind rather than around: the stone is falling, so its wake is above.
-      height + Math.random() * 0.6,
+      height + Math.random() * 0.7,
     );
-    this.spawnParticle(
+    this.emit(
+      this.voxelSlots,
       this.tmp.x,
       this.tmp.y,
       this.tmp.z,
       (Math.random() - 0.5) * 0.5,
-      0.4 + Math.random() * 0.5,
+      // Fire rises, so it climbs out of the wake instead of chasing the body.
+      0.8 + Math.random() * 1.2,
       (Math.random() - 0.5) * 0.5,
-      0.08 + Math.random() * 0.09,
+      0.11 + Math.random() * 0.1,
       METEOR_TRAIL_LIFE * (0.7 + Math.random() * 0.6),
-      Math.random() < 0.4 ? meteor.trailColor : meteor.emberColor,
-      // Rises and hangs, like the smoke does: embers left behind a body that
-      // has already gone past should not race it to the ground.
-      -0.2,
+      METEOR_FIRE_COLORS[Math.floor(Math.random() * METEOR_FIRE_COLORS.length)],
+      // Weightless: an ember that fell would race the stone it came off.
+      0,
     );
   }
 
-  private meteorMaterialFor(glow: number): THREE.MeshStandardMaterial {
+  /**
+   * The break: a crater ring, a spray of flame, and chunks of cold rock thrown
+   * up and out that land and stay landed.
+   *
+   * The rock is what separates this from any other bright impact in the game.
+   * Fire alone reads as an explosion; fire plus debris that settles on the
+   * ground reads as something solid having *hit* it, which is the whole claim
+   * a meteor makes.
+   */
+  private spawnMeteorHit(x: number, y: number, cfg: SpellVfx): void {
+    this.spawnRing(x, y, cfg.ring, METEOR_HIT_RING, 0.26);
+
+    const count = this.moteBudget(METEOR_DEBRIS_COUNT);
+    for (let i = 0; i < count; i++) {
+      const rock = Math.random() < METEOR_DEBRIS_SHARE;
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.5;
+      const speed = METEOR_HIT_SPEED * (0.6 + Math.random() * 0.9);
+      toThree(this.tmp, x, y, 0.1);
+      const slot = this.emit(
+        this.voxelSlots,
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        Math.cos(angle) * speed,
+        // Thrown up hard: the arc is what says it was flung rather than
+        // painted on the floor.
+        2.4 + Math.random() * 2.2,
+        Math.sin(angle) * speed,
+        rock ? 0.1 + Math.random() * 0.07 : 0.13 + Math.random() * 0.1,
+        rock ? METEOR_DEBRIS_LIFE * (0.7 + Math.random() * 0.5) : 0.4 + Math.random() * 0.2,
+        rock ? METEOR_DEBRIS_COLOR : METEOR_FIRE_COLORS[i % METEOR_FIRE_COLORS.length],
+        rock ? 1.6 : 0.9,
+      );
+      // Only the rock lands. Flame that piled up on the floor would read as a
+      // puddle, and this card already has one of those underneath it.
+      if (slot && rock) slot.floor = true;
+    }
+  }
+
+  private meteorMaterial(): THREE.MeshStandardMaterial {
     return this.assets.material(
-      `particle-renderer-meteor:${glow}`,
+      'particle-renderer-meteor',
       () =>
         new THREE.MeshStandardMaterial({
           color: METEOR_BODY_COLOR,
-          emissive: glow,
+          emissive: METEOR_BODY_GLOW,
           /*
-           * Low on purpose. At 0.9 the glow washed the body out to a white dot
-           * and the facets disappeared, which is the exact failure the element
-           * pass fixed for the boulder — a stone lighting itself stops being a
-           * stone. The fire belongs to the trail; the body only smoulders.
+           * Half the strength the reference uses, because the reference sits
+           * in a near-black scene and this arena is lit bright: at 0.8 the glow
+           * swamped the base colour and the stone came out flat red, like
+           * painted plastic rather than rock with heat in it. Low enough here
+           * that the sun still models the faces, which is what says "voxel".
            */
-          emissiveIntensity: 0.3,
+          emissiveIntensity: 0.42,
           roughness: 0.95,
           metalness: 0.05,
           flatShading: true,
         }),
     );
-  }
-
-  /** The break: a low outward spray and a small ring where it hit. */
-  private spawnMeteorHit(x: number, y: number, cfg: SpellVfx): void {
-    this.spawnRing(x, y, cfg.ring, METEOR_HIT_RING, 0.26);
-    const count = this.moteBudget(METEOR_HIT_COUNT);
-    for (let i = 0; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
-      const speed = METEOR_HIT_SPEED * (0.7 + Math.random() * 0.6);
-      toThree(this.tmp, x, y, 0.12);
-      this.spawnParticle(
-        this.tmp.x,
-        this.tmp.y,
-        this.tmp.z,
-        Math.cos(angle) * speed,
-        1.4 + Math.random() * 0.8,
-        Math.sin(angle) * speed,
-        0.1 + (i % 3) * 0.04,
-        0.38 + Math.random() * 0.2,
-        cfg.motes[i % cfg.motes.length],
-        1,
-      );
-    }
   }
 
   /**

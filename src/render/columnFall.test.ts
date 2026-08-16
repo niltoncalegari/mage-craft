@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_SPELLS } from '../../sim/spells';
-import { METEOR_POOL_SIZE, peakConcurrentMeteors, planColumnFall } from './columnFall';
+import {
+  liveParticles,
+  METEOR_DEBRIS_COUNT,
+  METEOR_DEBRIS_LIFE,
+  METEOR_POOL_SIZE,
+  METEOR_TRAIL_LIFE,
+  METEOR_TRAIL_RATE,
+  peakConcurrentMeteors,
+  planColumnFall,
+  VOXEL_POOL_SIZE,
+} from './columnFall';
 import { spellVfxFor } from './spellVfx';
 
 /**
@@ -73,5 +83,45 @@ describe('the falling bodies fit in their pool', () => {
       // the opponent can start theirs before yours has finished falling.
       expect(peak * 2).toBeLessThanOrEqual(METEOR_POOL_SIZE);
     }
+  });
+});
+
+/**
+ * The fire and the debris are cubes out of their own pool, and the same
+ * silent-failure argument applies to them as to the bodies — a shower that
+ * quietly stops shedding fire halfway through reads as a weaker card.
+ */
+describe('the fire and debris fit in their pool', () => {
+  it('counts how many of a repeating emission are alive at once', () => {
+    // One ember every twentieth of a second, each lasting a fifth: four alive.
+    // Worked by hand so the test can disagree with the formula.
+    expect(liveParticles(1, 0.05, 0.2)).toBe(4);
+    // Ten per burst, a burst every half second, each lasting a second and a
+    // half: three bursts overlap, so thirty.
+    expect(liveParticles(10, 0.5, 1.5)).toBe(30);
+    // Nothing outlives its own interval: one burst, and only one.
+    expect(liveParticles(6, 2, 0.5)).toBe(6);
+  });
+
+  it('holds both sides showering at once', () => {
+    for (const id of ALL_SPELLS) {
+      const vfx = spellVfxFor(id);
+      if (vfx.shape !== 'column') continue;
+
+      const impacts = vfx.impacts ?? 1;
+      const window = vfx.impactWindow ?? 1;
+      const airborne = peakConcurrentMeteors(impacts, window);
+
+      const fire = airborne * liveParticles(1, 1 / METEOR_TRAIL_RATE, METEOR_TRAIL_LIFE);
+      const debris = liveParticles(METEOR_DEBRIS_COUNT, window / impacts, METEOR_DEBRIS_LIFE);
+
+      expect((fire + debris) * 2).toBeLessThanOrEqual(VOXEL_POOL_SIZE);
+    }
+  });
+
+  it('keeps the two pools apart, so debris cannot starve the bodies', () => {
+    // Different geometry and wildly different counts; sharing one pool would
+    // let a long shower's embers eat the slots its own stones need.
+    expect(VOXEL_POOL_SIZE).toBeGreaterThan(METEOR_POOL_SIZE);
   });
 });

@@ -42,6 +42,37 @@ export function peakConcurrentMeteors(
   return Math.min(count, Math.ceil(fallTime / spacing));
 }
 
+/* ---- What a shower costs ---------------------------------------------------
+ *
+ * The fire it sheds and the debris it throws are cubes out of a pool of their
+ * own, and the tuning figures below are the inputs to that pool's size. They
+ * live next to the arithmetic rather than in the renderer because a test holds
+ * one against the other, and a budget whose inputs sit in a different file is
+ * a budget that quietly goes stale.
+ */
+
+/** Embers per second shed by a falling stone, and how long one lasts. */
+export const METEOR_TRAIL_RATE = 55;
+export const METEOR_TRAIL_LIFE = 0.32;
+/** Chunks thrown up where a stone breaks, and how long they lie around. */
+export const METEOR_DEBRIS_COUNT = 12;
+export const METEOR_DEBRIS_LIFE = 0.9;
+
+/** Cube particles the renderer keeps meshes for; see {@link liveParticles}. */
+export const VOXEL_POOL_SIZE = 256;
+
+/**
+ * How many particles of a repeating emission are alive at once: `perEvent`
+ * spawned every `interval` seconds, each lasting `life`.
+ *
+ * Covers both shapes this file has to budget for — a steady trail is one
+ * particle on a very short interval, a debris burst is many on a long one.
+ */
+export function liveParticles(perEvent: number, interval: number, life: number): number {
+  if (perEvent <= 0 || interval <= 0) return 0;
+  return perEvent * Math.max(1, Math.ceil(life / interval));
+}
+
 export interface ColumnImpact {
   /** Offset from the cast centre, in world units. */
   readonly dx: number;
