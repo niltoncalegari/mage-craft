@@ -80,6 +80,7 @@ import {
 import { PathGrid } from './PathGrid';
 import { type Role } from './roles';
 import { spellFor, type SpellCard, type SpellId } from './spells';
+import { spellRiderFor } from './spellRiders';
 import { Vec2 } from './Vec2';
 
 /** Why a `castSpell()` call was rejected — surfaced to the client for UI feedback. */
@@ -444,63 +445,79 @@ export class World {
     }
   }
 
+  /**
+   * Runs a card's `apply` list over whatever its `target` caught (GDD §9).
+   *
+   * There is deliberately no per-card branch here. A card is data: each
+   * application either names a status kind, which goes straight to
+   * `applyEffect`, or a rider in `spellRiders.ts` for the behaviours that
+   * touch the world rather than a mage. Adding a card is a `balance.json`
+   * edit, and only a new *kind* of behaviour reaches code.
+   */
   private applySpellEffect(team: Team, spell: SpellCard, position: Vec2): void {
-    switch (spell.effect.kind) {
-      case 'buff_haste': {
-        const { speedFactor, castFactor } = spell.effect;
-        for (const m of this.mages.values()) {
-          if (!m.alive || m.team !== team) continue;
-          if (m.position.distanceTo(position) > spell.radius) continue;
-          applyEffect(m, { kind: 'haste', magnitude: speedFactor, duration: spell.duration });
-          applyEffect(m, { kind: 'cast_haste', magnitude: castFactor, duration: spell.duration });
+    const targets = this.spellTargets(team, spell, position);
+
+    for (const app of spell.apply) {
+      if (isEffectKind(app.effect)) {
+        for (const m of targets) {
+          applyEffect(m, {
+            kind: app.effect,
+            magnitude: app.magnitude ?? 0,
+            duration: app.duration ?? spell.duration,
+            tickInterval: app.tickInterval,
+            tickDamage: app.tickDamage,
+          });
         }
-        break;
+        continue;
       }
-      case 'curse_slow': {
-        const { slowFactor } = spell.effect;
-        for (const m of this.mages.values()) {
-          if (!m.alive || m.team === team) continue;
-          if (m.position.distanceTo(position) > spell.radius) continue;
-          applyEffect(m, { kind: 'slow', magnitude: slowFactor, duration: spell.duration });
-        }
-        break;
-      }
-      case 'buff_shield': {
-        const { amount } = spell.effect;
-        for (const m of this.mages.values()) {
-          if (!m.alive || m.team !== team) continue;
-          if (m.position.distanceTo(position) > spell.radius) continue;
-          applyEffect(m, { kind: 'shield', magnitude: amount, duration: spell.duration });
-        }
-        break;
-      }
-      case 'curse_zone':
-        this.spawnCurseZone(position, spell.radius, spell.duration, spell.effect.tickInterval, spell.effect.tickDamage);
-        break;
+      spellRiderFor(app.effect)?.(this, { team, spell, app, position, targets });
     }
   }
 
-  /** Praga (GDD §9): a ground hazard that hurts anyone overlapping it, bypassing shield. */
-  private spawnCurseZone(
+  /**
+   * The living mages a card catches. Empty for a `ground` card, which affects
+   * a place rather than people — the hazard it leaves behind is what does the
+   * catching, later.
+   */
+  private spellTargets(team: Team, spell: SpellCard, position: Vec2): Mage[] {
+    if (spell.target === 'ground') return [];
+
+    const out: Mage[] = [];
+    for (const m of this.mages.values()) {
+      if (!m.alive) continue;
+      if (spell.target === 'allies' && m.team !== team) continue;
+      if (spell.target === 'enemies' && m.team === team) continue;
+      if (m.position.distanceTo(position) > spell.radius) continue;
+      out.push(m);
+    }
+    return out;
+  }
+
+  /** A ground hazard left by a spell (GDD §9) — Praga and everything after it. */
+  spawnSpellPuddle(
     position: Vec2,
-    radius: number,
-    duration: number,
-    tickInterval: number,
-    tickDamage: number,
+    opts: {
+      radius: number;
+      duration: number;
+      tickInterval: number;
+      tickDamage: number;
+      bypassShield: boolean;
+    },
   ): void {
     const id = `puddle-${++this.nextId}`;
     this.puddles.set(id, {
       id,
+      // Not a mage id, so `kill` credits nobody — a zone cannot take a kill.
       ownerId: 'spell',
       position,
-      radius,
-      duration,
+      radius: opts.radius,
+      duration: opts.duration,
       elapsed: 0,
-      tickInterval,
-      tickDamage,
+      tickInterval: opts.tickInterval,
+      tickDamage: opts.tickDamage,
       tickTimer: 0,
       alive: true,
-      bypassShield: true,
+      bypassShield: opts.bypassShield,
     });
   }
 

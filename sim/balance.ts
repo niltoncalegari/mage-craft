@@ -105,21 +105,37 @@ export interface RoleRule {
   readonly retreatHealthFraction: number;
 }
 
+/**
+ * One thing a spell does to what it caught. `effect` names either a status
+ * kind from `effects.ts` or one of the riders in `spellRiders.ts` — the same
+ * split `OnHitRule` uses for elements, and for the same reason: a card should
+ * be data, so that adding one is a `balance.json` edit and only a genuinely
+ * new *kind* of behaviour costs code.
+ *
+ * `duration` and `radius` fall back to the card's own when omitted.
+ */
+export interface SpellApplyRule {
+  readonly effect: string;
+  readonly magnitude?: number;
+  readonly duration?: number;
+  readonly radius?: number;
+  readonly tickInterval?: number;
+  readonly tickDamage?: number;
+  /** Ground hazards only: whether the damage goes through Escudo Arcano. */
+  readonly bypassShield?: boolean;
+}
+
 export interface SpellRule {
   readonly name: string;
+  /** Deck colour (GDD §9). Groups the catalog and constrains deck building. */
+  readonly color: string;
   readonly kind: string;
   readonly cost: number;
   readonly radius: number;
   readonly duration: number;
-  readonly effect: {
-    readonly kind: string;
-    readonly speedFactor?: number;
-    readonly castFactor?: number;
-    readonly slowFactor?: number;
-    readonly amount?: number;
-    readonly tickDamage?: number;
-    readonly tickInterval?: number;
-  };
+  /** Who the applications land on: allies, enemies, both, or the ground. */
+  readonly target: string;
+  readonly apply: readonly SpellApplyRule[];
 }
 
 export interface Balance {

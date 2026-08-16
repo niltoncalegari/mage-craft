@@ -330,36 +330,47 @@
 
   "spells": {
     "blessing": {
-      "name": "Blessing of Haste",
+      "name": "Bênção de Ímpeto",
+      "color": "white",
       "kind": "buff",
       "cost": 2,
       "radius": 4,
       "duration": 5,
-      "effect": { "kind": "buff_haste", "speedFactor": 0.4, "castFactor": 0.25 }
+      "target": "allies",
+      "apply": [
+        { "effect": "haste", "magnitude": 0.4 },
+        { "effect": "cast_haste", "magnitude": 0.25 }
+      ]
     },
     "slow_curse": {
-      "name": "Curse of Slowing",
+      "name": "Maldição da Lentidão",
+      "color": "black",
       "kind": "curse",
       "cost": 3,
       "radius": 4,
       "duration": 4,
-      "effect": { "kind": "curse_slow", "slowFactor": 0.5 }
+      "target": "enemies",
+      "apply": [{ "effect": "slow", "magnitude": 0.5 }]
     },
     "arcane_shield": {
       "name": "Escudo Arcano",
+      "color": "white",
       "kind": "buff",
       "cost": 3,
       "radius": 4,
       "duration": 6,
-      "effect": { "kind": "buff_shield", "amount": 60 }
+      "target": "allies",
+      "apply": [{ "effect": "shield", "magnitude": 60 }]
     },
     "plague": {
       "name": "Praga",
+      "color": "green",
       "kind": "curse",
       "cost": 4,
       "radius": 3.5,
       "duration": 5,
-      "effect": { "kind": "curse_zone", "tickDamage": 10, "tickInterval": 1 }
+      "target": "ground",
+      "apply": [{ "effect": "puddle", "tickDamage": 10, "tickInterval": 1, "bypassShield": true }]
     }
   }
 }
