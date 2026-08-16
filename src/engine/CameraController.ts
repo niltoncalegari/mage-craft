@@ -1,5 +1,13 @@
 import * as THREE from 'three';
 import type { Arena } from '../game/types';
+import { ShakeRig } from './ShakeRig';
+
+/**
+ * Fixed render step, matching `PlayerRenderer` and `ParticleRenderer`. This
+ * class has never taken a delta — its follow and zoom are per-frame lerps — and
+ * introducing one only for the shake would put two clocks in one update.
+ */
+const RENDER_DT = 1 / 60;
 
 /** The visible ground region (gameplay coords), used by the minimap. */
 export interface CameraView {
@@ -55,6 +63,12 @@ export class CameraController {
   private panSnap = false;
   /** Gameplay point the current wheel gesture is zooming toward, if any. */
   private zoomAnchor: { x: number; y: number } | null = null;
+  /**
+   * Camera shake. Lives here because this is the one place that writes the
+   * camera's transform — anywhere else would be fighting {@link applyPosition}
+   * for it every frame.
+   */
+  private readonly shake = new ShakeRig();
 
   constructor() {
     this.camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 400);
@@ -115,8 +129,18 @@ export class CameraController {
    * Advances the follow camera one frame toward `target` (gameplay coords), or
    * eases back to the arena centre when there is no target. Clamped to the arena.
    */
+  /**
+   * Adds camera shake for an event that just happened. See {@link ShakeRig} for
+   * why the numbers are small; the rig refuses trauma outright under reduced
+   * motion, so callers never have to ask.
+   */
+  addTrauma(amount: number): void {
+    this.shake.addTrauma(amount);
+  }
+
   update(target: { x: number; y: number } | null): void {
     this.animateZoom();
+    this.shake.update(RENDER_DT);
     this.desired.set(
       (target?.x ?? 0) + this.panOffset.x,
       0,
@@ -188,11 +212,23 @@ export class CameraController {
     };
   }
 
-  /** Positions the camera at a fixed offset above/behind the focus point. */
+  /**
+   * Positions the camera at a fixed offset above/behind the focus point.
+   *
+   * The shake is added on top of the *derived* position and never accumulates,
+   * because this recomputes from `focus` every frame. `lookAt` is aimed at the
+   * unshaken focus on purpose: aiming at the offset point would swing the view
+   * instead of nudging it, and at this tilt a swing reads as the arena moving.
+   * `getView` reads `focus` too, so the minimap viewport does not jitter along.
+   */
   private applyPosition(): void {
     const offY = Math.sin(this.tilt) * this.distance;
     const offZ = Math.cos(this.tilt) * this.distance;
-    this.camera.position.set(this.focus.x, offY, this.focus.z + offZ);
+    this.camera.position.set(
+      this.focus.x + this.shake.offsetX,
+      offY + this.shake.offsetY,
+      this.focus.z + offZ,
+    );
     this.camera.lookAt(this.focus.x, 0, this.focus.z);
   }
 
