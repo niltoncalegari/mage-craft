@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { magnitudeOf, moveSpeedMultiplier } from './effects';
+import { damageTakenMultiplier, magnitudeOf, moveSpeedMultiplier } from './effects';
 import { defaultSquad } from './cards';
 import {
   CHARGE_TIME,
@@ -321,6 +321,30 @@ describe('spells (GDD §9)', () => {
     // Run past the card's duration; the overflow is discarded, not banked.
     stepN(w, Math.ceil(6 / SIM_DT));
     expect(ally.health).toBe(ally.maxHealth);
+  });
+
+  /**
+   * White's third card, and the one that stacks two slow goods rather than one
+   * fast one. Escudo Arcano is a wall that arrives whole and is gone when spent;
+   * this pays out over four seconds in two currencies at once, which is why it
+   * is the more expensive card and the worse panic button.
+   */
+  it('consecrates ground under its own line only, healing and bracing at once', () => {
+    const w = new World();
+    const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    const enemy = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0.5));
+    w.dealDamage(ally, 30);
+    const hurt = ally.health;
+
+    w.castSpell(TEAM_A, 'consecrated_ground', ally.position);
+
+    // Standing well inside the radius, and still not caught: this is a buff.
+    expect(magnitudeOf(enemy, 'fortify')).toBe(0);
+    expect(damageTakenMultiplier(enemy)).toBe(1);
+
+    expect(damageTakenMultiplier(ally)).toBeLessThan(1);
+    stepN(w, Math.ceil(1 / SIM_DT));
+    expect(ally.health).toBeGreaterThan(hurt);
   });
 
   it('shields absorb damage before health', () => {

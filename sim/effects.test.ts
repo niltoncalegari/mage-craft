@@ -244,6 +244,23 @@ describe('effects — derived stats', () => {
     expect(damageTakenMultiplier(m)).toBeCloseTo(1.25, 5);
   });
 
+  /**
+   * Fortify is the other side of vulnerable, and the two have to meet without
+   * either cancelling the other outright. Multiplied rather than summed: at
+   * 0.5 vulnerable and 0.3 fortify a subtraction would read 1.2 and a product
+   * reads 1.05, and the product is the honest one — being braced does not undo
+   * having been marked, it blunts what the marking is worth.
+   */
+  it('blunts incoming damage while fortified, without cancelling vulnerability', () => {
+    const m = carrier();
+    applyEffect(m, { kind: 'fortify', magnitude: 0.3, duration: 4 });
+    expect(damageTakenMultiplier(m)).toBeCloseTo(0.7, 5);
+
+    applyEffect(m, { kind: 'vulnerable', magnitude: 0.5, duration: 4 });
+    // Still above 1: Campo de Sobrecarga wins the exchange, but only barely.
+    expect(damageTakenMultiplier(m)).toBeCloseTo(1.05, 5);
+  });
+
   it('drains the shield pool and drops it once empty', () => {
     const m = carrier();
     applyEffect(m, { kind: 'shield', magnitude: 60, duration: 6 });

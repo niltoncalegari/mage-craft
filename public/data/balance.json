@@ -174,6 +174,8 @@
     "cast_slow": { "stacking": "refresh_strongest", "maxMagnitude": 0.75 },
     "cast_haste": { "stacking": "refresh_strongest", "maxMagnitude": 1.5 },
     "vulnerable": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
+    "fortify": { "stacking": "refresh_strongest", "maxMagnitude": 0.5 },
+    "regen": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "stun": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "root": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "burn": { "stacking": "stack_intensity", "maxStacks": 3, "maxMagnitude": 1 },
@@ -405,6 +407,19 @@
       "duration": 4,
       "target": "allies",
       "apply": [{ "effect": "regen", "tickInterval": 1, "tickHeal": 8 }]
+    },
+    "consecrated_ground": {
+      "name": "Solo Consagrado",
+      "color": "white",
+      "kind": "buff",
+      "cost": 4,
+      "radius": 4,
+      "duration": 4,
+      "target": "allies",
+      "apply": [
+        { "effect": "regen", "tickInterval": 1, "tickHeal": 5 },
+        { "effect": "fortify", "magnitude": 0.3 }
+      ]
     },
     "overload_field": {
       "name": "Campo de Sobrecarga",

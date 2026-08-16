@@ -151,6 +151,24 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     moteCount: 20,
     direction: 1,
   },
+  /*
+   * A torus, and the name is the argument: consecrated *ground*. The card does
+   * not arrive and leave, it switches a patch of field on for four seconds and
+   * everything standing there is better off — which is the one sentence this
+   * shape exists to say. Escudo Arcano next to it is a dome because a shield is
+   * a thing around a body; this is a thing under one.
+   *
+   * The other torus in the catalog is Raízes Entrelaçadas, and direction is
+   * what parts them: roots close and press down, this opens and lifts.
+   */
+  consecrated_ground: {
+    shape: 'torus',
+    ring: 0xffd97d,
+    zone: 0xd9c68a,
+    motes: [0xfff4d6, 0xffd97d, 0xd9a441],
+    moteCount: 24,
+    direction: 1,
+  },
   plague: {
     shape: 'burst',
     ring: 0xb6e84a,

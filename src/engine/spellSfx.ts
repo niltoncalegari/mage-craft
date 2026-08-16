@@ -148,6 +148,23 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
       { kind: 'chord', wave: 'triangle', freqs: [880, 1318.51], at: 0.1, duration: 0.3, gain: 0.03 },
     ],
   },
+  /*
+   * The third white, against two that are both fast. Bênção is a triad struck
+   * at once and Escudo Arcano is a tick and a snap; this is the only card in
+   * the catalog with no attack to speak of — a swell that arrives over half a
+   * second, which is exactly how the card pays out.
+   *
+   * An open fifth rather than a major triad, so it does not merely read as a
+   * slower Bênção. Hollow instead of bright, which is also the right word for
+   * consecrated ground.
+   */
+  consecrated_ground: {
+    detune: 0.015,
+    layers: [
+      { kind: 'chord', wave: 'triangle', freqs: [261.63, 392, 523.25], at: 0, duration: 0.5, gain: 0.05 },
+      { kind: 'noise', filter: 'highpass', from: 200, to: 1200, at: 0, duration: 0.5, gain: 0.025 },
+    ],
+  },
   /* Falling, and the only card whose noise bed simply gets darker under it. */
   slow_curse: {
     detune: 0.03,

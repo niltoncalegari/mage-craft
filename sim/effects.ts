@@ -51,7 +51,9 @@ export type EffectKind =
    */
   | 'root'
   /** Healing over time; `tickHeal` per `tickInterval`. The DoT run backwards. */
-  | 'regen';
+  | 'regen'
+  /** Damage taken down by `magnitude` (0.3 = 30% less). Vulnerable's mirror. */
+  | 'fortify';
 
 /**
  * Iteration and wire order. Fixed so the effect list is canonical: a mage
@@ -67,6 +69,7 @@ export const EFFECT_ORDER: readonly EffectKind[] = [
   'burn',
   'regen',
   'vulnerable',
+  'fortify',
   'shield',
 ];
 
@@ -301,9 +304,17 @@ export function chargeRateMultiplier(carrier: EffectCarrier, auraBonus = 0): num
   return (1 + boost) * Math.max(0.25, 1 - drag);
 }
 
-/** Multiplier on incoming damage — arcane's contribution to a focus-fire team. */
+/**
+ * Multiplier on incoming damage — arcane's contribution to a focus-fire team,
+ * and white's answer to it.
+ *
+ * The two terms multiply rather than add. Subtracting would let a big enough
+ * fortify drive the multiplier to zero and make a mage flatly immune, which is
+ * a thing this game has exactly one card for and it is not this one. As a
+ * product, being braced blunts what a marking is worth without undoing it.
+ */
 export function damageTakenMultiplier(carrier: EffectCarrier): number {
-  return 1 + magnitudeOf(carrier, 'vulnerable');
+  return (1 + magnitudeOf(carrier, 'vulnerable')) * (1 - magnitudeOf(carrier, 'fortify'));
 }
 
 /** Damage left after the shield pool ate what it could; drains the pool. */

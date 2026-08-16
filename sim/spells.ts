@@ -27,6 +27,7 @@ export type SpellId =
   | 'sticky_swamp'
   | 'entangling_roots'
   | 'rejuvenating_breeze'
+  | 'consecrated_ground'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -75,6 +76,7 @@ export const ALL_SPELLS: readonly SpellId[] = [
   'rejuvenating_breeze',
   'blessing',
   'arcane_shield',
+  'consecrated_ground',
   'slow_curse',
 ];
 

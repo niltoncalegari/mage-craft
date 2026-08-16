@@ -157,6 +157,7 @@ export const EFFECT_LABEL: Readonly<Record<EffectKind, string>> = {
   stun: 'atordoamento',
   root: 'enraizamento',
   regen: 'regeneração',
+  fortify: 'fortificação',
 };
 
 export const EFFECT_CHOICES: readonly EffectKind[] = EFFECT_ORDER;
