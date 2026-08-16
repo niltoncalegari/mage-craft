@@ -449,28 +449,35 @@ export function emptyStrategy(): Strategy {
  * always passes `validateStrategy` against that deck.
  */
 export function defaultStrategy(deck: readonly CardId[]): Strategy {
-  const has = (id: CardId): boolean => deck.includes(id);
+  // Picked by what a card *is* rather than by name, so the default keeps
+  // working as the catalog grows instead of quietly losing a rule each time a
+  // card it hardcoded falls out of the starting deck.
+  const distinct = [...new Set(deck)].sort();
+  const byCost = (ids: CardId[]): CardId[] =>
+    ids.sort((a, b) => (spellFor(a)?.cost ?? 99) - (spellFor(b)?.cost ?? 99));
+
+  const curses = byCost(distinct.filter((id) => spellFor(id)?.kind === 'curse'));
+  const buffs = byCost(distinct.filter((id) => spellFor(id)?.kind === 'buff'));
+  const zones = byCost(curses.filter((id) => spellFor(id)?.target === 'ground'));
+  const shields = buffs.filter((id) => spellFor(id)?.apply.some((a) => a.effect === 'shield'));
+
   const rules: StrategyRule[] = [];
-  const add = (id: string, card: CardId, when: Condition, at: TargetSelector): void => {
-    if (has(card)) rules.push({ id, enabled: true, card, when, at });
+  const add = (id: string, card: CardId | undefined, when: Condition, at: TargetSelector): void => {
+    if (card && !rules.some((r) => r.card === card)) {
+      rules.push({ id, enabled: true, card, when, at });
+    }
   };
 
-  add('answer-cluster', 'plague', { kind: 'enemy_cluster', op: 'gte', value: 2 }, 'enemy_cluster');
-  add('answer-intruder', 'slow_curse', { kind: 'intruder' }, 'deepest_intruder');
-  add('shore-up', 'arcane_shield', { kind: 'ally_health', op: 'lt', value: 0.6 }, 'ally_cluster');
-  add('press-on', 'blessing', { kind: 'always' }, 'ally_frontline');
+  // Answer a group with the widest thing we brought, a lone intruder with a
+  // curse, shore up a squad that is taking a beating, then just press on.
+  add('answer-cluster', zones[0] ?? curses[0], { kind: 'enemy_cluster', op: 'gte', value: 2 }, 'enemy_cluster');
+  add('answer-intruder', curses[0], { kind: 'intruder' }, 'deepest_intruder');
+  add('shore-up', shields[0], { kind: 'ally_health', op: 'lt', value: 0.6 }, 'ally_cluster');
+  add('press-on', buffs[0], { kind: 'always' }, 'ally_frontline');
 
-  // A deck holding none of the four still deserves a program that does
-  // something, so fall back to the cheapest card on the healthy push.
-  if (rules.length === 0 && deck.length > 0) {
-    const cheapest = [...deck].sort((a, b) => (spellFor(a)?.cost ?? 99) - (spellFor(b)?.cost ?? 99))[0];
-    rules.push({
-      id: 'press-on',
-      enabled: true,
-      card: cheapest,
-      when: { kind: 'always' },
-      at: 'ally_frontline',
-    });
+  // A deck of nothing but zones still deserves a program that does something.
+  if (rules.length === 0 && distinct.length > 0) {
+    add('press-on', byCost(distinct)[0], { kind: 'always' }, 'ally_frontline');
   }
 
   return { version: STRATEGY_VERSION, name: 'Padrão', rules };

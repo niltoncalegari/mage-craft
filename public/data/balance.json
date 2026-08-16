@@ -371,6 +371,42 @@
       "duration": 5,
       "target": "ground",
       "apply": [{ "effect": "puddle", "tickDamage": 10, "tickInterval": 1, "bypassShield": true }]
+    },
+    "sticky_swamp": {
+      "name": "Pântano Pegajoso",
+      "color": "green",
+      "kind": "curse",
+      "cost": 3,
+      "radius": 4,
+      "duration": 5,
+      "target": "enemies",
+      "apply": [
+        { "effect": "slow", "magnitude": 0.35 },
+        { "effect": "cast_slow", "magnitude": 0.35 }
+      ]
+    },
+    "overload_field": {
+      "name": "Campo de Sobrecarga",
+      "color": "red",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 3.5,
+      "duration": 4,
+      "target": "all",
+      "apply": [
+        { "effect": "vulnerable", "magnitude": 0.5 },
+        { "effect": "cast_haste", "magnitude": 0.5 }
+      ]
+    },
+    "meteor_shower": {
+      "name": "Chuva de Meteoros",
+      "color": "red",
+      "kind": "curse",
+      "cost": 5,
+      "radius": 5,
+      "duration": 1.5,
+      "target": "ground",
+      "apply": [{ "effect": "puddle", "tickDamage": 18, "tickInterval": 0.5 }]
     }
   }
 }

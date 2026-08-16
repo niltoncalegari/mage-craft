@@ -19,7 +19,14 @@ import { BALANCE, type SpellApplyRule } from './balance';
 import { isEffectKind } from './effects';
 import { isSpellRider } from './spellRiders';
 
-export type SpellId = 'blessing' | 'slow_curse' | 'arcane_shield' | 'plague';
+export type SpellId =
+  | 'blessing'
+  | 'slow_curse'
+  | 'arcane_shield'
+  | 'plague'
+  | 'sticky_swamp'
+  | 'overload_field'
+  | 'meteor_shower';
 
 /**
  * The wire-level name for "the thing a cast message names" — kept distinct
@@ -56,8 +63,16 @@ export interface SpellCard {
   readonly apply: readonly SpellApplication[];
 }
 
-/** Full catalog in GDD §9 display order. */
-export const ALL_SPELLS: readonly SpellId[] = ['blessing', 'slow_curse', 'arcane_shield', 'plague'];
+/** Full catalog, grouped by deck colour (GDD §9 display order). */
+export const ALL_SPELLS: readonly SpellId[] = [
+  'overload_field',
+  'meteor_shower',
+  'plague',
+  'sticky_swamp',
+  'blessing',
+  'arcane_shield',
+  'slow_curse',
+];
 
 function build(): Readonly<Record<SpellId, SpellCard>> {
   const out = {} as Record<SpellId, SpellCard>;

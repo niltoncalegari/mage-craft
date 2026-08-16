@@ -13,11 +13,62 @@
  * revisit this once the spell pool grows past 4).
  */
 
-import { ALL_SPELLS, isSpellId, spellFor, type CardId } from './spells';
+import {
+  ALL_DECK_COLORS,
+  ALL_SPELLS,
+  isSpellId,
+  spellFor,
+  SPELLS_BY_COLOR,
+  type CardId,
+  type DeckColor,
+} from './spells';
 import type { Rng } from './rng';
 
 export const DECK_SIZE = 8;
 export const HAND_SIZE = 4;
+
+/**
+ * Copies of any one card.
+ *
+ * Two is what the rotating queue makes meaningful: with a hand of four, two
+ * copies in eight means the card comes back around roughly every other hand.
+ * Higher is not a stronger deck so much as a shorter one — eight copies of a
+ * card collapses a whole strategy program to a single rule, which is the
+ * failure mode to design against.
+ */
+export const MAX_COPIES = 2;
+
+/** Below this a deck has no answers, only a habit. */
+export const MIN_DISTINCT = 3;
+
+/**
+ * Colours a deck may draw from (GDD §16.4) — **not yet enforced**.
+ *
+ * The rule is right for the catalog the GDD calls for: five colours of five
+ * cards gives a ten-card pool for eight slots, a real cut and a legible
+ * identity. It is wrong for the catalog that exists. With colours still
+ * lopsided, some of them cannot reach `DECK_SIZE` inside `MAX_COPIES` at all,
+ * and turning the rule on now would silently remove those cards from the game
+ * rather than constrain how they are used.
+ *
+ * `Deck.test.ts` holds a tripwire that fails once every colour can support a
+ * legal deck — which is the moment to enforce this and delete the note.
+ */
+export const MAX_COLORS = 2;
+
+/**
+ * Whether every card that exists could appear in some legal two-colour deck.
+ *
+ * A card of colour `c` is placeable when some other colour `d` brings enough
+ * cards that the pair can fill `DECK_SIZE` within `MAX_COPIES`. Empty colours
+ * are vacuous — they hold no card to strand.
+ */
+export function colorLimitIsPlayable(): boolean {
+  const size = (c: DeckColor): number => SPELLS_BY_COLOR[c].length;
+  return ALL_DECK_COLORS.filter((c) => size(c) > 0).every((c) =>
+    ALL_DECK_COLORS.some((d) => d !== c && (size(c) + size(d)) * MAX_COPIES >= DECK_SIZE),
+  );
+}
 
 export type DeckValidation = { ok: true } | { ok: false; reason: string };
 
@@ -26,19 +77,45 @@ export function validateDeck(cards: readonly string[]): DeckValidation {
   if (cards.length !== DECK_SIZE) {
     return { ok: false, reason: `deck must hold ${DECK_SIZE} cards, got ${cards.length}` };
   }
+
+  const copies = new Map<string, number>();
   for (const id of cards) {
     if (!isSpellId(id)) return { ok: false, reason: `unknown card ${JSON.stringify(id)}` };
+    const n = (copies.get(id) ?? 0) + 1;
+    if (n > MAX_COPIES) {
+      return { ok: false, reason: `at most ${MAX_COPIES} copies of ${spellFor(id)?.name ?? id}` };
+    }
+    copies.set(id, n);
   }
+
+  if (copies.size < MIN_DISTINCT) {
+    return { ok: false, reason: `deck needs at least ${MIN_DISTINCT} different cards, got ${copies.size}` };
+  }
+
   return { ok: true };
 }
 
 /**
  * A playable default for matchmaking, so a player who never opened the deck
- * builder still gets a coherent hand: the whole spell catalog, each
- * duplicated once (GDD §9's provisional 8-card deck).
+ * builder still gets a coherent hand.
+ *
+ * Hand-authored rather than derived from the catalog: it used to be every
+ * card duplicated once, which stopped being a deck the moment the catalog grew
+ * past four. White and green, two copies each — legal under the copy rule now
+ * and under the colour rule when that turns on, so this does not have to be
+ * revisited twice.
  */
 export function defaultDeck(): CardId[] {
-  return [...ALL_SPELLS, ...ALL_SPELLS];
+  return [
+    'blessing',
+    'blessing',
+    'arcane_shield',
+    'arcane_shield',
+    'plague',
+    'plague',
+    'sticky_swamp',
+    'sticky_swamp',
+  ];
 }
 
 export class Deck {

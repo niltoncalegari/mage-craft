@@ -6,7 +6,7 @@ import { SIM_DT, SPELL_GLOBAL_COOLDOWN } from '../config';
 import { Deck, defaultDeck } from '../Deck';
 import { TEAM_A, TEAM_B, type Team } from '../entities';
 import { Rng } from '../rng';
-import { ALL_SPELLS, type CardId } from '../spells';
+import type { CardId } from '../spells';
 import {
   defaultStrategy,
   emptyStrategy,
@@ -100,7 +100,7 @@ describe('Tactician — the program decides', () => {
   it('casts the card the first matching rule names', () => {
     const w = contestedWorld();
     const t = new Tactician(program([{ card: 'arcane_shield' }]));
-    const deck = new Deck([...ALL_SPELLS, ...ALL_SPELLS]);
+    const deck = new Deck(defaultDeck());
 
     run(w, TEAM_A, t, deck, 5);
 
@@ -110,7 +110,8 @@ describe('Tactician — the program decides', () => {
 
   it('names the rule behind the intent it just returned, so the HUD can explain it', () => {
     const w = contestedWorld();
-    const t = new Tactician(program([{ card: 'slow_curse', at: 'enemy_frontline' }, { card: 'blessing' }]));
+    // Both cards are in the opening hand, so the top rule is the one that wins.
+    const t = new Tactician(program([{ card: 'arcane_shield' }, { card: 'blessing' }]));
     const deck = new Deck(defaultDeck());
 
     expect(t.lastDecision).toBeNull();
@@ -122,6 +123,28 @@ describe('Tactician — the program decides', () => {
     }
 
     expect(t.lastDecision).toMatchObject({ ruleId: 'r0', ruleIndex: 0, cardId: intent.cardId });
+  });
+
+  /*
+   * The deck is a queue, not a pool: a card sitting behind the hand window is
+   * as unavailable as one that was never brought. A top rule naming a card
+   * that is still two draws away has to fall through, not stall the program.
+   */
+  it('falls through a rule whose card has not been drawn yet', () => {
+    const w = contestedWorld();
+    // plague sits at index 4 of the default deck — one past the hand.
+    const t = new Tactician(program([{ card: 'plague', at: 'enemy_cluster' }, { card: 'blessing' }]));
+    const deck = new Deck(defaultDeck());
+
+    expect(deck.hand()).not.toContain('plague');
+
+    let intent = null;
+    while (!intent) {
+      intent = t.step(w, TEAM_A, deck, SIM_DT);
+      w.step(SIM_DT);
+    }
+
+    expect(t.lastDecision).toMatchObject({ ruleId: 'r1', cardId: 'blessing' });
   });
 
   /*
@@ -214,7 +237,7 @@ describe('Tactician — determinism', () => {
       const bots = new Map([...w.mages.keys()].map((id) => [id, 'normal' as const]));
       const sides: Record<Team, { t: Tactician; d: Deck }> = {
         [TEAM_A]: { t: new Tactician(defaultStrategy(defaultDeck())), d: new Deck(defaultDeck(), rng) },
-        [TEAM_B]: { t: new Tactician(program([{ card: 'slow_curse', at: 'enemy_frontline' }])), d: new Deck(defaultDeck(), rng) },
+        [TEAM_B]: { t: new Tactician(program([{ card: 'sticky_swamp', at: 'enemy_frontline' }])), d: new Deck(defaultDeck(), rng) },
       };
 
       for (let i = 0; i < 1200; i++) {
