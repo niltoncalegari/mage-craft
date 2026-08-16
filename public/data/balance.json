@@ -41,6 +41,7 @@
     "suddenDeathDuration": 60,
 
     "spellCastFxDuration": 1,
+    "spellGlobalCooldown": 0.75,
 
     "obstacleTopHeight": {
       "tree": 2.4,

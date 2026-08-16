@@ -38,6 +38,7 @@ import {
   SPACING,
   SPAWN_MARGIN,
   SPELL_CAST_FX_DURATION,
+  SPELL_GLOBAL_COOLDOWN,
   STRUCTURE_DAMAGE_MULTIPLIER,
   STRUCTURE_TOP_HEIGHT,
   SUDDEN_DEATH_DURATION,
@@ -82,7 +83,12 @@ import { spellFor, type SpellCard, type SpellId } from './spells';
 import { Vec2 } from './Vec2';
 
 /** Why a `castSpell()` call was rejected — surfaced to the client for UI feedback. */
-export type CastRejection = 'unknown_card' | 'not_enough_mana' | 'out_of_bounds' | 'match_over';
+export type CastRejection =
+  | 'unknown_card'
+  | 'not_enough_mana'
+  | 'out_of_bounds'
+  | 'match_over'
+  | 'on_cooldown';
 
 export type CastResult = { ok: true } | { ok: false; reason: CastRejection };
 
@@ -165,6 +171,8 @@ export class World {
   private readonly teamCounts = new Map<Team, number>();
   private readonly mana = new Map<Team, number>();
   private readonly manaAccum = new Map<Team, number>();
+  /** Seconds until each team may cast again; see {@link SPELL_GLOBAL_COOLDOWN}. */
+  private readonly castCooldown = new Map<Team, number>();
 
   private cachedPathGrid: PathGrid | null = null;
   private cachedPathBlockers = -1;
@@ -174,6 +182,7 @@ export class World {
     for (const team of [TEAM_A, TEAM_B] as Team[]) {
       this.mana.set(team, MANA_START);
       this.manaAccum.set(team, 0);
+      this.castCooldown.set(team, 0);
     }
     this.buildStructures();
   }
@@ -231,6 +240,18 @@ export class World {
 
   private spendMana(team: Team, amount: number): void {
     this.mana.set(team, Math.max(0, this.manaOf(team) - amount));
+  }
+
+  /** Seconds a team must still wait before its next cast; 0 when it may cast now. */
+  castCooldownOf(team: Team): number {
+    return this.castCooldown.get(team) ?? 0;
+  }
+
+  private updateCastCooldown(dt: number): void {
+    for (const team of [TEAM_A, TEAM_B] as Team[]) {
+      const left = this.castCooldownOf(team);
+      if (left > 0) this.castCooldown.set(team, decay(left, dt));
+    }
   }
 
   private updateMana(dt: number): void {
@@ -381,7 +402,12 @@ export class World {
     if (!spell) return { ok: false, reason: 'unknown_card' };
     if (this.manaOf(team) < spell.cost) return { ok: false, reason: 'not_enough_mana' };
     if (this.arena.outOfBounds(position)) return { ok: false, reason: 'out_of_bounds' };
+    // Checked last on purpose: every rejection above says something is wrong
+    // with the *request*, which the caster can act on. This one is only about
+    // timing and resolves on its own, so it is the least useful thing to hear.
+    if (this.castCooldownOf(team) > 0) return { ok: false, reason: 'on_cooldown' };
 
+    this.castCooldown.set(team, SPELL_GLOBAL_COOLDOWN);
     this.spendMana(team, spell.cost);
     this.applySpellEffect(team, spell, position);
     this.recordCastFx(team, spell, position);
@@ -494,6 +520,7 @@ export class World {
 
     this.elapsed += dt;
     this.updateMana(dt);
+    this.updateCastCooldown(dt);
     // Auras are resolved before movement so a mage charges at the rate implied
     // by where the support stood at the top of this tick.
     this.updateSupportAuras();

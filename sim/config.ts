@@ -180,6 +180,21 @@ export const PLAGUE_TICK_DAMAGE = BALANCE.spells.plague.effect.tickDamage ?? 0;
  */
 export const SPELL_CAST_FX_DURATION = S.spellCastFxDuration;
 
+/**
+ * Minimum seconds between two casts by the same team (GDD §6).
+ *
+ * Mana is the economy, not the clock: a team sitting on a full bank can spend
+ * it on 2-cost cards five ticks in a row, which is fine when a pair of human
+ * hands is the bottleneck and stops being fine the moment an autonomous
+ * caster runs inside the tick loop. This is the floor that keeps a program and
+ * a person spending at comparable rates.
+ *
+ * Chosen to sit under every Commander cadence (1.1s on hard) so the existing
+ * bots never feel it, and to stretch a full bank of cheap casts from five
+ * ticks to a few seconds.
+ */
+export const SPELL_GLOBAL_COOLDOWN = S.spellGlobalCooldown;
+
 /** Height of each obstacle type's top, mirroring the client's OBSTACLE_HEIGHT. */
 export const OBSTACLE_TOP_HEIGHT: Readonly<Record<'tree' | 'rock' | 'fort' | 'fence' | 'prop', number>> =
   S.obstacleTopHeight as Readonly<Record<'tree' | 'rock' | 'fort' | 'fence' | 'prop', number>>;

@@ -156,6 +156,7 @@ export interface Balance {
     readonly matchDuration: number;
     readonly suddenDeathDuration: number;
     readonly spellCastFxDuration: number;
+    readonly spellGlobalCooldown: number;
     readonly obstacleTopHeight: Readonly<Record<string, number>>;
   };
   readonly structures: {

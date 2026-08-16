@@ -18,6 +18,7 @@ import {
   SHIELD_AMOUNT,
   SIM_DT,
   SPELL_CAST_FX_DURATION,
+  SPELL_GLOBAL_COOLDOWN,
   SQUAD_SIZE,
   TOWER_RANGE,
 } from './config';
@@ -349,6 +350,63 @@ describe('spells (GDD §9)', () => {
     const w = new World();
     w.castSpell(TEAM_A, 'fireball_of_doom', new Vec2(-10, 0));
     expect(w.spellCasts.size).toBe(0);
+  });
+});
+
+/*
+ * The global cooldown exists because the caster is about to stop being a pair
+ * of human hands. A Tactician runs inside the 60 Hz tick, so a full mana bank
+ * spent on 2-cost cards is five casts in five consecutive ticks — something no
+ * player could ever do through the HUD. Rate-limiting inside the Tactician
+ * would not do: this is the one seam every caster goes through (submitCast,
+ * Commander, Tactician, and every headless harness), so it is the only place
+ * the limit cannot be bypassed.
+ */
+describe('spells — the global cast cooldown', () => {
+  it('refuses a second cast from the same team inside the cooldown', () => {
+    const w = new World();
+    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({ ok: true });
+
+    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({
+      ok: false,
+      reason: 'on_cooldown',
+    });
+  });
+
+  it('allows the next cast once the cooldown has run out', () => {
+    const w = new World();
+    w.castSpell(TEAM_A, 'blessing', Vec2.zero);
+    stepN(w, Math.ceil(SPELL_GLOBAL_COOLDOWN / SIM_DT) + 1);
+
+    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({ ok: true });
+  });
+
+  it('is per team — one side casting does not lock the other out', () => {
+    const w = new World();
+    w.castSpell(TEAM_A, 'blessing', Vec2.zero);
+
+    expect(w.castSpell(TEAM_B, 'blessing', Vec2.zero)).toEqual({ ok: true });
+  });
+
+  it('does not start on a rejected cast', () => {
+    const w = new World();
+    // A misnamed card must not cost the team its next cast window.
+    w.castSpell(TEAM_A, 'fireball_of_doom', Vec2.zero);
+
+    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({ ok: true });
+  });
+
+  it('reports what is wrong with the request before it reports timing', () => {
+    const w = new World();
+    // Plague costs 4 of the opening 5, so the second cast is both broke and
+    // on cooldown. "Not enough mana" is the one the caster can act on, and it
+    // is what the pre-cooldown behaviour reported.
+    w.castSpell(TEAM_A, 'plague', Vec2.zero);
+
+    expect(w.castSpell(TEAM_A, 'slow_curse', Vec2.zero)).toEqual({
+      ok: false,
+      reason: 'not_enough_mana',
+    });
   });
 });
 
