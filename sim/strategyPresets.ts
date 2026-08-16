@@ -82,9 +82,10 @@ export function flatProgram(): Strategy {
  *
  * A card leaves the hand only by being played, and the deck only cycles on a
  * play. So a program naming a single card plays it once, watches it go to the
- * back of an eight-card queue, and never sees it again. Measured over 36
- * matches it cast **35 times in total** — about once per match — and finished
- * dead even (6-6) against a program with no rules at all.
+ * back of an eight-card queue, and never sees it again. Measured over the sweep
+ * in `scripts/ai-report.mts` it cast **45 times across 48 matches** — about
+ * once each — and finished dead even (6-6) against a program with no rules at
+ * all, while `flatProgram` takes 92% against that same opponent.
  *
  * That is the trap the deck rule and the program have to be read together to
  * avoid (GDD §7): eight slots and one rule is a dead deck, and nothing in the
