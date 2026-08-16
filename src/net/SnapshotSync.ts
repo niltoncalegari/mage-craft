@@ -616,11 +616,26 @@ export class SnapshotSync {
           return created;
         })();
 
+      // Falling edge, read before the assignment below overwrites it. A
+      // structure first seen already destroyed never fires — joining a match in
+      // progress is not the same as watching a tower come down.
+      const justFell = existing !== undefined && existing.alive && !s.alive;
+
       target.team = this.teamOf(s.team);
       target.health = s.health;
       target.maxHealth = s.maxHealth;
       target.alive = s.alive;
       target.invulnerable = s.invulnerable;
+
+      if (justFell) {
+        this.events.emit('StructureDestroyed', {
+          structureId: target.id,
+          kind: target.kind,
+          team: target.team,
+          x: s.position.x,
+          y: s.position.y,
+        });
+      }
     }
   }
 

@@ -126,6 +126,38 @@ describe('SnapshotSync — structures', () => {
     expect(tower?.alive).toBe(false);
     expect(world.structures).toHaveLength(3);
   });
+
+  /*
+   * The falling edge, same derivation as `ShieldBroken` and for the same
+   * reason: the wire carries state, never events. The server holds a destroyed
+   * structure in every later snapshot so the map can draw rubble, so anything
+   * reading `alive === false` directly would fire this once per frame forever.
+   */
+  it('announces a structure the moment it falls, and only then', () => {
+    const { sync, events } = makeSync(TEAM_A);
+    const fallen: string[] = [];
+    events.on('StructureDestroyed', (event) => fallen.push(`${event.kind}:${event.team}`));
+
+    const rubble = structure(TEAM_B, 'tower', { health: 0, alive: false, invulnerable: false });
+    sync.applySnapshot(snapshot({ structures: [structure(TEAM_B, 'tower')] }));
+    expect(fallen).toEqual([]);
+
+    sync.applySnapshot(snapshot({ tick: 6, structures: [rubble] }));
+    sync.applySnapshot(snapshot({ tick: 9, structures: [rubble] }));
+    expect(fallen).toEqual([`tower:${Team.Enemy}`]);
+  });
+
+  it('stays quiet about a structure that was already rubble when we joined', () => {
+    const { sync, events } = makeSync(TEAM_A);
+    let fired = 0;
+    events.on('StructureDestroyed', () => fired++);
+
+    // Spectating a match in progress: the first snapshot is not an event.
+    sync.applySnapshot(
+      snapshot({ structures: [structure(TEAM_B, 'tower', { health: 0, alive: false })] }),
+    );
+    expect(fired).toBe(0);
+  });
 });
 
 describe('SnapshotSync — match state', () => {

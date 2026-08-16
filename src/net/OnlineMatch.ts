@@ -7,6 +7,7 @@ import { Settings } from '../engine/Settings';
 import { AimIndicatorRenderer } from '../render/AimIndicatorRenderer';
 import { ArenaRenderer } from '../render/ArenaRenderer';
 import { NavIndicatorRenderer } from '../render/NavIndicatorRenderer';
+import { ImpactFeedback } from '../render/ImpactFeedback';
 import { ParticleRenderer } from '../render/ParticleRenderer';
 import { PickupRenderer } from '../render/PickupRenderer';
 import { PlayerRenderer } from '../render/PlayerRenderer';
@@ -195,6 +196,7 @@ export class OnlineMatch {
       new NavIndicatorRenderer(this.renderer.scene, this.assets, this.world),
       new AimIndicatorRenderer(this.renderer.scene, this.assets, this.world),
       new ParticleRenderer(this.renderer.scene, this.assets, this.world, this.events),
+      new ImpactFeedback(container, this.events, this.renderer.cameraController),
       new PickupRenderer(this.renderer.scene, this.assets, this.world, this.events),
       new PuddleRenderer(this.renderer.scene, this.assets, this.world),
       new SupportRenderer(this.renderer.scene, this.assets, this.world, this.events),

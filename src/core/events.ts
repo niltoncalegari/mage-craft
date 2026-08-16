@@ -47,6 +47,22 @@ export interface GameEvents {
    * `MageHealed` is derived: the wire carries state, never events.
    */
   ShieldBroken: { playerId: EntityId; x: number; y: number };
+  /**
+   * A Core or Tower just fell (GDD §16). Derived on the client from the falling
+   * edge of `alive`, for the same reason `ShieldBroken` is: the wire carries
+   * state, never events. `team` is POV-relative like everything else here, so
+   * losing your own Core and taking theirs do not read the same.
+   *
+   * The heaviest thing that happens in a match, and until the idle pivot it was
+   * also the quietest — a tower simply stopped being drawn.
+   */
+  StructureDestroyed: {
+    structureId: EntityId;
+    kind: 'core' | 'tower';
+    team: Team;
+    x: number;
+    y: number;
+  };
   PlayerDefeated: { playerId: EntityId; team: Team };
   PlayerRespawned: { playerId: EntityId; x: number; y: number };
   BuffPickedUp: { playerId: EntityId; buff: BuffType; x: number; y: number };
