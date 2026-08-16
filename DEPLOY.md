@@ -69,6 +69,22 @@ docker compose up -d --build
 O volume `mongo-data` sobrevive — contas, partidas e ranking permanecem. Para
 apagar tudo: `docker compose down -v`.
 
+### Aba aberta durante o deploy do modo idle (v1.2)
+
+Desde o pivô idle o jogador não conjura à mão: o assento é jogado pelo programa
+de estratégia que ele escreveu antes da partida. Uma aba carregada **antes** deste
+deploy continua falando o protocolo antigo, e o servidor novo responde assim:
+
+- O `set_loadout` dela não leva `strategy`, então o assento recebe
+  `defaultStrategy(deck)`. **Joga normalmente** — só não joga o programa do
+  jogador, porque a aba antiga não sabe que existe um.
+- Todo clique de carta vira `cast`, e o servidor responde
+  `error: cast rejected: idle_mode`. A partida segue; a aba só mostra erros.
+
+Nada disso corrompe estado — é degradação, não falha. Um F5 resolve, e o
+`mongo-data` já guarda o loadout da conta (`GET /api/me/loadout`), então o
+programa volta sozinho no primeiro boot da aba nova.
+
 ## Deploy por pipeline
 
 `.github/workflows/deploy.yml` roda a cada push na `main`: builda as três
