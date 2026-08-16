@@ -269,15 +269,19 @@ que ela começa não há mais entrada nenhuma.
 - **Baralho:** 8 cartas de efeito, escolhidas das 25 (§9).
 - **Regra de construção (fecha a §16.4):** no máximo **2 cores**, no máximo **2 cópias** de cada carta, no mínimo **3 cartas distintas**.
 
-> ⚠️ **Duas das três regras estão ligadas; a das cores não.** `MAX_COPIES` e
-> `MIN_DISTINCT` são validadas. **`MAX_COLORS = 2` está escrita e desligada**, por
-> um motivo aritmético e não por descuido: com só o Tier 1 implementado (§9), o
-> preto tem **uma** carta, então nenhum par que o inclua alcança 8 cartas dentro do
-> teto de 2 cópias — ligar a regra hoje **removeria a Maldição da Lentidão do
-> jogo**. A regra é guardada por um teste-armadilha (`colorLimitIsPlayable()`) que
-> fica **vermelho no dia em que o catálogo aguentar**, e é nesse dia que ela liga.
-> Pelo mesmo motivo o `DeckBuilder` **não** mostra contador "cores: 2/2": um
-> contador com teto afirmaria uma regra que o validador não roda.
+> ✅ **As três regras estão ligadas.** `MAX_COPIES`, `MIN_DISTINCT` e
+> `MAX_COLORS` são todas validadas em `validateDeck`.
+>
+> A das cores foi a última a entrar, e **foi adiada de propósito, não esquecida**:
+> enquanto o preto teve uma carta só, nenhum par que o incluísse alcançava 8 cartas
+> dentro do teto de 2 cópias, e ligar a regra teria **removido a Maldição da
+> Lentidão do jogo** em vez de restringir como ela é usada. A terceira carta verde
+> é o que deu ao preto um par viável, e esse é o commit que pôde bancar a regra.
+>
+> O teste-armadilha (`colorLimitIsPlayable()`) que guardava isso **continua de pé,
+> invertido**: agora ele falha se uma edição de catálogo voltar a encalhar uma cor,
+> tornando alguma carta immontável em silêncio. É a mesma guarda, apontando para o
+> outro lado.
 - **Mão:** 4 cartas visíveis + **1 próxima** em preview.
 - **Ciclo:** jogou uma carta, ela vai para o fim da fila e a próxima entra na mão.
 - **Sem aleatoriedade oculta:** a próxima carta é sempre visível.
@@ -452,19 +456,33 @@ identidade e a base da regra de construção (§7):
 | 🔵 Azul | Controle e manipulação — petrificar, dispel, teleporte, economia | 5 |
 | ⚫ Preto | Sacrifício e sabotagem — silêncio, vínculo de dor, paranoia | 5 |
 
-#### O que está implementado hoje — **Tier 1, 7 cartas**
+#### O que está implementado hoje — **14 cartas**
 
-Números reais, lidos de `public/data/balance.json`:
+> 🚧 **Esta contagem está se movendo enquanto a Fase 13 roda.** Tier 1 está
+> completo e o Tier 2 está a duas cartas do fim (faltam Clarão Nulo e Erupção
+> Vulcânica); o Tier 3 inteiro ainda não começou. A fonte de verdade é
+> `ALL_SPELLS` em [sim/spells.ts](sim/spells.ts) e os números em
+> `public/data/balance.json` — quando as duas discordarem deste texto, é o texto
+> que está errado.
+
+Distribuição atual: 🔴 4 · 🟢 4 · ⚪ 3 · 🔵 2 · ⚫ 1.
 
 | Carta | Cor | Tipo | Custo | Raio | Dur. | Efeito |
 | --- | --- | --- | --- | --- | --- | --- |
 | Bênção de Ímpeto | ⚪ | Buff | 2 | 4 | 5 s | Aliados: +40% velocidade, +25% conjuração |
 | Escudo Arcano | ⚪ | Buff | 3 | 4 | 6 s | Aliados: absorve 60 de dano |
+| Solo Consagrado | ⚪ | Buff | 4 | 4 | 4 s | Aliados: regeneração + dano recebido reduzido |
 | Praga | 🟢 | Maldição | 4 | 3.5 | 5 s | Zona: 10 de dano/s, **atravessa o escudo** |
 | Pântano Pegajoso | 🟢 | Maldição | 3 | 4 | 5 s | Inimigos: 35% de lentidão de passo **e** de conjuração |
+| Raízes Entrelaçadas | 🟢 | Maldição | 4 | 3 | 2 s | Inimigos: passo travado — lentidão não faz isso |
+| Brisa Rejuvenescedora | 🟢 | Buff | 3 | 4 | 4 s | Aliados: cura por tick |
 | Maldição da Lentidão | ⚫ | Maldição | 3 | 4 | 4 s | Inimigos: 50% de lentidão |
 | Campo de Sobrecarga | 🔴 | Maldição | 4 | 3.5 | 4 s | **Todos** na área: +50% de dano recebido e +50% de conjuração |
 | Chuva de Meteoros | 🔴 | Maldição | 5 | 5 | 1.5 s | Zona: 18 de dano a cada 0.5 s — o maior raio do jogo |
+| Frenesi Sanguinário | 🔴 | Buff | 4 | 3.5 | 4 s | Aliados: multiplicador de dano causado |
+| Marca do Carrasco | 🔴 | Maldição | 3 | 3.5 | 6 s | Inimigos: marca que amplifica o golpe seguinte |
+| Petrificar | 🔵 | Maldição | 4 | 3.5 | 2.5 s | Inimigos: preso, sem agir — **e imune a dano** |
+| Fúria do Trovão | 🔵 | Maldição | 4 | 2.5 | 0.9 s | O menor raio do jogo, e o mais curto |
 
 > **Campo de Sobrecarga é a única carta que acerta os dois lados** (`target: all`).
 > É de propósito, e é o tipo de carta que só o modelo idle torna interessante: uma
@@ -472,21 +490,15 @@ Números reais, lidos de `public/data/balance.json`:
 > Escrever `SE não há aliado no aglomerado ENTÃO Sobrecarga` é exatamente a
 > densidade de decisão que a §16.2 tinha perdido.
 
-#### O que falta — Tier 2 e Tier 3, 18 cartas
+#### O que falta
 
 **Tier 1** = só uma lista de efeitos já existentes (JSON puro, zero código).
 **Tier 2** = efeito novo e/ou stat derivado novo. **Tier 3** = subsistema novo.
 
 | Carta | Cor | Tier | O que exige |
 | --- | --- | --- | --- |
-| Frenesi Sanguinário | 🔴 | 2 | multiplicador de dano causado |
 | Erupção Vulcânica | 🔴 | 2 | conjuração atrasada (com aviso no chão) + empurrão |
-| Marca do Carrasco | 🔴 | 2 | marca que amplifica o próximo golpe |
-| Petrificar | 🔵 | 2 | raiz + imunidade a dano + não pode agir |
 | Clarão Nulo | 🔵 | 2 | dispel, com buff/debuff etiquetados no balance |
-| Raízes Entrelaçadas | 🟢 | 2 | trava o passo em 10% — lentidão não faz isso |
-| Brisa Rejuvenescedora | 🟢 | 2 | regeneração (cura por tick) |
-| Solo Consagrado | ⚪ | 2 | regeneração + redução de dano recebido |
 | Silêncio Sepulcral | ⚫ | 2 | não pode conjurar |
 | Vórtice Gravitacional | 🔵 | 3 | campo persistente + atração no integrador |
 | Dobra Espacial | 🔵 | 3 | teleporte, limpando estado de rota e esquiva |
@@ -498,16 +510,18 @@ Números reais, lidos de `public/data/balance.json`:
 | Paranoia | ⚫ | 3 | força retarget — o maior raio de explosão da lista |
 | Tributo Obscuro | ⚫ | 3 | auto-dano convertido em mana |
 
-**7 Tier 1 · 9 Tier 2 · 9 Tier 3.**
+**7 Tier 1 · 9 Tier 2 · 9 Tier 3**, dos quais 14 existem e 11 faltam.
 
 > ✅ **O buraco da v1.1 fechou, e é importante ser preciso sobre em que sentido.**
 > A v1.1 registrava aqui "o baralho é de 8 e só existem 4 cartas": era impossível
-> montar um baralho legal. Hoje **é possível** — 7 cartas distintas com 2 cópias
-> dão 14 para 8 slots, com corte de verdade. O jogo é jogável só com o Tier 1.
-> O que continua aberto é **variedade**, não viabilidade: 18 das 25 cartas
-> desenhadas ainda não existem, e o **azul não tem nenhuma carta implementada** —
-> é a cor inteira que falta. Enquanto isso durar, a regra de 2 cores fica
-> desligada (§7).
+> montar um baralho legal. Isso deixou de ser verdade já com o Tier 1, e o Tier 2
+> foi bem além — **toda cor tem pelo menos uma carta**, que é a condição que
+> permitiu ligar a regra de 2 cores (§7).
+>
+> O que continua aberto é **variedade**, não viabilidade: faltam 11 das 25, e o
+> **preto ainda tem uma carta só** — é a cor mais rasa, e as três que faltariam
+> para ela (Silêncio Sepulcral, Vínculo da Dor, Paranoia, Tributo Obscuro) são
+> quase todas Tier 3.
 
 ---
 
@@ -545,6 +559,13 @@ dado.
 Feita em `sim/agency.test.ts` e na varredura de `scripts/ai-report.mts`, sobre
 `defaultDeck()` e o esquadrão padrão, alternando os lados a cada seed porque o mapa
 não é simétrico. **120 partidas, 5 programas, todos contra todos.**
+
+> 🚧 **Estes números foram medidos sobre o catálogo de 7 cartas**, no fim da Fase
+> 12. O Tier 2 (§9) entrou depois e mudou o material do jogo, então eles descrevem
+> uma versão anterior. **A conclusão estrutural não depende do catálogo** — a linha
+> de base de zero conjurações é uma propriedade do modelo, não do balance — mas as
+> **percentagens** precisam de nova medição, e é `npx tsx scripts/ai-report.mts`
+> que a produz. Ver o aviso equivalente na §14.
 
 | Programa | O que é | V-D-E | % das decididas | Conjurações |
 | --- | --- | --- | --- | --- |
@@ -714,7 +735,7 @@ Isto **não** é trabalho a fazer — está no repo, com teste:
 | `Commander` joga a mão dos dois assentos | Assento humano recebe **`Tactician`**; assento de bot continua com `Commander` |
 | Sem cadência mínima: 5 conjurações em 5 quadros são possíveis | **Cooldown global de 0.75 s** no `World`, por onde passam humano, `Commander` e `Tactician` |
 | `applySpellEffect` com um `case` por carta | Orientado a dados: `target` + lista `apply` no balance, com `sim/spellRiders.ts` para o que não é `EffectKind` |
-| Baralho de 4 cartas, sem regra | 7 cartas, `MAX_COPIES` e `MIN_DISTINCT` validadas (§7) |
+| Baralho de 4 cartas, sem regra | Catálogo em expansão, com `MAX_COPIES`, `MIN_DISTINCT` e `MAX_COLORS` validadas (§7) |
 | Nada no fio explica o que aconteceu | `SnapshotMsg.firedRule` por destinatário, e o HUD nomeia a regra |
 
 ### Novo na v1.2
@@ -768,6 +789,10 @@ E foi exatamente o que a primeira medição encontrou. O harness existe
 A varredura de `scripts/ai-report.mts` agora roda **programa contra programa**, que
 é o que a partida de verdade virou, e não mais bot contra bot. Sobre **120 partidas**
 (5 programas, todos contra todos, 12 seeds, lados alternados):
+
+> 🚧 **Medido sobre o catálogo de 7 cartas, antes do Tier 2.** O achado nº 1 abaixo
+> — "timing não separa nada" — é justamente o que o Tier 2 deveria mover, então
+> reconfirmá-lo (ou derrubá-lo) é o teste de aceite daquela fase, não um extra.
 
 | Métrica | v1.1 | v1.2 |
 | --- | --- | --- |
@@ -825,7 +850,7 @@ As duas primeiras eram as mais graves da v1.1 e **fecharam na v1.2**.
 1. ✅ **O AFK ainda perde? — RESPONDIDA, com medição.** Sim, e por larga margem. O modelo idle tornou a pergunta respondível ao dar a ela uma linha de base representável: um programa sem regras conjura exatamente zero vezes. Medido, o programa padrão vence o programa vazio em **83% das partidas decididas**, e perde estritamente menos estrutura. Ver §10.
 2. ✅ **Posicionamento ainda é decisão densa? — RESPONDIDA por outro caminho.** A densidade **não** voltou para o posicionamento; ela migrou para o programa. "Onde centrar um raio" continua raso — mas ninguém centra raio nenhum: o jogador escolhe entre onze seletores nomeados, sob guardas que ele escreve, com tempo para pensar. A saída que a v1.1 temia precisar (dar influência sobre para onde o esquadrão empurra, encostando no non-goal de ordens táticas) **não foi necessária**.
 3. **Quatro magos é o número certo?** Ainda aberta. Escolhido por parecer legível (4 cabem na tela e na cabeça), não por medição. Interage com o raio dos feitiços: esquadrão pequeno e espalhado torna buff de área difícil de acertar; esquadrão grande e junto torna todo buff um acerto garantido, e a decisão desaparece.
-4. ✅ **Qual a regra de construção do baralho? — RESPONDIDA.** 8 cartas, no máximo 2 cópias, no mínimo 3 distintas, no máximo 2 cores. Ver §7 — com a ressalva de que a regra de cores está escrita e **desligada** até o catálogo aguentá-la.
+4. ✅ **Qual a regra de construção do baralho? — RESPONDIDA e em vigor.** 8 cartas, no máximo 2 cópias, no mínimo 3 distintas, no máximo 2 cores — as três validadas. Ver §7.
 5. **Assíncrono depois?** Real-time foi escolhido e é o que está sendo construído. Assíncrono continua possível *sem retrabalho*: a sim é determinística e headless, então "lutar contra o esquadrão e o baralho gravados de outro jogador" é rodar o mesmo `World` sem socket. Decisão adiada de propósito, não esquecida.
 6. **Duas Torres ou uma?** A §5 propõe duas + imunidade do Núcleo, e o mapa `siege1.json` foi construído assim. Duas dão forma de flanco à partida; uma é mais simples de balancear.
 7. **O Suporte é legível?** É o papel com maior risco de o jogador não perceber o efeito. Piora na v1.1: agora o Clérigo cura *e* o jogador joga cura, e os dois precisam ser distinguíveis na tela. **Atacado, não fechado:** o suporte agora tem ataque próprio (§9), anel de área no chão marcando o alcance real e feixe do Clérigo até quem ele curou (`SupportRenderer`). Falta medir se o jogador atribui o efeito ao mago certo quando uma Bênção jogada e um Clérigo agem no mesmo aglomerado.
