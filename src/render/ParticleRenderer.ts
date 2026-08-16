@@ -20,7 +20,7 @@ import {
   UPRIGHT_SPIN_SHAPES,
   type ProjectileShape,
 } from './projectileGeometry';
-import { planColumnFall } from './columnFall';
+import { METEOR_FALL_TIME, METEOR_POOL_SIZE, planColumnFall } from './columnFall';
 import { spellVfxFor, type SpellVfx } from './spellVfx';
 
 const SNOWBALL_POOL_SIZE = 64;
@@ -69,11 +69,27 @@ const MIST_CHANCE = 0.22;
 /* ---- Cast shapes (GDD §17) ------------------------------------------------- */
 /** Where a falling meteor starts, in world units above the ground. */
 const METEOR_HEIGHT = 6.5;
-/** Seconds a body spends in the air, between its two scheduled beats. */
-const METEOR_FALL_TIME = 0.28;
-const METEOR_SPEED = METEOR_HEIGHT / METEOR_FALL_TIME;
-/** Particles strung along one falling body — the head plus its tail. */
-const METEOR_BODY_COUNT = 5;
+/**
+ * The stone itself: charcoal body, hot glow, and it tumbles.
+ *
+ * A `MeshStandardMaterial` rather than the additive sprites the rest of this
+ * file is built from, because a stone on fire has to read as an *object* the
+ * arena lights and not as a streak of light. It is the same lesson the element
+ * pass already learned about the Golem's boulder — a rock with a spell's glow
+ * reads as a grey orb — so the fire is the tail behind it, never the body.
+ */
+const METEOR_BODY_COLOR = 0x2a211c;
+/*
+ * Big enough to be a body rather than a spark, small enough to still be debris.
+ * A meteor should out-read the Golem's boulder (~0.3 world units) because it
+ * falls from six units up, but at 0.9 it came down the size of a mage and read
+ * as a boulder dropped by a crane.
+ */
+const METEOR_SCALE = 0.5;
+const METEOR_SPIN = 7.5;
+/** Fire shed per second while falling. The trail is what makes it a *fire* stone. */
+const METEOR_TRAIL_RATE = 60;
+const METEOR_TRAIL_LIFE = 0.3;
 /** The spray where a body breaks, and the ring it leaves. */
 const METEOR_HIT_COUNT = 9;
 const METEOR_HIT_SPEED = 2.1;
@@ -557,6 +573,23 @@ interface DomeSlot {
 /** Which beat of a falling meteor a queued entry is: the body, or the break. */
 type PendingKind = 'fall' | 'hit';
 
+/** A stone on its way down. The fire is the trail it sheds, never the body. */
+interface MeteorSlot {
+  readonly mesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+  life: number;
+  x: number;
+  y: number;
+  trailColor: number;
+  emberColor: number;
+  /** Fractional embers owed from the last frame; see updateMeteors. */
+  trailDebt: number;
+  spinAxisX: number;
+  spinAxisY: number;
+  spinAxisZ: number;
+  spinPhase: number;
+  active: boolean;
+}
+
 /** One scheduled beat of a `column` shower. */
 interface PendingImpact {
   x: number;
@@ -606,6 +639,7 @@ export class ParticleRenderer implements GameRenderer {
   private readonly puddleBubbleTimers = new Map<EntityId, number>();
   /** Beats of a `column` shower still to come; see {@link spawnColumnShaft}. */
   private readonly pendingImpacts: PendingImpact[] = [];
+  private readonly meteorSlots: MeteorSlot[] = [];
   private readonly defaultBallMaterial: THREE.MeshStandardMaterial;
   private readonly offSnowballImpact: () => void;
   private readonly offPlayerHit: () => void;
@@ -788,6 +822,30 @@ export class ParticleRenderer implements GameRenderer {
       this.domeSlots.push({ mesh, life: 0, maxLife: 1, radius: 1, active: false });
     }
 
+    // Real geometry, not a sprite: a stone has to be lit by the arena to read
+    // as a stone. Shared with the Golem's boulder, which is the same object.
+    const meteorGeometry = projectileGeometry(assets, 'rock');
+    for (let i = 0; i < METEOR_POOL_SIZE; i++) {
+      const mesh = new THREE.Mesh(meteorGeometry, this.defaultBallMaterial);
+      mesh.castShadow = true;
+      mesh.visible = false;
+      this.group.add(mesh);
+      this.meteorSlots.push({
+        mesh,
+        life: 0,
+        x: 0,
+        y: 0,
+        trailColor: WHITE,
+        emberColor: WHITE,
+        trailDebt: 0,
+        spinAxisX: 0,
+        spinAxisY: 1,
+        spinAxisZ: 0,
+        spinPhase: 0,
+        active: false,
+      });
+    }
+
     for (let i = 0; i < PLAYER_FX_STATE_SIZE; i++) {
       this.playerFxStates.push({
         playerId: -1,
@@ -899,6 +957,7 @@ export class ParticleRenderer implements GameRenderer {
     this.updateZones();
     this.updateDomes();
     this.updatePendingImpacts();
+    this.updateMeteors();
     this.updatePuddleBubbles();
   }
 
@@ -1770,33 +1829,129 @@ export class ParticleRenderer implements GameRenderer {
     }
   }
 
-  /** The body on its way down: a tight, bright clump with a short tail. */
+  /**
+   * Sends one stone down: claims a slot, drops it above the point it will
+   * break on, and rolls a fresh tumble.
+   *
+   * The tumble is re-rolled per body for the same reason {@link rollSpin} does
+   * it for projectiles — slots are reused, and a stone inheriting the last
+   * one's rotation pops on the frame it appears.
+   */
   private spawnMeteorBody(x: number, y: number, cfg: SpellVfx): void {
-    for (let i = 0; i < METEOR_BODY_COUNT; i++) {
-      // Strung out along the fall rather than clustered, so it reads as one
-      // object with a tail instead of a handful of sparks dropping together.
-      const along = i / METEOR_BODY_COUNT;
-      toThree(
-        this.tmp,
-        x + (Math.random() - 0.5) * 0.2,
-        y + (Math.random() - 0.5) * 0.2,
-        METEOR_HEIGHT * (1 - along * 0.35),
-      );
-      this.spawnParticle(
-        this.tmp.x,
-        this.tmp.y,
-        this.tmp.z,
-        0,
-        -METEOR_SPEED,
-        0,
-        (0.22 - along * 0.1) * (0.85 + Math.random() * 0.3),
-        METEOR_FALL_TIME * (1 - along * 0.2),
-        cfg.motes[i % cfg.motes.length],
-        // Weightless: the fall speed above is the whole motion, and gravity on
-        // top of it would land the body before its own scheduled impact.
-        0,
-      );
+    for (const meteor of this.meteorSlots) {
+      if (meteor.active) continue;
+
+      meteor.life = METEOR_FALL_TIME;
+      meteor.active = true;
+      meteor.x = x;
+      meteor.y = y;
+      meteor.trailColor = cfg.motes[0];
+      meteor.emberColor = cfg.motes[1 % cfg.motes.length];
+      meteor.trailDebt = 0;
+
+      const theta = Math.random() * SPARKLE_TWO_PI;
+      const z = Math.random() * 2 - 1;
+      const r = Math.sqrt(1 - z * z);
+      meteor.spinAxisX = r * Math.cos(theta);
+      meteor.spinAxisY = r * Math.sin(theta);
+      meteor.spinAxisZ = z;
+      meteor.spinPhase = Math.random() * SPARKLE_TWO_PI;
+
+      meteor.mesh.material = this.meteorMaterialFor(meteor.emberColor);
+      meteor.mesh.scale.setScalar(METEOR_SCALE * (0.8 + Math.random() * 0.45));
+      meteor.mesh.visible = true;
+      return;
     }
+    // Pool dry. Sized against `peakConcurrentMeteors` and held there by a test,
+    // so reaching this means a descriptor outgrew the arithmetic rather than
+    // that the arithmetic was wrong.
+  }
+
+  /**
+   * Flies the stones one frame: down their line, tumbling, shedding fire.
+   *
+   * Position is derived from remaining life rather than integrated, so a body
+   * cannot drift off its scheduled break — the ground beat is queued
+   * separately, and the two have to arrive together.
+   */
+  private updateMeteors(): void {
+    for (const meteor of this.meteorSlots) {
+      if (!meteor.active) continue;
+
+      meteor.life -= PARTICLE_DT;
+      if (meteor.life <= 0) {
+        meteor.active = false;
+        meteor.mesh.visible = false;
+        continue;
+      }
+
+      const fallen = meteor.life / METEOR_FALL_TIME;
+      const height = METEOR_HEIGHT * fallen;
+      toThree(this.tmp, meteor.x, meteor.y, height);
+      meteor.mesh.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
+
+      this.tmpDir.set(meteor.spinAxisX, meteor.spinAxisY, meteor.spinAxisZ);
+      meteor.mesh.quaternion.setFromAxisAngle(
+        this.tmpDir,
+        meteor.spinPhase + (METEOR_FALL_TIME - meteor.life) * METEOR_SPIN,
+      );
+
+      // Debt rather than a timer: at this speed a frame owes more than one
+      // ember, and dropping the surplus would thin the trail at exactly the
+      // moment the stone is moving fastest.
+      meteor.trailDebt += METEOR_TRAIL_RATE * PARTICLE_DT;
+      while (meteor.trailDebt >= 1) {
+        meteor.trailDebt -= 1;
+        this.spawnMeteorEmber(meteor, height);
+      }
+    }
+  }
+
+  /** One ember peeling off a falling stone and hanging in its wake. */
+  private spawnMeteorEmber(meteor: MeteorSlot, height: number): void {
+    const spread = METEOR_SCALE * 0.9;
+    toThree(
+      this.tmp,
+      meteor.x + (Math.random() - 0.5) * spread,
+      meteor.y + (Math.random() - 0.5) * spread,
+      // Behind rather than around: the stone is falling, so its wake is above.
+      height + Math.random() * 0.6,
+    );
+    this.spawnParticle(
+      this.tmp.x,
+      this.tmp.y,
+      this.tmp.z,
+      (Math.random() - 0.5) * 0.5,
+      0.4 + Math.random() * 0.5,
+      (Math.random() - 0.5) * 0.5,
+      0.08 + Math.random() * 0.09,
+      METEOR_TRAIL_LIFE * (0.7 + Math.random() * 0.6),
+      Math.random() < 0.4 ? meteor.trailColor : meteor.emberColor,
+      // Rises and hangs, like the smoke does: embers left behind a body that
+      // has already gone past should not race it to the ground.
+      -0.2,
+    );
+  }
+
+  private meteorMaterialFor(glow: number): THREE.MeshStandardMaterial {
+    return this.assets.material(
+      `particle-renderer-meteor:${glow}`,
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: METEOR_BODY_COLOR,
+          emissive: glow,
+          /*
+           * Low on purpose. At 0.9 the glow washed the body out to a white dot
+           * and the facets disappeared, which is the exact failure the element
+           * pass fixed for the boulder — a stone lighting itself stops being a
+           * stone. The fire belongs to the trail; the body only smoulders.
+           */
+          emissiveIntensity: 0.3,
+          roughness: 0.95,
+          metalness: 0.05,
+          flatShading: true,
+        }),
+    );
   }
 
   /** The break: a low outward spray and a small ring where it hit. */

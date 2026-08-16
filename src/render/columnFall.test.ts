@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { planColumnFall } from './columnFall';
+import { ALL_SPELLS } from '../../sim/spells';
+import { METEOR_POOL_SIZE, peakConcurrentMeteors, planColumnFall } from './columnFall';
+import { spellVfxFor } from './spellVfx';
 
 /**
  * Chuva de Meteoros is a *shower*: radius 5, and 18 damage every half second
@@ -40,5 +42,36 @@ describe('planColumnFall', () => {
     expect(times).toEqual([...times].sort((a, b) => a - b));
     expect(new Set(times).size).toBe(times.length);
     expect(Math.max(...times)).toBeLessThan(1.2);
+  });
+});
+
+/**
+ * Each falling body is a real mesh, so it holds a pool slot for the whole of
+ * its fall. This repo's pools fail *silently* when they run dry — `spawnZone`
+ * returns without drawing anything — so the sizing is worth arithmetic rather
+ * than a guess: a shower that quietly drops half its meteors looks like a
+ * weaker card, not like a bug.
+ */
+describe('the falling bodies fit in their pool', () => {
+  it('counts how many are in the air at once', () => {
+    // Seven bodies over one second, each airborne for a quarter of it: about
+    // two overlap at any moment. Worked by hand rather than by rerunning the
+    // formula, so the test can disagree with the code.
+    expect(peakConcurrentMeteors(7, 1, 0.25)).toBe(2);
+    // Squeeze the same seven into a third of a second and they pile up.
+    expect(peakConcurrentMeteors(7, 0.35, 0.25)).toBe(5);
+    // A window shorter than one fall means every body is up together.
+    expect(peakConcurrentMeteors(4, 0.1, 0.25)).toBe(4);
+  });
+
+  it('leaves room for both sides showering at once', () => {
+    for (const id of ALL_SPELLS) {
+      const vfx = spellVfxFor(id);
+      if (vfx.shape !== 'column') continue;
+      const peak = peakConcurrentMeteors(vfx.impacts ?? 1, vfx.impactWindow ?? 1);
+      // Two, because the global cooldown is shorter than a shower's window:
+      // the opponent can start theirs before yours has finished falling.
+      expect(peak * 2).toBeLessThanOrEqual(METEOR_POOL_SIZE);
+    }
   });
 });
