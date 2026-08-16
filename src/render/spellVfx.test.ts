@@ -1,16 +1,21 @@
 import { describe, expect, it } from 'vitest';
+import { SPELL_GLOBAL_COOLDOWN } from '../../sim/config';
 import { ALL_SPELLS, spellFor } from '../../sim/spells';
+import { DEFAULT_SPELL_SFX, ENEMY_CAST_GAIN, SPELL_SFX, spellSfxFor } from '../engine/spellSfx';
 import { DEFAULT_SPELL_VFX, SPELL_VFX, spellVfxFor, type SpellShape } from './spellVfx';
 
 /**
- * The catalog and its look are edited in two different files, by two different
+ * The catalog and its presentation are edited in different files, by different
  * kinds of change — a card is a `balance.json` entry, its beat is a table in
- * `src/render/`. Nothing in the type system connects them, and the failure mode
- * when they drift is the quietest one this game has: the card works, the rule
- * fires, the trace panel names it, and **nothing appears on the field**. In a
- * game the player only watches, that is indistinguishable from a broken rule.
+ * `src/render/`, its sound is a table in `src/engine/`. Nothing in the type
+ * system connects the three, and the failure mode when they drift is the
+ * quietest one this game has: the card works, the rule fires, the trace panel
+ * names it, and **nothing appears on the field**. In a game the player only
+ * watches, that is indistinguishable from a broken rule.
  *
- * So the coupling is asserted here instead.
+ * So the coupling is asserted here instead — for both tables in one file,
+ * because they answer the same question about the same list of cards, and a
+ * card that is missing from one is usually missing from the other.
  */
 
 const KNOWN_SHAPES: readonly SpellShape[] = ['burst', 'dome', 'column', 'torus'];
@@ -24,12 +29,15 @@ const KNOWN_SHAPES: readonly SpellShape[] = ['burst', 'dome', 'column', 'torus']
  * a card that silently inherits the generic violet burst and ships that way
  * because nobody noticed it never got its own row.
  */
-const FALLBACK_BY_DESIGN: readonly string[] = [];
+const VFX_FALLBACK_BY_DESIGN: readonly string[] = [];
+
+/** The same allowlist for sound, and empty for the same reason. */
+const SFX_FALLBACK_BY_DESIGN: readonly string[] = [];
 
 describe('SPELL_VFX covers the catalog', () => {
   it('gives every card its own beat, or says out loud that it does not', () => {
     const missing = ALL_SPELLS.filter(
-      (id) => !(id in SPELL_VFX) && !FALLBACK_BY_DESIGN.includes(id),
+      (id) => !(id in SPELL_VFX) && !VFX_FALLBACK_BY_DESIGN.includes(id),
     );
     expect(missing).toEqual([]);
   });
@@ -50,6 +58,95 @@ describe('SPELL_VFX covers the catalog', () => {
 
   it('falls back for a card this build has never heard of', () => {
     expect(spellVfxFor('vortice_gravitacional')).toBe(DEFAULT_SPELL_VFX);
+  });
+});
+
+/**
+ * Sound is newer than the rest of this file by a whole phase, and it starts
+ * from further back: until now **spells were silent**. `SpellCast` has been on
+ * the event bus since the pivot and nothing was listening, so all seven cards
+ * have been landing without a noise since the day they were written.
+ *
+ * That matters more in an idle match than it would have before. The player is
+ * not clicking anything, so sound is half of the confirmation that the program
+ * he wrote is alive at all — the other half being the trace panel, which he has
+ * to be looking at.
+ */
+describe('SPELL_SFX covers the catalog', () => {
+  it('gives every card its own sound, or says out loud that it does not', () => {
+    const missing = ALL_SPELLS.filter((id) => !(id in SPELL_SFX) && !SFX_FALLBACK_BY_DESIGN.includes(id));
+    expect(missing).toEqual([]);
+  });
+
+  it('has no rows for cards the catalog does not have', () => {
+    const orphans = Object.keys(SPELL_SFX).filter((id) => !ALL_SPELLS.includes(id as never));
+    expect(orphans).toEqual([]);
+  });
+
+  it('never leaves a card with nothing to play', () => {
+    for (const id of ALL_SPELLS) {
+      const sfx = spellSfxFor(id);
+      expect(sfx.layers.length).toBeGreaterThan(0);
+      for (const layer of sfx.layers) {
+        expect(['tone', 'noise', 'chord']).toContain(layer.kind);
+        expect(layer.duration).toBeGreaterThan(0);
+        expect(layer.gain).toBeGreaterThan(0);
+        expect(layer.at).toBeGreaterThanOrEqual(0);
+        if (layer.kind === 'chord') expect(layer.freqs.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('falls back for a card this build has never heard of', () => {
+    expect(spellSfxFor('vortice_gravitacional')).toBe(DEFAULT_SPELL_SFX);
+  });
+
+  it('varies the pitch of every card it repeats', () => {
+    // Two Tacticians casting on a 0.75s cooldown for a three-minute match is a
+    // few hundred casts, drawn from a deck of eight. A card that plays back
+    // identically every time is what makes synthesised audio read as cheap.
+    for (const id of ALL_SPELLS) {
+      expect(spellSfxFor(id).detune).toBeGreaterThan(0);
+      expect(spellSfxFor(id).detune).toBeLessThanOrEqual(0.15);
+    }
+  });
+});
+
+/**
+ * The two limits that keep a table of hand-written numbers from becoming a mess
+ * nobody can hear through. Both are budget questions rather than correctness
+ * ones — which is exactly why they belong in a test: a single card is always
+ * defensible on its own, and it is the seventh one that ruins the mix.
+ */
+describe('a cast fits in the space the game gives it', () => {
+  /** Where the last layer of a card's sound stops ringing. */
+  function lengthOf(spellId: string): number {
+    return spellSfxFor(spellId).layers.reduce((end, layer) => Math.max(end, layer.at + layer.duration), 0);
+  }
+
+  it('is over before the same side can cast again', () => {
+    // `SPELL_GLOBAL_COOLDOWN` is the fastest a side can fire, so a sound longer
+    // than it would stack on its own successor and never resolve — the same
+    // number the simulation uses, rather than a guess written down twice.
+    for (const id of ALL_SPELLS) {
+      expect(lengthOf(id)).toBeLessThanOrEqual(SPELL_GLOBAL_COOLDOWN);
+    }
+  });
+
+  it('never lets one card shout down the rest of the mix', () => {
+    for (const id of ALL_SPELLS) {
+      const loudest = spellSfxFor(id).layers.reduce((sum, layer) => sum + layer.gain, 0);
+      expect(loudest).toBeLessThanOrEqual(0.3);
+    }
+  });
+
+  it('places the enemy further away than you, without silencing them', () => {
+    // Both casts are the same event on the same field; what separates them is
+    // that one of them is *yours*. The white core flash says so on screen and
+    // this says so in the mix — but an inaudible enemy cast would hide half the
+    // match from a player who is only listening.
+    expect(ENEMY_CAST_GAIN).toBeGreaterThan(0.2);
+    expect(ENEMY_CAST_GAIN).toBeLessThan(1);
   });
 });
 
