@@ -4,7 +4,7 @@ import type { GameRenderer } from '../core/Game';
 import type { EntityId } from '../ecs/Entity';
 import type { AssetManager } from '../engine/AssetManager';
 import { PLAYER, SNOWBALL, BUFF_COLORS } from '../game/config';
-import { fxStacks, hasFx } from '../game/effects';
+import { fxStacks, type FxKind } from '../game/effects';
 import type { ElementId } from '../game/elements';
 import type { Player, Puddle, Snowball } from '../game/types';
 import type { World } from '../game/World';
@@ -77,21 +77,113 @@ const COLUMN_LIFE = 0.5;
 const TORUS_RIM_SPEED = 2.2;
 
 /* ---- Status effect emission (GDD §8) --------------------------------------- */
-/*
- * The particle pool is a shared 900 slots and `spawnParticle` silently drops a
- * request when it is full, so a continuous per-mage effect has to be cheap: a
- * burning squad of four must not starve the impact bursts of their own fight.
- * These rates are the budget — one flame every ~55ms per stack, three stacks
- * max, is at worst ~55 particles/sec across a whole team.
+
+/**
+ * What an effect running *on* a mage sheds, one row per {@link FxKind}.
+ *
+ * This was two hand-written branches, which was the right size for two
+ * effects and the wrong shape for what is coming: Tier 2 alone brings eight
+ * new kinds (petrify, root, silence, regen, fortify, marked, empower), and
+ * eight more branches in a method nobody reads is how an effect ends up
+ * shipping invisible.
+ *
+ * **Emission only.** The rings, the body tint and the vulnerability shell live
+ * in `PlayerRenderer`, because they are per-mage cloned materials and this
+ * class owns none of them. So a kind belongs here when a *stream of particles*
+ * says something the silhouette does not — which is why `shield`, `haste`,
+ * `slow` and `stun` are absent rather than forgotten: all four already have a
+ * ring or a shell on the mage, and a second cue would only cost pool slots.
+ *
+ * The particle pool is a shared 900 and `spawnParticle` silently drops a
+ * request when it is full, so a continuous emission has to be cheap: a burning
+ * squad of four must not starve the impact bursts of their own fight. The
+ * intervals are that budget — burn's ~55ms per stack, three stacks deep, is at
+ * worst ~55 particles/sec across a whole team.
  */
-const FLAME_INTERVAL = 0.055;
-const FLAME_COLORS = [0xffb238, 0xff5a1f, 0xffe9a8];
-/** Flames rise, so gravity works against them rather than for them. */
-const FLAME_GRAVITY_SCALE = -0.35;
-const FLAME_LIFE = 0.42;
-/** Dissonance is a nag, not a fire — one mote every third of a second. */
-const DISSONANCE_INTERVAL = 0.34;
-const DISSONANCE_COLOR = 0xf72585;
+interface EffectEmission {
+  readonly kind: FxKind;
+  /** Seconds between motes at one stack. */
+  readonly interval: number;
+  /**
+   * Whether deeper stacks emit proportionally faster. On for burn — the only
+   * cue that a mage is three stacks deep rather than one — and meaningless for
+   * anything that does not stack.
+   */
+  readonly perStack: boolean;
+  readonly colors: readonly number[];
+  /** Ring around the mage the mote appears on: base radius plus random spread. */
+  readonly radius: number;
+  readonly spread: number;
+  /** Height band above the ground it appears in. */
+  readonly height: number;
+  readonly heightSpread: number;
+  /** Outward horizontal speed, and vertical speed (negative sinks). */
+  readonly drift: number;
+  readonly rise: number;
+  readonly size: number;
+  readonly life: number;
+  readonly gravityScale: number;
+}
+
+const EFFECT_VFX: readonly EffectEmission[] = [
+  {
+    kind: 'burn',
+    interval: 0.055,
+    perStack: true,
+    colors: [0xffb238, 0xff5a1f, 0xffe9a8],
+    radius: 0.1,
+    spread: 0.28,
+    height: 0.15,
+    heightSpread: 0.7,
+    drift: 0.25,
+    rise: 1.25,
+    size: 0.09,
+    life: 0.42,
+    /** Flames rise, so gravity works against them rather than for them. */
+    gravityScale: -0.35,
+  },
+  {
+    /** A note sagging off a mage whose concentration is being jammed. */
+    kind: 'cast_slow',
+    interval: 0.34,
+    perStack: false,
+    colors: [0xf72585],
+    radius: 0.34,
+    spread: 0,
+    height: 1.25,
+    heightSpread: 0.25,
+    drift: 0.12,
+    rise: -0.15,
+    size: 0.06,
+    life: 0.75,
+    gravityScale: 0.12,
+  },
+  {
+    /*
+     * The one effect in the Tier 1 deck with no tell at all before this. Two of
+     * the seven cards apply it (Bênção de Ímpeto, Campo de Sobrecarga), and a
+     * mage charging faster looks exactly like a mage charging — which makes
+     * "did my buff land?" unanswerable from the field.
+     *
+     * Deliberately the mirror of `cast_slow` above: same band, same size, rises
+     * where that one sags. The pair is the read.
+     */
+    kind: 'cast_haste',
+    interval: 0.3,
+    perStack: false,
+    colors: [0xffe9a8, 0xffd166],
+    radius: 0.34,
+    spread: 0,
+    height: 0.9,
+    heightSpread: 0.3,
+    drift: 0.12,
+    rise: 0.85,
+    size: 0.06,
+    life: 0.7,
+    gravityScale: -0.05,
+  },
+];
+
 const SHIELD_BREAK_COLOR = 0xfff3c4;
 
 /**
@@ -454,9 +546,12 @@ interface PlayerFxState {
   wasMoving: boolean;
   lastVx: number;
   lastVy: number;
-  /** Accumulators for the continuous status emissions; see updateStatusEmission. */
-  flameTimer: number;
-  dissonanceTimer: number;
+  /**
+   * One accumulator per {@link EFFECT_VFX} row, by index; see
+   * updateStatusEmission. Allocated once with the slot, so a mage picking up a
+   * fourth effect mid-fight allocates nothing.
+   */
+  readonly timers: number[];
 }
 
 /**
@@ -672,8 +767,7 @@ export class ParticleRenderer implements GameRenderer {
         wasMoving: false,
         lastVx: 0,
         lastVy: 0,
-        flameTimer: 0,
-        dissonanceTimer: 0,
+        timers: new Array<number>(EFFECT_VFX.length).fill(0),
       });
     }
 
@@ -1281,76 +1375,61 @@ export class ParticleRenderer implements GameRenderer {
   }
 
   /**
-   * The continuous per-mage effect emissions (GDD §8): flames off a burning
-   * mage, motes off one under a Bard's dissonance.
+   * The continuous per-mage effect emissions (GDD §8), one pass over
+   * {@link EFFECT_VFX}.
    *
    * Same accumulator shape as {@link ParticleRenderer.updatePuddleBubbles} —
    * count down by the frame step, spawn, add the interval back — because the
    * pool cannot take a spawn-per-frame and the interval is what caps the cost.
    */
   private updateStatusEmission(state: PlayerFxState, player: Player): void {
-    if (!player.alive) {
-      state.flameTimer = 0;
-      state.dissonanceTimer = 0;
-      return;
-    }
-
-    const burnStacks = fxStacks(player, 'burn');
-    if (burnStacks > 0) {
-      // Deeper stacks burn harder, which is the only cue that a mage is on
-      // three stacks rather than one.
-      state.flameTimer -= PARTICLE_DT * burnStacks;
-      while (state.flameTimer <= 0) {
-        this.spawnFlame(player);
-        state.flameTimer += FLAME_INTERVAL * (0.7 + Math.random() * 0.6);
+    for (let i = 0; i < EFFECT_VFX.length; i++) {
+      const emission = EFFECT_VFX[i];
+      const stacks = player.alive ? fxStacks(player, emission.kind) : 0;
+      if (stacks <= 0) {
+        state.timers[i] = 0;
+        continue;
       }
-    } else {
-      state.flameTimer = 0;
-    }
 
-    if (hasFx(player, 'cast_slow')) {
-      state.dissonanceTimer -= PARTICLE_DT;
-      while (state.dissonanceTimer <= 0) {
-        this.spawnDissonanceMote(player);
-        state.dissonanceTimer += DISSONANCE_INTERVAL * (0.6 + Math.random() * 0.8);
+      state.timers[i] -= PARTICLE_DT * (emission.perStack ? stacks : 1);
+      while (state.timers[i] <= 0) {
+        this.spawnEffectMote(player, emission);
+        state.timers[i] += emission.interval * (0.7 + Math.random() * 0.6);
       }
-    } else {
-      state.dissonanceTimer = 0;
     }
   }
 
-  /** One ember licking up off the mage's body. */
-  private spawnFlame(player: Player): void {
+  /**
+   * One mote of a running effect, thrown off the mage's body.
+   *
+   * Note the {@link toThree} — the two hand-written emitters this replaced went
+   * straight to `spawnParticle` with gameplay coordinates, so every ember and
+   * every dissonance note has been spawning at `worldY = gameplay.y`: floating
+   * in the air at a height equal to the mage's distance up the field, and at a
+   * depth of about a metre from the top edge of the arena. They were visible,
+   * which is presumably why it survived — just never anywhere near the mage
+   * they belonged to.
+   */
+  private spawnEffectMote(player: Player, e: EffectEmission): void {
     const angle = Math.random() * SPARKLE_TWO_PI;
-    const radius = 0.1 + Math.random() * 0.28;
-    this.spawnParticle(
-      player.position.x + Math.cos(angle) * radius,
-      player.position.y + Math.sin(angle) * radius,
-      0.15 + Math.random() * 0.7,
-      Math.cos(angle) * 0.25,
-      Math.sin(angle) * 0.25,
-      0.9 + Math.random() * 0.7,
-      0.07 + Math.random() * 0.05,
-      FLAME_LIFE * (0.75 + Math.random() * 0.5),
-      FLAME_COLORS[Math.floor(Math.random() * FLAME_COLORS.length)],
-      FLAME_GRAVITY_SCALE,
+    const dist = e.radius + Math.random() * e.spread;
+    toThree(
+      this.tmp,
+      player.position.x + Math.cos(angle) * dist,
+      player.position.y + Math.sin(angle) * dist,
+      e.height + Math.random() * e.heightSpread,
     );
-  }
-
-  /** A note sagging off a mage whose concentration is being jammed. */
-  private spawnDissonanceMote(player: Player): void {
-    const angle = Math.random() * SPARKLE_TWO_PI;
     this.spawnParticle(
-      player.position.x + Math.cos(angle) * 0.34,
-      player.position.y + Math.sin(angle) * 0.34,
-      1.25 + Math.random() * 0.25,
-      Math.cos(angle) * 0.12,
-      Math.sin(angle) * 0.12,
-      -0.15,
-      0.06,
-      0.75,
-      DISSONANCE_COLOR,
-      0.12,
+      this.tmp.x,
+      this.tmp.y,
+      this.tmp.z,
+      Math.cos(angle) * e.drift,
+      e.rise * (0.75 + Math.random() * 0.5),
+      Math.sin(angle) * e.drift,
+      e.size * (0.8 + Math.random() * 0.4),
+      e.life * (0.75 + Math.random() * 0.5),
+      e.colors[Math.floor(Math.random() * e.colors.length)],
+      e.gravityScale,
     );
   }
 
@@ -1785,8 +1864,9 @@ export class ParticleRenderer implements GameRenderer {
     empty.lastVy = 0;
     // Staggered rather than zeroed, so four mages set alight on the same tick
     // do not pulse in lockstep like a string of lights.
-    empty.flameTimer = Math.random() * FLAME_INTERVAL;
-    empty.dissonanceTimer = Math.random() * DISSONANCE_INTERVAL;
+    for (let i = 0; i < EFFECT_VFX.length; i++) {
+      empty.timers[i] = Math.random() * EFFECT_VFX[i].interval;
+    }
     return empty;
   }
 
