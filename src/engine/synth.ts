@@ -268,6 +268,51 @@ export function playSound(
   };
 }
 
+/**
+ * A ceiling on how many sounds may be ringing at once.
+ *
+ * Nothing in this game has ever needed one, because nothing played at this
+ * rate: the hand-written sounds fire a handful of times a round, while two
+ * Tacticians on a 0.75s global cooldown are a few hundred casts over a match.
+ * Voices that pile up do not fail loudly — the context glitches and thins out
+ * several minutes in, which is past the end of every test and every smoke run
+ * this repo has.
+ *
+ * When it is full the **oldest** ringing voice is cut, not the newest refused.
+ * The newcomer is the cast that just happened and the one the player is waiting
+ * to be told about; the voice being cut is already most of the way through
+ * being heard, and it fades rather than stopping dead.
+ */
+export class VoiceBudget {
+  private readonly voices: Voice[] = [];
+
+  constructor(private readonly limit: number) {}
+
+  /** How many voices are still believed to be ringing. */
+  get active(): number {
+    return this.voices.length;
+  }
+
+  admit(voice: Voice, now: number): void {
+    // Voices are dropped by their own schedule rather than by a callback: the
+    // context's clock already knows when each one ended, so asking it is
+    // cheaper and cannot leak an entry if an `ended` event never arrives.
+    for (let i = this.voices.length - 1; i >= 0; i -= 1) {
+      if (this.voices[i].endsAt <= now) this.voices.splice(i, 1);
+    }
+    while (this.voices.length >= this.limit) {
+      this.voices.shift()?.stop(now);
+    }
+    this.voices.push(voice);
+  }
+
+  /** Cuts everything still ringing — the match view being torn down. */
+  stopAll(now: number): void {
+    for (const voice of this.voices) voice.stop(now);
+    this.voices.length = 0;
+  }
+}
+
 /** Disconnects the shared gain once the last layer hanging off it has ended. */
 function releaseBusWhenSilent(bus: GainNode, sources: readonly AudioScheduledSourceNode[]): void {
   let pending = sources.length;

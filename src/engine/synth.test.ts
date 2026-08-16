@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { chord, noise, pitchScale, playSound, tone, type Sound } from './synth';
+import { chord, noise, pitchScale, playSound, tone, VoiceBudget, type Sound, type Voice } from './synth';
 
 type ParamEventKind = 'set' | 'linear' | 'exp' | 'target';
 
@@ -427,5 +427,71 @@ describe('pitchScale', () => {
     // time rather than nearly so — otherwise "no detune" is a lie in the table.
     expect(pitchScale(0, 0)).toBe(1);
     expect(pitchScale(0, 0.9)).toBe(1);
+  });
+});
+
+/** A voice that only records whether, and when, it was cut. */
+function fakeVoice(endsAt: number): Voice & { stoppedAt: number | null } {
+  return {
+    endsAt,
+    stoppedAt: null,
+    stop(at: number) {
+      this.stoppedAt = at;
+    },
+  };
+}
+
+/**
+ * Nothing in this game has ever needed a voice cap, because nothing played at
+ * this rate: two Tacticians on a 0.75s cooldown for a three-minute match is a
+ * few hundred casts where the old hand-written sounds fired a handful of times
+ * a round. The failure it guards against is the mean kind — an AudioContext
+ * that only starts glitching several minutes in, on a machine slow enough that
+ * a stray voice never finished, which no short test and no smoke run reaches.
+ */
+describe('VoiceBudget', () => {
+  it('forgets a voice that finished on its own, without touching it', () => {
+    const budget = new VoiceBudget(2);
+    const done = fakeVoice(1);
+    budget.admit(done, 0);
+    expect(budget.active).toBe(1);
+
+    budget.admit(fakeVoice(3), 2);
+    expect(budget.active).toBe(1);
+    expect(done.stoppedAt).toBeNull();
+  });
+
+  it('cuts the oldest still ringing when the budget is full', () => {
+    const budget = new VoiceBudget(2);
+    const oldest = fakeVoice(10);
+    const middle = fakeVoice(10);
+    budget.admit(oldest, 0);
+    budget.admit(middle, 0);
+
+    budget.admit(fakeVoice(10), 1);
+
+    // The oldest goes because it is the one furthest through being heard; the
+    // alternative — refusing the newcomer — drops the cast that just happened,
+    // which is the one the player is waiting to be told about.
+    expect(oldest.stoppedAt).toBe(1);
+    expect(middle.stoppedAt).toBeNull();
+    expect(budget.active).toBe(2);
+  });
+
+  it('never holds more than it was given, however hard it is hit', () => {
+    const budget = new VoiceBudget(3);
+    for (let i = 0; i < 50; i++) budget.admit(fakeVoice(100), 0);
+    expect(budget.active).toBe(3);
+  });
+
+  it('lets go of everything when the match does', () => {
+    const budget = new VoiceBudget(4);
+    const voice = fakeVoice(10);
+    budget.admit(voice, 0);
+
+    budget.stopAll(2);
+
+    expect(voice.stoppedAt).toBe(2);
+    expect(budget.active).toBe(0);
   });
 });
