@@ -74,6 +74,14 @@ describe('evaluateStrategy — rule selection', () => {
     expect(d).toMatchObject({ ruleId: 'b', ruleIndex: 1, cardId: 'slow_curse' });
   });
 
+  it('reports the selector the rule named, not just the point it resolved to', () => {
+    // The HUD narrates a cast as "rule 1 · Praga → enemy cluster"; a pair of
+    // coordinates cannot be turned back into the word the player wrote.
+    const s = strategy([rule({ card: 'plague', at: 'enemy_cluster' })]);
+
+    expect(evaluateStrategy(s, facts(), RICH)).toMatchObject({ at: 'enemy_cluster' });
+  });
+
   it('casts nothing when no rule is eligible', () => {
     const s = strategy([rule({ when: { kind: 'mana', op: 'gte', value: 99 } })]);
     expect(evaluateStrategy(s, facts(), RICH)).toBeNull();

@@ -193,6 +193,15 @@ export interface StrategyDecision {
   readonly ruleId: string;
   readonly ruleIndex: number;
   readonly cardId: CardId;
+  /**
+   * The selector the rule named, carried alongside the point it resolved to.
+   *
+   * The position alone is what the caster needs; this is what the *player*
+   * needs. Since the idle pivot the HUD's only account of a match is "rule 3
+   * fired Praga at the enemy cluster", and re-deriving the selector from a
+   * pair of coordinates is not possible.
+   */
+  readonly at: TargetSelector;
   readonly position: Vec2;
 }
 
@@ -229,7 +238,7 @@ export function evaluateStrategy(
     const position = facts.targets[rule.at] ?? null;
     if (!position) continue;
 
-    return { ruleId: rule.id, ruleIndex: i, cardId: rule.card, position };
+    return { ruleId: rule.id, ruleIndex: i, cardId: rule.card, at: rule.at, position };
   }
   return null;
 }
