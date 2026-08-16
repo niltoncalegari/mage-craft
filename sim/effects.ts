@@ -44,7 +44,12 @@ export type EffectKind =
   /** A pool of absorption drained before health; `magnitude` is what is left. */
   | 'shield'
   /** Rooted. Mirrored onto `Mage.stunTimer`, which is what actually roots. */
-  | 'stun';
+  | 'stun'
+  /**
+   * Held in place, but not silenced: move speed is pinned to the floor while
+   * casting and shooting carry on. `magnitude` is unused — a root is a root.
+   */
+  | 'root';
 
 /**
  * Iteration and wire order. Fixed so the effect list is canonical: a mage
@@ -52,6 +57,7 @@ export type EffectKind =
  */
 export const EFFECT_ORDER: readonly EffectKind[] = [
   'stun',
+  'root',
   'slow',
   'haste',
   'cast_slow',
@@ -246,9 +252,16 @@ export function tickEffects(carrier: EffectCarrier, dt: number): EffectTick[] | 
 
 /**
  * Multiplier on base move speed. Floored at 0.1 so no stack of slows can ever
- * root a mage outright — rooting is what `stun` is for, and it is visible.
+ * root a mage outright — rooting is what `root` and `stun` are for, and both
+ * are visible.
+ *
+ * `root` returns that floor rather than multiplying into it: the floor guards a
+ * *product*, so a hasted target would otherwise walk out of the deepest slow in
+ * the catalog at a quarter speed. A root that haste can argue with is not a
+ * root.
  */
 export function moveSpeedMultiplier(carrier: EffectCarrier): number {
+  if (hasEffect(carrier, 'root')) return 0.1;
   const slow = magnitudeOf(carrier, 'slow');
   const haste = magnitudeOf(carrier, 'haste');
   return Math.max(0.1, 1 - slow) * (1 + haste);

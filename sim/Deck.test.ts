@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { ALL_SPELLS, spellFor } from './spells';
 import {
   colorLimitIsPlayable,
+  colorsOf,
   Deck,
   DECK_SIZE,
   defaultDeck,
   HAND_SIZE,
+  MAX_COLORS,
   MAX_COPIES,
   validateDeck,
 } from './Deck';
@@ -111,15 +113,47 @@ describe('hand and cycle', () => {
 });
 
 /*
- * A tripwire, not a behaviour test. The two-colour rule (GDD §16.4) is right
- * for the catalog the GDD calls for and wrong for the one that exists: some
- * colours cannot yet reach DECK_SIZE alongside any other, so enforcing it now
- * would strand their cards rather than constrain them. This fails the moment
- * that stops being true, which is when MAX_COLORS should start being enforced
- * and the note in Deck.ts should go.
+ * The two-colour rule (GDD §16.4), enforced since Raízes Entrelaçadas.
+ *
+ * It was deferred, not designed late: the rule is right for the catalog the GDD
+ * calls for and was wrong for the one that existed, because black held a single
+ * card and no partner colour could carry it to DECK_SIZE inside MAX_COPIES.
+ * Turning it on then would have removed Maldição da Lentidão from the game
+ * instead of constraining how it is used. The third green card is what gave
+ * black a partner, so this is the commit that could afford the rule.
+ *
+ * The tripwire below stays, inverted. It is the guard in the other direction
+ * now: a catalog edit that strands a colour again fails here rather than
+ * quietly making some card unbuildable.
  */
-describe('the deferred two-colour rule (GDD §16.4)', () => {
-  it('is still unplayable, so it is still not enforced', () => {
-    expect(colorLimitIsPlayable()).toBe(false);
+describe('the two-colour rule (GDD §16.4)', () => {
+  it('is playable across the whole catalog, which is what lets it be enforced', () => {
+    expect(colorLimitIsPlayable()).toBe(true);
+  });
+
+  it('accepts a deck drawn from two colours', () => {
+    // The default is White + Green.
+    expect(validateDeck(defaultDeck())).toEqual({ ok: true });
+    expect(colorsOf(defaultDeck())).toHaveLength(2);
+  });
+
+  it('rejects a deck that reaches into a third colour', () => {
+    const threeColours = [
+      'blessing',
+      'blessing',
+      'arcane_shield',
+      'arcane_shield', // white
+      'plague',
+      'plague', // green
+      'slow_curse',
+      'slow_curse', // black
+    ];
+    // Legal on every other axis: eight cards, four distinct, two copies each.
+    expect(threeColours).toHaveLength(DECK_SIZE);
+    expect(colorsOf(threeColours)).toHaveLength(3);
+
+    const result = validateDeck(threeColours);
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toContain(String(MAX_COLORS));
   });
 });

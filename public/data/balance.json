@@ -175,6 +175,7 @@
     "cast_haste": { "stacking": "refresh_strongest", "maxMagnitude": 1.5 },
     "vulnerable": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "stun": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
+    "root": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
     "burn": { "stacking": "stack_intensity", "maxStacks": 3, "maxMagnitude": 1 },
     "shield": { "stacking": "pool", "maxMagnitude": 9999 }
   },
@@ -384,6 +385,16 @@
         { "effect": "slow", "magnitude": 0.35 },
         { "effect": "cast_slow", "magnitude": 0.35 }
       ]
+    },
+    "entangling_roots": {
+      "name": "Raízes Entrelaçadas",
+      "color": "green",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 3,
+      "duration": 2,
+      "target": "enemies",
+      "apply": [{ "effect": "root" }]
     },
     "overload_field": {
       "name": "Campo de Sobrecarga",

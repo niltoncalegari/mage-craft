@@ -42,17 +42,17 @@ export const MAX_COPIES = 2;
 export const MIN_DISTINCT = 3;
 
 /**
- * Colours a deck may draw from (GDD §16.4) — **not yet enforced**.
+ * Colours a deck may draw from (GDD §16.4).
  *
- * The rule is right for the catalog the GDD calls for: five colours of five
- * cards gives a ten-card pool for eight slots, a real cut and a legible
- * identity. It is wrong for the catalog that exists. With colours still
- * lopsided, some of them cannot reach `DECK_SIZE` inside `MAX_COPIES` at all,
- * and turning the rule on now would silently remove those cards from the game
- * rather than constrain how they are used.
+ * Two gives a ten-card pool for eight slots: a real cut, a legible identity,
+ * and a strategy palette that still fits a phone in landscape. Free choice
+ * across the whole catalog would make colour cosmetic.
  *
- * `Deck.test.ts` holds a tripwire that fails once every colour can support a
- * legal deck — which is the moment to enforce this and delete the note.
+ * This was written before it could be enforced. While black held a single card,
+ * no partner colour could carry it to `DECK_SIZE` inside `MAX_COPIES`, so the
+ * rule would have removed Maldição da Lentidão from the game rather than
+ * constrained it — see {@link colorLimitIsPlayable}, which is still checked by
+ * `Deck.test.ts` and now guards the invariant from the other side.
  */
 export const MAX_COLORS = 2;
 
@@ -68,6 +68,22 @@ export function colorLimitIsPlayable(): boolean {
   return ALL_DECK_COLORS.filter((c) => size(c) > 0).every((c) =>
     ALL_DECK_COLORS.some((d) => d !== c && (size(c) + size(d)) * MAX_COPIES >= DECK_SIZE),
   );
+}
+
+/**
+ * The distinct colours a card list draws from, in catalog order.
+ *
+ * Order is fixed rather than first-seen so the deck builder's mix line reads
+ * the same ("Branco + Verde") however the player happened to add the cards.
+ * Unknown ids are skipped; `validateDeck` is what rejects them, and this is
+ * also called on half-built decks in the UI.
+ */
+export function colorsOf(cards: readonly string[]): DeckColor[] {
+  const present = new Set<DeckColor>();
+  for (const id of cards) {
+    if (isSpellId(id)) present.add(spellFor(id)!.color);
+  }
+  return ALL_DECK_COLORS.filter((c) => present.has(c));
 }
 
 export type DeckValidation = { ok: true } | { ok: false; reason: string };
@@ -90,6 +106,11 @@ export function validateDeck(cards: readonly string[]): DeckValidation {
 
   if (copies.size < MIN_DISTINCT) {
     return { ok: false, reason: `deck needs at least ${MIN_DISTINCT} different cards, got ${copies.size}` };
+  }
+
+  const colors = colorsOf(cards);
+  if (colors.length > MAX_COLORS) {
+    return { ok: false, reason: `deck may draw from at most ${MAX_COLORS} colours, got ${colors.length}` };
   }
 
   return { ok: true };

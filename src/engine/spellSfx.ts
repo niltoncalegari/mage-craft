@@ -91,6 +91,24 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * The third green, and the two it has to be told apart from both *fall*:
+   * Praga's square drops 180→92, the swamp's triangle drops 160→58. So this one
+   * climbs. Nothing else in the catalog does that except Campo de Sobrecarga,
+   * which is a sawtooth bed and shares no timbre with a creak.
+   *
+   * Dry rather than wet, too. Both other greens are filtered noise standing in
+   * for liquid; this is a short bandpass snap that closes fast — timber, not
+   * mud — over a low triangle cinching upward. The card grabs and holds, and
+   * the sound is the grab, not the hold.
+   */
+  entangling_roots: {
+    detune: 0.045,
+    layers: [
+      { kind: 'noise', filter: 'bandpass', from: 2000, to: 400, at: 0, duration: 0.28, gain: 0.05, q: 3 },
+      { kind: 'tone', wave: 'triangle', freq: 70, toFreq: 130, at: 0.03, duration: 0.3, gain: 0.05 },
+    ],
+  },
+  /*
    * The only consonant thing in the game. A major triad, played straight, is
    * the fastest way to say "this one was for us" to someone who is not looking
    * — every other card is noise or a sweep.

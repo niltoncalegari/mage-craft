@@ -22,6 +22,7 @@ const KNOWN_EFFECTS = new Set([
   'vulnerable',
   'shield',
   'stun',
+  'root',
   'interrupt',
   'shield_break',
   'puddle',

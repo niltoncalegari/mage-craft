@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { magnitudeOf } from './effects';
+import { magnitudeOf, moveSpeedMultiplier } from './effects';
 import { defaultSquad } from './cards';
 import {
   CHARGE_TIME,
@@ -268,6 +268,29 @@ describe('spells (GDD §9)', () => {
 
     expect(magnitudeOf(enemy, 'slow')).toBeGreaterThan(0);
     expect(magnitudeOf(ally, 'slow')).toBe(0);
+  });
+
+  /**
+   * The card the green deck buys instead of a second Pântano Pegajoso. The
+   * swamp is the wide soft zone; the roots are the tight hard lock, and the
+   * difference has to survive contact with the sim: a rooted mage is pinned to
+   * the floor no matter what haste is on it, and — unlike a stun — it is still
+   * awake. Losing the ground is not losing the turn.
+   */
+  it('roots enemies where they stand without taking their turn away', () => {
+    const w = new World();
+    const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    const enemy = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0.5));
+
+    // Haste first, so the assertion cannot pass by the slow floor alone.
+    w.castSpell(TEAM_B, 'blessing', enemy.position);
+    expect(moveSpeedMultiplier(enemy)).toBeGreaterThan(1);
+
+    w.castSpell(TEAM_A, 'entangling_roots', enemy.position);
+
+    expect(moveSpeedMultiplier(enemy)).toBe(0.1);
+    expect(enemy.stunTimer).toBe(0);
+    expect(moveSpeedMultiplier(ally)).toBeGreaterThanOrEqual(1);
   });
 
   it('shields absorb damage before health', () => {

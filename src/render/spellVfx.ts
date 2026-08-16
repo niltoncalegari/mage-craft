@@ -182,6 +182,27 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
    * struck — which is also literally what it does: everyone inside takes more
    * damage and casts faster.
    */
+  /*
+   * The third green card, and the reason it is not a third green burst. Praga
+   * and the swamp are already two bursts separated by palette alone, which is
+   * the failure mode this type's docblock names outright — a third would make
+   * "which green landed?" a question about remembering hex codes.
+   *
+   * The torus is also the truer statement. Roots do not detonate; a patch of
+   * ground *becomes* grabby and stays that way, which is the same "switched on
+   * rather than struck" the shape was cut for. Read against Campo de
+   * Sobrecarga, the other torus: colour separates them, and direction says the
+   * rest — that one energises what it catches and lifts, this one closes on it
+   * and presses down.
+   */
+  entangling_roots: {
+    shape: 'torus',
+    ring: 0x9c7a3f,
+    zone: 0x2d4a1e,
+    motes: [0x8f6b3a, 0x4a7c2f, 0x243d19],
+    moteCount: 20,
+    direction: -1,
+  },
   overload_field: {
     shape: 'torus',
     ring: 0xffd166,

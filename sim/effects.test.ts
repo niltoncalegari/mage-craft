@@ -158,13 +158,31 @@ describe('effects — derived stats', () => {
   });
 
   /**
-   * Rooting is `stun`'s job, and it is visible. A pile of slows must never
+   * Rooting is its own kind, and it is visible. A pile of slows must never
    * quietly achieve the same thing.
    */
   it('floors move speed at a tenth however deep the slow goes', () => {
     const m = carrier();
     applyEffect(m, { kind: 'slow', magnitude: 0.99, duration: 1 });
     expect(moveSpeedMultiplier(m)).toBeGreaterThanOrEqual(0.1);
+  });
+
+  /**
+   * What Raízes Entrelaçadas buys over Pântano Pegajoso. The floor above is a
+   * floor on a *product*, so a hasted target walks out of the deepest slow in
+   * the game at a quarter speed; root is an assignment, and haste does not
+   * argue with it. Kept distinct from `stun` because a rooted mage still
+   * shoots and still casts — it loses the ground, not the turn.
+   */
+  it('pins move speed to a tenth when rooted, however much haste is running', () => {
+    const m = carrier();
+    applyEffect(m, { kind: 'slow', magnitude: 0.8, duration: 1 });
+    applyEffect(m, { kind: 'haste', magnitude: 1.5, duration: 1 });
+    // Slow at its cap plus haste at its cap: the floor alone cannot hold this.
+    expect(moveSpeedMultiplier(m)).toBeGreaterThan(0.1);
+
+    applyEffect(m, { kind: 'root', magnitude: 1, duration: 1 });
+    expect(moveSpeedMultiplier(m)).toBe(0.1);
   });
 
   it('takes the stronger of the aura and the cast buff, and never adds them', () => {
