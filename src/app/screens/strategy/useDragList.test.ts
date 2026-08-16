@@ -6,9 +6,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { dropIndexAt, insertItem, moveItem } from './useDragList';
+import { dropIndexAt, insertItem, moveItem, settledRects, type RowBox } from './useDragList';
 
-const rect = (top: number, height = 20): DOMRect => ({ top, height }) as DOMRect;
+const rect = (top: number, height = 20): RowBox => ({ top, height });
 
 describe('moveItem', () => {
   const list = ['a', 'b', 'c', 'd'];
@@ -28,6 +28,14 @@ describe('moveItem', () => {
     // nowhere must not renumber anything.
     expect(moveItem(list, 1, 1)).toEqual(list);
     expect(moveItem(list, 1, 2)).toEqual(list);
+  });
+
+  it('clamps a nudge past either end instead of wrapping', () => {
+    // The arrow-key path asks for the gap past the end. Left unclamped, the
+    // negative index reaches splice's count-from-the-end behaviour and the top
+    // rule silently becomes the bottom one.
+    expect(moveItem(list, 0, -1)).toEqual(list);
+    expect(moveItem(list, 3, 5)).toEqual(list);
   });
 
   it('ignores an index that is not in the list', () => {
@@ -66,5 +74,29 @@ describe('dropIndexAt', () => {
 
   it('puts the only gap of an empty list at 0', () => {
     expect(dropIndexAt(120, [])).toBe(0);
+  });
+});
+
+describe('settledRects', () => {
+  // Three 20px rows at 0, 20, 40. Row 0 is grabbed and dragged 50px down, so
+  // the pointer is at y=55 — inside what used to be row 2.
+  const laidOut = [rect(0), rect(20), rect(40)];
+  const dy = 50;
+  const dragged = [rect(dy), rect(20), rect(40)];
+
+  it('puts the lifted row back where it came from', () => {
+    expect(settledRects(dragged, 0, dy).map((r) => r.top)).toEqual([0, 20, 40]);
+  });
+
+  it('is what stops a downward drag from resolving back onto itself', () => {
+    // Measured live, the grabbed row's own box has travelled with the pointer
+    // and is still counted below it, so the drop resolves one gap short of
+    // where the finger is — and for a short drag, back onto the rule itself.
+    expect(dropIndexAt(55, dragged)).toBe(2);
+    expect(dropIndexAt(55, settledRects(dragged, 0, dy))).toBe(3);
+  });
+
+  it('leaves every box alone when nothing is lifted', () => {
+    expect(settledRects(laidOut, -1, dy)).toEqual(laidOut);
   });
 });

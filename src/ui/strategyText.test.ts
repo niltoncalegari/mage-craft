@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest';
 import { EFFECT_ORDER } from '../../sim/effects';
 import { ALL_DECK_COLORS } from '../../sim/spells';
-import { ALL_NUMERIC_CONDITIONS, ALL_POSTURES, ALL_TARGET_SELECTORS } from '../../sim/strategy';
+import { ALL_NUMERIC_CONDITIONS, ALL_POSTURES, ALL_TARGET_SELECTORS, NUMERIC_RANGE } from '../../sim/strategy';
 import { DECK_COLOR_INK, DECK_COLOR_LABEL, cardInk } from './deckColors';
 import {
   ALL_COMPARATORS,
@@ -50,6 +50,12 @@ describe('strategy vocabulary', () => {
       const field = NUMERIC_FIELD[kind];
       expect(field.step, `${kind} has a stepper that never moves`).toBeGreaterThan(0);
       expect(field.scale, `${kind} scales to nothing`).toBeGreaterThan(0);
+
+      // A new row must open on something the validator will accept, or picking
+      // a fact would put the program in an illegal state before it is touched.
+      const [min, max] = NUMERIC_RANGE[kind];
+      expect(field.start, `${kind} opens outside its own range`).toBeGreaterThanOrEqual(min);
+      expect(field.start).toBeLessThanOrEqual(max);
     }
   });
 

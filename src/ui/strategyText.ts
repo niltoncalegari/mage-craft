@@ -173,19 +173,28 @@ export interface NumericFieldSpec {
   /** Stepper increment, in shown units. */
   readonly step: number;
   readonly unit: string;
+  /**
+   * What a freshly picked fact opens on, stored rather than shown.
+   *
+   * Not the middle of the legal range: `elapsed` is capped at ten minutes to
+   * bound the wire, and opening a new row on "five minutes in" would suggest a
+   * threshold nobody meant. These are the values a rule is usually written
+   * about, so the row starts somewhere worth reading.
+   */
+  readonly start: number;
 }
 
 export const NUMERIC_FIELD: Readonly<Record<NumericConditionKind, NumericFieldSpec>> = {
-  mana: { scale: 1, step: 1, unit: '' },
-  elapsed: { scale: 1, step: 10, unit: 's' },
-  ally_count: { scale: 1, step: 1, unit: '' },
-  enemy_count: { scale: 1, step: 1, unit: '' },
-  ally_health: { scale: 100, step: 5, unit: '%' },
-  enemy_health: { scale: 100, step: 5, unit: '%' },
-  ally_cluster: { scale: 1, step: 1, unit: '' },
-  enemy_cluster: { scale: 1, step: 1, unit: '' },
-  our_core: { scale: 100, step: 5, unit: '%' },
-  enemy_core: { scale: 100, step: 5, unit: '%' },
-  our_towers: { scale: 1, step: 1, unit: '' },
-  enemy_towers: { scale: 1, step: 1, unit: '' },
+  mana: { scale: 1, step: 1, unit: '', start: 5 },
+  elapsed: { scale: 1, step: 10, unit: 's', start: 60 },
+  ally_count: { scale: 1, step: 1, unit: '', start: 2 },
+  enemy_count: { scale: 1, step: 1, unit: '', start: 2 },
+  ally_health: { scale: 100, step: 5, unit: '%', start: 0.6 },
+  enemy_health: { scale: 100, step: 5, unit: '%', start: 0.5 },
+  ally_cluster: { scale: 1, step: 1, unit: '', start: 2 },
+  enemy_cluster: { scale: 1, step: 1, unit: '', start: 2 },
+  our_core: { scale: 100, step: 5, unit: '%', start: 0.5 },
+  enemy_core: { scale: 100, step: 5, unit: '%', start: 0.5 },
+  our_towers: { scale: 1, step: 1, unit: '', start: 1 },
+  enemy_towers: { scale: 1, step: 1, unit: '', start: 1 },
 };

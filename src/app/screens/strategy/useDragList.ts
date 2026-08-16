@@ -39,12 +39,17 @@ const DRAG_THRESHOLD_PX = 6;
  * `to` counts gaps in the list *as it stands*: 0 is above everything, `length`
  * is below everything. Dropping an item into either gap touching it is a no-op,
  * which is what makes a nudge that goes nowhere leave the program alone.
+ *
+ * Both ends clamp, because the arrow-key path asks for the gap past them: a
+ * negative index would reach `Array.splice`'s count-from-the-end behaviour and
+ * send the top rule to the bottom.
  */
 export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
   if (from < 0 || from >= list.length) return [...list];
+  const gap = Math.max(0, Math.min(to, list.length));
   const next = [...list];
   const [item] = next.splice(from, 1);
-  next.splice(to > from ? to - 1 : to, 0, item);
+  next.splice(gap > from ? gap - 1 : gap, 0, item);
   return next;
 }
 
@@ -62,7 +67,31 @@ export function insertItem<T>(list: readonly T[], item: T, at: number): T[] {
  * indicator flips at the halfway point rather than at an edge — the same
  * feel every list reorder has.
  */
-export function dropIndexAt(y: number, rects: readonly DOMRect[]): number {
+/**
+ * All the drop hit-test reads of a row's box. `DOMRect` satisfies it, so real
+ * measurements pass straight in, and the arithmetic stays testable without a DOM.
+ */
+export interface RowBox {
+  readonly top: number;
+  readonly height: number;
+}
+
+/**
+ * The rows' boxes with the lifted one put back where it came from.
+ *
+ * `getBoundingClientRect` reports the transform, so the dragged row's own box
+ * chases the pointer and keeps being counted on the near side of itself. The
+ * symptom is not a wrong drop — it is a drop that quietly does nothing, because
+ * the index resolves back to where the rule already was.
+ *
+ * `liftedIndex` is -1 when the drag carries a card from the palette; nothing is
+ * lifted then, so every box is already where it belongs.
+ */
+export function settledRects(rects: readonly RowBox[], liftedIndex: number, dy: number): RowBox[] {
+  return rects.map((r, i) => (i === liftedIndex ? { top: r.top - dy, height: r.height } : r));
+}
+
+export function dropIndexAt(y: number, rects: readonly RowBox[]): number {
   let index = 0;
   for (const rect of rects) {
     if (y > rect.top + rect.height / 2) index++;
@@ -124,8 +153,10 @@ export function useDragList(onDrop: (payload: DragPayload, index: number) => voi
   }, []);
 
   useEffect(() => {
-    const rectsNow = (): DOMRect[] =>
-      rows.current.filter((el): el is HTMLElement => el !== null).map((el) => el.getBoundingClientRect());
+    // Rows that are still on the page. The ref array is indexed and never
+    // shrinks, so a removed rule leaves a hole behind it.
+    const liveRows = (): HTMLElement[] =>
+      rows.current.filter((el): el is HTMLElement => el !== null && el.isConnected);
 
     const move = (ev: PointerEvent): void => {
       const g = gesture.current;
@@ -143,7 +174,8 @@ export function useDragList(onDrop: (payload: DragPayload, index: number) => voi
         setDrag({ payload: g.payload, dropIndex: g.dropIndex });
       }
 
-      const next = dropIndexAt(ev.clientY, rectsNow());
+      const rects = liveRows().map((el) => el.getBoundingClientRect());
+      const next = dropIndexAt(ev.clientY, settledRects(rects, g.payload.kind === 'move' ? g.payload.index : -1, dy));
       if (g.lifted) g.lifted.style.transform = `translateY(${dy}px)`;
       if (next !== g.dropIndex) {
         g.dropIndex = next;
@@ -167,7 +199,7 @@ export function useDragList(onDrop: (payload: DragPayload, index: number) => voi
       // happens to be would move a rule the player only meant to touch, so a
       // tap on the palette appends and a tap on a rule does nothing.
       if (!g.active) {
-        if (g.payload.kind === 'add') onDropRef.current(g.payload, rows.current.length);
+        if (g.payload.kind === 'add') onDropRef.current(g.payload, liveRows().length);
         return;
       }
       onDropRef.current(g.payload, g.dropIndex);
