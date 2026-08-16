@@ -95,6 +95,45 @@ export function isEffectKind(value: string): value is EffectKind {
   return (EFFECT_ORDER as readonly string[]).includes(value);
 }
 
+/**
+ * Which side of a fight an effect is on.
+ *
+ * Nothing needed to know this until Clarão Nulo: the derived stats fold slow
+ * and haste into one multiplier precisely so that no call site has to decide
+ * which is the good one. A card that strips *what the other side did* has no
+ * such luxury, and answering it per-card would mean a list of kinds written
+ * into the dispel and forgotten the first time the catalog grew.
+ *
+ * So it is a tag on the effect in `balance.json`, next to that effect's
+ * stacking rule, and the question it answers is **"who wanted this to
+ * happen?"** — not "is the carrier better off?". Those come apart exactly once,
+ * at `petrify`, which protects the body it takes off the board. It is a debuff,
+ * because the enemy is who cast it.
+ */
+export type EffectPolarity = 'buff' | 'debuff';
+
+/**
+ * Built eagerly, and throws on a kind with no tag, the same way `spells.ts`
+ * validates the catalog at module load. An untagged effect would otherwise
+ * default to something and be silently un-dispellable — the exact class of bug
+ * a data-driven catalog makes cheap to introduce and expensive to find.
+ */
+const POLARITY: Readonly<Record<EffectKind, EffectPolarity>> = (() => {
+  const out = {} as Record<EffectKind, EffectPolarity>;
+  for (const kind of EFFECT_ORDER) {
+    const tag = BALANCE.effects[kind]?.polarity;
+    if (tag !== 'buff' && tag !== 'debuff') {
+      throw new Error(`effect ${JSON.stringify(kind)}: polarity must be "buff" or "debuff", got ${JSON.stringify(tag)}`);
+    }
+    out[kind] = tag;
+  }
+  return Object.freeze(out);
+})();
+
+export function polarityOf(kind: EffectKind): EffectPolarity {
+  return POLARITY[kind];
+}
+
 export interface ActiveEffect {
   readonly kind: EffectKind;
   /** Meaning depends on the kind; see the union above. */

@@ -179,6 +179,24 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * The only sound in the catalog that goes *away*. Every other card here
+   * arrives — an impact, a swell, a crack — and this one is a bright band of
+   * noise closing to nothing in a fifth of a second, with a tone sliding down
+   * under it and stopping short. It should read as a thing being switched off,
+   * because that is precisely what the card does.
+   *
+   * Petrificar is the other card that simply stops, and the two are told apart
+   * by where they live: stone is a low thud with everything above 200Hz gone,
+   * this is all top end and no body at all.
+   */
+  null_flash: {
+    detune: 0.03,
+    layers: [
+      { kind: 'noise', filter: 'bandpass', from: 5200, to: 900, at: 0, duration: 0.2, gain: 0.05, q: 1.5 },
+      { kind: 'tone', wave: 'sine', freq: 1320, toFreq: 210, at: 0, duration: 0.16, gain: 0.035 },
+    ],
+  },
+  /*
    * The only consonant thing in the game. A major triad, played straight, is
    * the fastest way to say "this one was for us" to someone who is not looking
    * — every other card is noise or a sweep.

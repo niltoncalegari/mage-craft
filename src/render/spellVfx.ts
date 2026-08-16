@@ -42,7 +42,13 @@ export type SpellShape =
    */
   | 'roots'
   /** A bolt out of an open sky onto the spot, with a white flash under it. */
-  | 'strike';
+  | 'strike'
+  /**
+   * Everything in the disc pulled inward and put out — the only beat that
+   * *converges*. See {@link SpellVfx.direction}, which this shape ignores:
+   * a card that takes things away has no good news and no bad news to press.
+   */
+  | 'flash';
 
 export interface SpellVfx {
   /** Which beat to draw. See {@link SpellShape}. */
@@ -229,6 +235,28 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     // it: a bolt is sharp rather than heavy, and the shake should read as a
     // flinch, not as a landslide.
     trauma: 0.22,
+  },
+  /*
+   * Blue's third, and the first card in the catalog whose beat has to say
+   * something *negative* — not "you are hurt" or "you are held", but "what was
+   * here is gone". Every other shape in the table is an arrival. This one is a
+   * subtraction, so it is the only one that moves inward: motes off the rim,
+   * pulled to the middle, put out.
+   *
+   * Near-white on a cold void, because it is also the one card that touches
+   * both squads without favouring either — a colour that read as *blue*
+   * strongly enough would say "the blue player did this to you", and half of
+   * what this card does, it does to its own side.
+   */
+  null_flash: {
+    shape: 'flash',
+    ring: 0xf2fbff,
+    zone: 0x141a2e,
+    motes: [0xffffff, 0xcfe8ff, 0x8aa6c8],
+    moteCount: 22,
+    // Ignored by the shape, which converges; kept honest rather than absent
+    // because the field is not optional and a lie here would outlive the shape.
+    direction: -1,
   },
   plague: {
     shape: 'burst',

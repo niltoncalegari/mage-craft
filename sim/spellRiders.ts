@@ -16,6 +16,7 @@
  */
 
 import type { SpellApplyRule } from './balance';
+import { polarityOf } from './effects';
 import type { Mage, Team } from './entities';
 import type { SpellCard } from './spells';
 import type { Vec2 } from './Vec2';
@@ -70,7 +71,37 @@ const strike: SpellRider = (w, { app, targets }) => {
   for (const m of targets) w.dealDamage(m, damage, { attackerId: 'spell' });
 };
 
-const RIDERS: Readonly<Record<string, SpellRider>> = { puddle, strike };
+/**
+ * Clarão Nulo: takes away **what the other side did**, to everyone it caught.
+ *
+ * Direction is per body rather than per card, which is what makes one rider do
+ * both halves of the card: an enemy loses their buffs, an ally loses their
+ * curses, in the same flash. That is the whole design — it is a bet on whose
+ * commitments were worth more at the moment it went off, and it does nothing
+ * at all in a fight where nobody has spent anything yet. No other card in the
+ * catalog is worth zero on purpose.
+ *
+ * The polarity itself is a tag in `balance.json` next to each effect's stacking
+ * rule, not a list of kinds written down here. A list here would be correct
+ * until the next card, and then quietly incomplete: a new kind would simply be
+ * un-dispellable, with nothing to notice it by.
+ */
+const dispel: SpellRider = (_w, { team, targets }) => {
+  for (const m of targets) {
+    const strip = m.team === team ? 'debuff' : 'buff';
+    for (let i = m.effects.length - 1; i >= 0; i--) {
+      const kind = m.effects[i].kind;
+      if (polarityOf(kind) !== strip) continue;
+      m.effects.splice(i, 1);
+      // The effect is the readout; `stunTimer` is what actually holds the body
+      // (see `applySpellEffect`, which mirrors it on the way in). Lifting one
+      // without the other leaves a mage rooted with nothing saying why.
+      if (kind === 'stun') m.stunTimer = 0;
+    }
+  }
+};
+
+const RIDERS: Readonly<Record<string, SpellRider>> = { puddle, strike, dispel };
 
 export function isSpellRider(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(RIDERS, name);

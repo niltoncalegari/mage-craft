@@ -37,6 +37,11 @@ export interface EffectRule {
   readonly maxStacks?: number;
   /** Clamp applied after stacking, so a chain of casts cannot reach 100% slow. */
   readonly maxMagnitude: number;
+  /**
+   * Which side wanted this to happen — what the `dispel` rider strips by. See
+   * `EffectPolarity` in `effects.ts`, which throws at load if this is missing.
+   */
+  readonly polarity: 'buff' | 'debuff';
 }
 
 /**

@@ -21,6 +21,7 @@ import {
   isEffectKind,
   magnitudeOf,
   moveSpeedMultiplier,
+  polarityOf,
   removeEffect,
   tickEffects,
   type EffectCarrier,
@@ -339,5 +340,56 @@ describe('effects — housekeeping', () => {
 
     clearEffects(m);
     expect(m.effects).toHaveLength(0);
+  });
+});
+
+/**
+ * Which way an effect points is the one thing about it that was never written
+ * down anywhere — the sim only ever asked "how fast does this mage move?", and
+ * the answer folds slow and haste together without either of them having to
+ * say which is the good one.
+ *
+ * Clarão Nulo is what makes the question real: a card that strips what is
+ * helping the body it did not come from has to be told what "helping" means,
+ * for fourteen kinds, without a per-card branch anywhere.
+ */
+describe('effects — polarity', () => {
+  it('sorts the plain cases the way anybody would', () => {
+    expect(polarityOf('shield')).toBe('buff');
+    expect(polarityOf('haste')).toBe('buff');
+    expect(polarityOf('regen')).toBe('buff');
+    expect(polarityOf('empower')).toBe('buff');
+    expect(polarityOf('fortify')).toBe('buff');
+    expect(polarityOf('cast_haste')).toBe('buff');
+
+    expect(polarityOf('slow')).toBe('debuff');
+    expect(polarityOf('burn')).toBe('debuff');
+    expect(polarityOf('stun')).toBe('debuff');
+    expect(polarityOf('root')).toBe('debuff');
+    expect(polarityOf('vulnerable')).toBe('debuff');
+    expect(polarityOf('marked')).toBe('debuff');
+    expect(polarityOf('cast_slow')).toBe('debuff');
+  });
+
+  /**
+   * The one that is genuinely arguable, so it is written down rather than left
+   * to whoever reads the table next. Petrificar takes a mage off the board in
+   * both directions — it cannot act, and it cannot be hurt — so a case exists
+   * for calling it protection.
+   *
+   * It is a debuff, because polarity here answers "who wanted this to happen?"
+   * and the answer is always the enemy: nobody has ever petrified their own
+   * squad. The consequence is deliberate and is the most interesting thing the
+   * dispel does — a Clarão Nulo aimed at your own stone mages frees them, and
+   * costs them the immunity that came with it.
+   */
+  it('calls stone a curse, because the enemy is who cast it', () => {
+    expect(polarityOf('petrify')).toBe('debuff');
+  });
+
+  it('has an answer for every kind the sim can run', () => {
+    for (const kind of EFFECT_ORDER) {
+      expect(['buff', 'debuff'], kind).toContain(polarityOf(kind));
+    }
   });
 });

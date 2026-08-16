@@ -144,6 +144,14 @@ const METEOR_HIT_RING = 1.3;
 /** Tangential speed of a `torus`'s rim motes — what makes the rim read as turning. */
 const TORUS_RIM_SPEED = 2.2;
 /**
+ * How long a `flash`'s motes take to cross the disc, and how high off the
+ * ground they start. Their speed is derived from the first of these and the
+ * card's own radius, so a wider card collapses faster rather than leaving a
+ * ring of motes stranded where the middle should be.
+ */
+const FLASH_MOTE_LIFE = 0.3;
+const FLASH_MOTE_HEIGHT = 0.5;
+/**
  * What a cast's mote count is multiplied by under `prefers-reduced-motion`.
  *
  * The motes are thinned and the ground footprint — zone, rings, the white
@@ -1859,6 +1867,9 @@ export class ParticleRenderer implements GameRenderer {
         this.spawnBoltStrike(x, y, radius, cfg);
         this.spawnSpellMotes(x, y, radius, cfg);
         break;
+      case 'flash':
+        this.spawnFlashCollapse(x, y, radius, cfg);
+        break;
       case 'burst':
         this.spawnSpellMotes(x, y, radius, cfg);
         break;
@@ -2134,6 +2145,49 @@ export class ParticleRenderer implements GameRenderer {
    */
   private moteBudget(count: number): number {
     return prefersReducedMotion() ? Math.max(1, Math.round(count * REDUCED_MOTE_SCALE)) : count;
+  }
+
+  /**
+   * A `flash` cast: the disc collapsing to its own centre.
+   *
+   * The only beat in the file that converges, and it is the only one that has
+   * to. Every other shape answers "something arrived here"; Clarão Nulo's whole
+   * sentence is "what was here is gone", and an outward burst would say the
+   * exact opposite of the card at the moment it fires.
+   *
+   * So the motes start on the rim at chest height and are thrown *inward* fast
+   * enough to cross the disc inside their own life — the arithmetic is
+   * `radius / life`, not a speed picked by eye, or a wide cast would leave a
+   * ring of motes hanging where the collapse was supposed to be. They die where
+   * they meet, which is also the one place on the field the player is looking.
+   */
+  private spawnFlashCollapse(x: number, y: number, radius: number, cfg: SpellVfx): void {
+    const total = this.moteBudget(cfg.moteCount);
+    for (let i = 0; i < total; i++) {
+      const angle = (i / total) * Math.PI * 2 + Math.random() * 0.3;
+      const life = FLASH_MOTE_LIFE * (0.8 + Math.random() * 0.25);
+      const speed = radius / life;
+      toThree(
+        this.tmp,
+        x + Math.cos(angle) * radius,
+        y + Math.sin(angle) * radius,
+        FLASH_MOTE_HEIGHT + Math.random() * 0.5,
+      );
+      this.spawnParticle(
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        -Math.cos(angle) * speed,
+        // Barely any lift: this is a horizontal gesture, and motes arcing over
+        // the middle would read as a fountain rather than as a drain.
+        0.2 + Math.random() * 0.25,
+        -Math.sin(angle) * speed,
+        0.07 + (i % 3) * 0.025,
+        life,
+        cfg.motes[i % cfg.motes.length],
+        0.05,
+      );
+    }
   }
 
   /** Motes filling the affected disc: they lift for a buff and rain down for a curse. */

@@ -170,20 +170,20 @@
   },
 
   "effects": {
-    "slow": { "stacking": "refresh_strongest", "maxMagnitude": 0.8 },
-    "haste": { "stacking": "refresh_strongest", "maxMagnitude": 1.5 },
-    "cast_slow": { "stacking": "refresh_strongest", "maxMagnitude": 0.75 },
-    "cast_haste": { "stacking": "refresh_strongest", "maxMagnitude": 1.5 },
-    "vulnerable": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
-    "fortify": { "stacking": "refresh_strongest", "maxMagnitude": 0.5 },
-    "empower": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
-    "marked": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
-    "petrify": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
-    "regen": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
-    "stun": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
-    "root": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
-    "burn": { "stacking": "stack_intensity", "maxStacks": 3, "maxMagnitude": 1 },
-    "shield": { "stacking": "pool", "maxMagnitude": 9999 }
+    "slow": { "stacking": "refresh_strongest", "maxMagnitude": 0.8, "polarity": "debuff" },
+    "haste": { "stacking": "refresh_strongest", "maxMagnitude": 1.5, "polarity": "buff" },
+    "cast_slow": { "stacking": "refresh_strongest", "maxMagnitude": 0.75, "polarity": "debuff" },
+    "cast_haste": { "stacking": "refresh_strongest", "maxMagnitude": 1.5, "polarity": "buff" },
+    "vulnerable": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
+    "fortify": { "stacking": "refresh_strongest", "maxMagnitude": 0.5, "polarity": "buff" },
+    "empower": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "buff" },
+    "marked": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
+    "petrify": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
+    "regen": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "buff" },
+    "stun": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
+    "root": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
+    "burn": { "stacking": "stack_intensity", "maxStacks": 3, "maxMagnitude": 1, "polarity": "debuff" },
+    "shield": { "stacking": "pool", "maxMagnitude": 9999, "polarity": "buff" }
   },
 
   "elements": {
@@ -480,6 +480,16 @@
         { "effect": "vulnerable", "magnitude": 0.5 },
         { "effect": "cast_haste", "magnitude": 0.5 }
       ]
+    },
+    "null_flash": {
+      "name": "Clarão Nulo",
+      "color": "blue",
+      "kind": "curse",
+      "cost": 3,
+      "radius": 3.5,
+      "duration": 0.5,
+      "target": "all",
+      "apply": [{ "effect": "dispel" }]
     },
     "meteor_shower": {
       "name": "Chuva de Meteoros",

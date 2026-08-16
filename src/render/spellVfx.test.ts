@@ -19,7 +19,15 @@ import { DEFAULT_SPELL_VFX, SPELL_VFX, spellVfxFor, type SpellShape } from './sp
  * card that is missing from one is usually missing from the other.
  */
 
-const KNOWN_SHAPES: readonly SpellShape[] = ['burst', 'dome', 'column', 'torus', 'roots', 'strike'];
+const KNOWN_SHAPES: readonly SpellShape[] = [
+  'burst',
+  'dome',
+  'column',
+  'torus',
+  'roots',
+  'strike',
+  'flash',
+];
 
 /**
  * Cards that are meant to fall through to {@link DEFAULT_SPELL_VFX}.
