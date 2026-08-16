@@ -11,11 +11,14 @@
  */
 import { Brain, type Difficulty } from '../sim/bot/Brain';
 import { Commander } from '../sim/bot/Commander';
+import { Tactician } from '../sim/bot/Tactician';
 import { defaultSquad } from '../sim/cards';
 import { SIM_DT } from '../sim/config';
 import { Deck, defaultDeck } from '../sim/Deck';
 import { TEAM_A, TEAM_B, type Team } from '../sim/entities';
 import { Rng } from '../sim/rng';
+import { defaultStrategy, emptyStrategy, type Strategy } from '../sim/strategy';
+import { flatProgram, naiveProgram, responsiveProgram } from '../sim/strategyPresets';
 import { World } from '../sim/World';
 
 const SEEDS = process.argv.slice(2).map(Number).filter(Number.isFinite);
@@ -175,3 +178,156 @@ for (const team of [TEAM_A, TEAM_B] as Team[]) {
   console.log(`  own towers fired: ${t.towerShots} bolts (${(t.towerShots * 10).toLocaleString()} dmg offered to the enemy)`);
   console.log(`  deaths: ${t.deaths} · structures taken: ${t.structuresTaken}`);
 }
+
+/* ---- Program against program ------------------------------------------------ */
+
+/**
+ * The second half of the report, and the one the idle pivot made necessary.
+ *
+ * Everything above measures the `Brain` — how the mages fight, which is the
+ * same on both sides by construction. Since the pivot the *player's* half of
+ * the game is the program they authored, so the balance question moved: not
+ * "does this card win" but "does a better program win". `agency.test.ts`
+ * asserts a floor under that; this reports where the number actually sits,
+ * which is what a floor cannot tell you.
+ *
+ * The draw rate is the GDD §14 health metric. Two good programs drawing half
+ * the time is the failure mode that reads to a player as "my decisions do not
+ * matter" — the same symptom as an agency failure, by a different cause.
+ */
+interface Program {
+  readonly name: string;
+  readonly strategy: Strategy;
+}
+
+const PROGRAMS: readonly Program[] = [
+  { name: 'padrão', strategy: defaultStrategy(defaultDeck()) },
+  { name: 'responsiva', strategy: responsiveProgram() },
+  { name: 'plana', strategy: flatProgram() },
+  { name: 'ingênua', strategy: naiveProgram() },
+  { name: 'vazia', strategy: emptyStrategy() },
+];
+
+interface Record_ {
+  wins: number;
+  losses: number;
+  draws: number;
+  casts: number;
+}
+
+function emptyRecord(): Record_ {
+  return { wins: 0, losses: 0, draws: 0, casts: 0 };
+}
+
+function runStrategyMatch(seed: number, byTeam: Record<Team, Strategy>) {
+  const rng = new Rng(seed);
+  const world = new World();
+  world.initSquad(TEAM_A, defaultSquad());
+  world.initSquad(TEAM_B, defaultSquad());
+
+  const brain = new Brain(rng);
+  const units = new Map<string, Difficulty>();
+  for (const id of world.mages.keys()) units.set(id, 'normal');
+
+  // Built once per match: the Tactician owns the evaluation countdown, so one
+  // rebuilt per tick would restart it every tick and never decide anything.
+  const casters: Record<Team, Tactician> = {
+    [TEAM_A]: new Tactician(byTeam[TEAM_A]),
+    [TEAM_B]: new Tactician(byTeam[TEAM_B]),
+  };
+  const decks: Record<Team, Deck> = {
+    [TEAM_A]: new Deck(defaultDeck(), new Rng(seed + 1)),
+    [TEAM_B]: new Deck(defaultDeck(), new Rng(seed + 6)),
+  };
+  const casts: Record<Team, number> = { [TEAM_A]: 0, [TEAM_B]: 0 };
+
+  let ticks = 0;
+  while (!world.roundOver && ticks < MAX_TICKS) {
+    for (const team of [TEAM_A, TEAM_B] as Team[]) {
+      const intent = casters[team].step(world, team, decks[team], SIM_DT, brain.planner.planFor(team));
+      if (!intent) continue;
+      if (!world.castSpell(team, intent.cardId, intent.position).ok) continue;
+      decks[team].play(intent.cardId);
+      casts[team]++;
+    }
+
+    brain.step(world, units, SIM_DT);
+    world.step(SIM_DT);
+    ticks++;
+  }
+
+  return { winner: world.winner, elapsed: world.elapsed, casts };
+}
+
+console.log(`\n\n=== strategy sweep · ${PROGRAMS.length} programs · ${seeds.length} seeds per pairing ===`);
+
+const records = new Map<string, Record_>(PROGRAMS.map((p) => [p.name, emptyRecord()]));
+let sweepMatches = 0;
+let sweepDraws = 0;
+
+for (let i = 0; i < PROGRAMS.length; i++) {
+  for (let j = i + 1; j < PROGRAMS.length; j++) {
+    const left = PROGRAMS[i];
+    const right = PROGRAMS[j];
+    let leftWins = 0;
+    let rightWins = 0;
+    let draws = 0;
+
+    for (const [k, seed] of seeds.entries()) {
+      // Alternate sides: team A and team B do not face a symmetric map, so a
+      // fixed assignment would report the map's bias as the program's.
+      const leftOnA = k % 2 === 0;
+      const r = runStrategyMatch(seed, {
+        [TEAM_A]: leftOnA ? left.strategy : right.strategy,
+        [TEAM_B]: leftOnA ? right.strategy : left.strategy,
+      });
+
+      const leftTeam: Team = leftOnA ? TEAM_A : TEAM_B;
+      records.get(left.name)!.casts += r.casts[leftTeam];
+      records.get(right.name)!.casts += r.casts[leftOnA ? TEAM_B : TEAM_A];
+
+      sweepMatches++;
+      if (r.winner === null) {
+        draws++;
+        sweepDraws++;
+        records.get(left.name)!.draws++;
+        records.get(right.name)!.draws++;
+      } else if (r.winner === leftTeam) {
+        leftWins++;
+        records.get(left.name)!.wins++;
+        records.get(right.name)!.losses++;
+      } else {
+        rightWins++;
+        records.get(right.name)!.wins++;
+        records.get(left.name)!.losses++;
+      }
+    }
+
+    const decided = leftWins + rightWins;
+    const rate = decided > 0 ? ((leftWins / decided) * 100).toFixed(0) + '%' : '—';
+    console.log(
+      `  ${left.name.padEnd(11)} vs ${right.name.padEnd(11)} · ` +
+        `${String(leftWins).padStart(2)}-${String(rightWins).padStart(2)}-${String(draws).padStart(2)} (W-L-D) · ` +
+        `${left.name} takes ${rate} of decided`,
+    );
+  }
+}
+
+console.log(`\n  ${'program'.padEnd(11)} ${'W'.padStart(3)} ${'L'.padStart(3)} ${'D'.padStart(3)}   win% of decided   casts`);
+for (const p of PROGRAMS) {
+  const r = records.get(p.name)!;
+  const decided = r.wins + r.losses;
+  const rate = decided > 0 ? ((r.wins / decided) * 100).toFixed(0) + '%' : '—';
+  console.log(
+    `  ${p.name.padEnd(11)} ${String(r.wins).padStart(3)} ${String(r.losses).padStart(3)} ${String(r.draws).padStart(3)}   ` +
+      `${rate.padStart(15)}   ${String(r.casts).padStart(5)}`,
+  );
+}
+
+// GDD §14's health metric. It was the open problem number one — a draw was once
+// the *default* result — and the idle pivot took it to zero. Printed every run
+// because zero is now a regression guard rather than a target.
+console.log(
+  `\n  draw rate ${((sweepDraws / sweepMatches) * 100).toFixed(0)}% ` +
+    `(${sweepDraws}/${sweepMatches}) — GDD §14's health metric; 0% is the bar it now has to hold`,
+);
