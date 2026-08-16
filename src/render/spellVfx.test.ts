@@ -19,7 +19,7 @@ import { DEFAULT_SPELL_VFX, SPELL_VFX, spellVfxFor, type SpellShape } from './sp
  * card that is missing from one is usually missing from the other.
  */
 
-const KNOWN_SHAPES: readonly SpellShape[] = ['burst', 'dome', 'column', 'torus'];
+const KNOWN_SHAPES: readonly SpellShape[] = ['burst', 'dome', 'column', 'torus', 'roots'];
 
 /**
  * Cards that are meant to fall through to {@link DEFAULT_SPELL_VFX}.
@@ -54,6 +54,30 @@ describe('SPELL_VFX covers the catalog', () => {
       expect(KNOWN_SHAPES).toContain(vfx.shape);
       expect(vfx.moteCount).toBeGreaterThan(0);
       expect(vfx.motes.length).toBeGreaterThan(0);
+    }
+  });
+
+  /**
+   * The same contract `telegraph` has with `delay`, for the same reason: two
+   * numbers that must agree, edited in different files, neither visible from
+   * where the other lives.
+   *
+   * Roots are the one beat that outlives its cast, and what they are outliving
+   * it *for* is the effect — a rooted mage has no other tell, so the growth on
+   * the ground is the readout. Growth that lets go early says the card wore off
+   * when it has not; growth that lingers says the opposite. Asserted in both
+   * directions, so a `persist` on a card that does not root is caught too.
+   */
+  it('keeps a persistent beat to exactly as long as its card holds', () => {
+    for (const id of ALL_SPELLS) {
+      const vfx = spellVfxFor(id);
+      const card = spellFor(id)!;
+
+      if (vfx.shape === 'roots') {
+        expect(vfx.persist, `${id} draws roots but says nothing about how long`).toBe(card.duration);
+      } else {
+        expect(vfx.persist, `${id} claims a persistent beat it does not draw`).toBeUndefined();
+      }
     }
   });
 
@@ -94,6 +118,30 @@ describe('SPELL_SFX covers the catalog', () => {
         expect(layer.gain).toBeGreaterThan(0);
         expect(layer.at).toBeGreaterThanOrEqual(0);
         if (layer.kind === 'chord') expect(layer.freqs.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  /**
+   * The same contract `telegraph` has with `delay`, for the same reason: two
+   * numbers that must agree, edited in different files, neither visible from
+   * where the other lives.
+   *
+   * Roots are the one beat that outlives its cast, and what they are outliving
+   * it *for* is the effect — a rooted mage has no other tell, so the growth on
+   * the ground is the readout. Growth that lets go early says the card wore off
+   * when it has not; growth that lingers says the opposite. Asserted in both
+   * directions, so a `persist` on a card that does not root is caught too.
+   */
+  it('keeps a persistent beat to exactly as long as its card holds', () => {
+    for (const id of ALL_SPELLS) {
+      const vfx = spellVfxFor(id);
+      const card = spellFor(id)!;
+
+      if (vfx.shape === 'roots') {
+        expect(vfx.persist, `${id} draws roots but says nothing about how long`).toBe(card.duration);
+      } else {
+        expect(vfx.persist, `${id} claims a persistent beat it does not draw`).toBeUndefined();
       }
     }
   });

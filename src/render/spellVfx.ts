@@ -34,7 +34,13 @@ export type SpellShape =
   /** Something arrived from above (or erupted from below): a vertical shaft. */
   | 'column'
   /** An area was switched *on* rather than hit: rims turning, rim-hugging motes. */
-  | 'torus';
+  | 'torus'
+  /**
+   * Voxel roots shoving out of the soil across the disc, holding, then
+   * withdrawing — the only shape whose body outlives the cast beat. See
+   * {@link SpellVfx.persist}.
+   */
+  | 'roots';
 
 export interface SpellVfx {
   /** Which beat to draw. See {@link SpellShape}. */
@@ -106,6 +112,18 @@ export interface SpellVfx {
    * stops anything from setting a telegraph before then and getting silence.
    */
   telegraph?: number;
+  /**
+   * `roots` only: how long the growth stays on the field, in seconds.
+   *
+   * Every other beat here is an *arrival* — it happens, it fades, and what the
+   * card did afterwards is carried by the status ring on the mage. Raízes
+   * Entrelaçadas has no such ring to lean on: a rooted mage looks exactly like
+   * a standing one, and the only thing on screen saying "this one cannot walk"
+   * is the ground it is standing in. So this should be set to the card's own
+   * `duration` from `balance.json` — roots that let go before the sim does are
+   * a lie of the same species as a telegraph the sim never honours.
+   */
+  persist?: number;
   /**
    * Screenshake trauma, 0..1, added on cast. See {@link ShakeRig}.
    *
@@ -235,25 +253,35 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     direction: 1,
   },
   /*
-   * The third green card, and the reason it is not a third green burst. Praga
-   * and the swamp are already two bursts separated by palette alone, which is
-   * the failure mode this type's docblock names outright — a third would make
-   * "which green landed?" a question about remembering hex codes.
+   * The card that earned the fifth shape, and it went through a torus first.
    *
-   * The torus is also the truer statement. Roots do not detonate; a patch of
-   * ground *becomes* grabby and stays that way, which is the same "switched on
-   * rather than struck" the shape was cut for. Read against Campo de
-   * Sobrecarga, the other torus: colour separates them, and direction says the
-   * rest — that one energises what it catches and lifts, this one closes on it
-   * and presses down.
+   * The torus was the tidy answer — "an area was switched on" is true of a
+   * patch of grabby ground — and it was wrong for one reason no amount of
+   * palette fixes: this is the only card in the catalog whose *effect has no
+   * tell on the body*. A slowed mage moves visibly slowly, a burning one sheds
+   * embers, a shielded one wears a dome. A rooted mage looks exactly like a
+   * mage standing still, which mages do constantly. So the beat is not allowed
+   * to be an arrival that fades; the only thing on screen that can say "this
+   * one cannot walk" is the ground it is standing in, and it has to still be
+   * there two seconds later when the player looks over.
+   *
+   * Hence `roots`: voxel branches shoving out of the soil across the disc,
+   * blood-red blooms opening along them, holding for the card's own duration
+   * and then withdrawing toward the centre. Grown from the reference the user
+   * built (`jardim_voxel_rapido`), cut down hard for a three-metre disc under a
+   * squad — twelve branches instead of forty, nine steps instead of fifty, and
+   * a knee-height ceiling so the cubes never hide the bodies the player is
+   * watching to read his own program.
    */
   entangling_roots: {
-    shape: 'torus',
-    ring: 0x9c7a3f,
-    zone: 0x2d4a1e,
+    shape: 'roots',
+    ring: 0xff0022,
+    zone: 0x1a2b1a,
     motes: [0x8f6b3a, 0x4a7c2f, 0x243d19],
     moteCount: 20,
     direction: -1,
+    // The card's own duration in balance.json. Held to it by spellVfx.test.ts.
+    persist: 2,
   },
   /*
    * The quietest beat in the catalog, and on purpose. A mark is not an event —

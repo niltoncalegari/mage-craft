@@ -31,6 +31,15 @@ import {
   planColumnFall,
   VOXEL_POOL_SIZE,
 } from './columnFall';
+import {
+  planRootGrowth,
+  rootVoxelScale,
+  ROOT_SYSTEM_POOL,
+  ROOT_VOXEL_POOL,
+  ROOT_VOXEL_SIZE,
+  ROOT_VOXELS_PER_CAST,
+  type RootVoxel,
+} from './rootGrowth';
 import { spellVfxFor, type SpellVfx } from './spellVfx';
 
 const SNOWBALL_POOL_SIZE = 64;
@@ -593,6 +602,25 @@ interface DomeSlot {
   active: boolean;
 }
 
+/**
+ * A root system growing under a cast — Raízes Entrelaçadas' beat.
+ *
+ * One entry owns a contiguous slice of the shared instanced mesh, so a system
+ * costs one draw call regardless of how many cubes it plans. The slice is fixed
+ * at {@link ROOT_VOXELS_PER_CAST} rather than sized to the plan, because a
+ * moving base would mean recomputing every later system's offset whenever one
+ * expired.
+ */
+interface RootSystemSlot {
+  voxels: readonly RootVoxel[];
+  /** Gameplay-plane centre of the cast. */
+  x: number;
+  y: number;
+  elapsed: number;
+  life: number;
+  active: boolean;
+}
+
 /** Which beat of a falling meteor a queued entry is: the body, or the break. */
 type PendingKind = 'fall' | 'hit';
 
@@ -648,6 +676,7 @@ interface PlayerFxState {
 export class ParticleRenderer implements GameRenderer {
   private readonly group = new THREE.Group();
   private readonly tmp = new THREE.Vector3();
+  private readonly tmpMatrix = new THREE.Matrix4();
   /** Scratch heading + roll for {@link orientBody}; reused so flight allocates nothing. */
   private readonly tmpDir = new THREE.Vector3();
   private readonly tmpSpin = new THREE.Quaternion();
@@ -665,6 +694,9 @@ export class ParticleRenderer implements GameRenderer {
   private readonly meteorSlots: MeteorSlot[] = [];
   /** Cube particles: the fire a meteor sheds and the chunks it throws. */
   private readonly voxelSlots: ParticleSlot[] = [];
+  /** Root systems, and the one instanced mesh all of their cubes are drawn from. */
+  private readonly rootSlots: RootSystemSlot[] = [];
+  private rootMesh: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | null = null;
   private readonly defaultBallMaterial: THREE.MeshStandardMaterial;
   private readonly offSnowballImpact: () => void;
   private readonly offPlayerHit: () => void;
@@ -880,6 +912,30 @@ export class ParticleRenderer implements GameRenderer {
       });
     }
 
+    // Roots are instanced rather than pooled as individual meshes: a system is
+    // over a hundred cubes and three can be alive at once, which is a scale the
+    // one-mesh-per-particle pools here were never meant to reach. Not additive,
+    // unlike almost everything else in this file — roots are solid matter
+    // shoving out of the ground, and additive blending would make a dense
+    // tangle glow like fire exactly where it should look like wood.
+    const rootGeometry = assets.geometry(
+      'particle-renderer-root-cube',
+      () => new THREE.BoxGeometry(1, 1, 1),
+    );
+    const rootMaterial = new THREE.MeshBasicMaterial({ color: WHITE, transparent: true, opacity: 1 });
+    this.rootMesh = new THREE.InstancedMesh(rootGeometry, rootMaterial, ROOT_VOXEL_POOL);
+    this.rootMesh.instanceColor = new THREE.InstancedBufferAttribute(
+      new Float32Array(ROOT_VOXEL_POOL * 3),
+      3,
+    );
+    this.rootMesh.frustumCulled = false;
+    this.rootMesh.visible = false;
+    this.group.add(this.rootMesh);
+    for (let i = 0; i < ROOT_SYSTEM_POOL; i++) {
+      this.rootSlots.push({ voxels: [], x: 0, y: 0, elapsed: 0, life: 1, active: false });
+    }
+    this.hideAllRootInstances();
+
     // A voxel lump, not the Golem's smoothed boulder: a meteor is debris, and
     // corners survive being small, tumbling and half-hidden behind fire.
     const meteorGeometry = voxelRockGeometry(assets);
@@ -1015,6 +1071,7 @@ export class ParticleRenderer implements GameRenderer {
     this.updateZones();
     this.updateDomes();
     this.updatePendingImpacts();
+    this.updateRoots();
     this.updateMeteors();
     this.updatePuddleBubbles();
   }
@@ -1857,6 +1914,9 @@ export class ParticleRenderer implements GameRenderer {
       case 'torus':
         this.spawnRimMotes(x, y, radius, cfg);
         break;
+      case 'roots':
+        this.spawnRoots(x, y, radius, cfg);
+        break;
       case 'burst':
         this.spawnSpellMotes(x, y, radius, cfg);
         break;
@@ -2196,6 +2256,123 @@ export class ParticleRenderer implements GameRenderer {
       zone.mesh.scale.setScalar(zone.radius * (0.6 + eased * 0.4));
       zone.mesh.material.opacity = ZONE_OPACITY * (1 - t);
     }
+  }
+
+  /**
+   * A `roots` cast: branches of voxels shoving out of the soil across the disc,
+   * holding for the card's duration, then withdrawing.
+   *
+   * The only shape whose body persists. Every other beat in this file is an
+   * arrival — it happens, it fades, and what the card *did* is carried by the
+   * status ring on the mage afterwards. Raízes Entrelaçadas has no ring worth
+   * the name: a rooted mage looks like a standing mage, and the one thing on
+   * screen saying "this one cannot walk" is the ground it is standing in. So
+   * the roots stay for as long as the effect does, and `life` is the card's
+   * duration rather than a fade time chosen here.
+   *
+   * Where the cubes go and when each appears is {@link planRootGrowth}, which is
+   * tested; this method is only the drawing.
+   */
+  private spawnRoots(x: number, y: number, radius: number, cfg: SpellVfx): void {
+    const slot = this.rootSlots.find((s) => !s.active) ?? this.oldestRootSlot();
+    if (!slot) return;
+
+    slot.voxels = planRootGrowth(radius);
+    slot.x = x;
+    slot.y = y;
+    slot.elapsed = 0;
+    // The duration the card actually holds its victims for; see the note above.
+    slot.life = cfg.persist ?? 2;
+    slot.active = true;
+
+    this.writeRootColors(slot, cfg);
+  }
+
+  /**
+   * Replaces the longest-running system when all three slots are taken.
+   *
+   * The same rule the voice cap in `AudioManager` uses, and for the same
+   * reason: the newest cast is the one the player is being told about, and the
+   * oldest has already been seen. Dropping the new one instead would make a
+   * card silently stop drawing in exactly the fights busy enough to matter.
+   */
+  private oldestRootSlot(): RootSystemSlot | null {
+    let best: RootSystemSlot | null = null;
+    for (const slot of this.rootSlots) {
+      if (!best || slot.elapsed > best.elapsed) best = slot;
+    }
+    return best;
+  }
+
+  /** Root cubes take the card's zone colour; flowers take its ring accent. */
+  private writeRootColors(slot: RootSystemSlot, cfg: SpellVfx): void {
+    const mesh = this.rootMesh;
+    if (!mesh?.instanceColor) return;
+
+    const base = this.rootSlots.indexOf(slot) * ROOT_VOXELS_PER_CAST;
+    const root = new THREE.Color(cfg.zone);
+    const flower = new THREE.Color(cfg.ring);
+
+    for (let i = 0; i < slot.voxels.length; i++) {
+      const c = slot.voxels[i].flower ? flower : root;
+      mesh.instanceColor.setXYZ(base + i, c.r, c.g, c.b);
+    }
+    mesh.instanceColor.needsUpdate = true;
+  }
+
+  private hideAllRootInstances(): void {
+    const mesh = this.rootMesh;
+    if (!mesh) return;
+
+    this.tmpMatrix.makeScale(0, 0, 0);
+    for (let i = 0; i < ROOT_VOXEL_POOL; i++) mesh.setMatrixAt(i, this.tmpMatrix);
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private updateRoots(): void {
+    const mesh = this.rootMesh;
+    if (!mesh) return;
+
+    let anyActive = false;
+
+    for (let s = 0; s < this.rootSlots.length; s++) {
+      const slot = this.rootSlots[s];
+      const base = s * ROOT_VOXELS_PER_CAST;
+
+      if (!slot.active) continue;
+
+      slot.elapsed += PARTICLE_DT;
+      if (slot.elapsed >= slot.life) {
+        slot.active = false;
+        this.tmpMatrix.makeScale(0, 0, 0);
+        for (let i = 0; i < ROOT_VOXELS_PER_CAST; i++) mesh.setMatrixAt(base + i, this.tmpMatrix);
+        continue;
+      }
+
+      anyActive = true;
+
+      for (let i = 0; i < ROOT_VOXELS_PER_CAST; i++) {
+        const voxel = slot.voxels[i];
+        const scale = voxel ? rootVoxelScale(voxel, slot.elapsed, slot.life) : 0;
+
+        if (scale <= 0) {
+          this.tmpMatrix.makeScale(0, 0, 0);
+          mesh.setMatrixAt(base + i, this.tmpMatrix);
+          continue;
+        }
+
+        // Flowers sit slightly smaller than the roots carrying them, which is
+        // what keeps a cross of four reading as a bloom rather than as a lump.
+        const size = ROOT_VOXEL_SIZE * scale * (voxel.flower ? 0.85 : 1);
+        toThree(this.tmp, slot.x + voxel.x, slot.y + voxel.y, voxel.height + ROOT_VOXEL_SIZE * 0.5);
+        this.tmpMatrix.makeScale(size, size, size);
+        this.tmpMatrix.setPosition(this.tmp);
+        mesh.setMatrixAt(base + i, this.tmpMatrix);
+      }
+    }
+
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.visible = anyActive;
   }
 
   private spawnDome(x: number, y: number, radius: number, color: number): void {
