@@ -1,4 +1,3 @@
-import * as THREE from 'three';
 import { EventBus } from '../core/EventBus';
 import type { GameRenderer } from '../core/Game';
 import { AssetManager } from '../engine/AssetManager';
@@ -30,15 +29,21 @@ import type { SnapshotMsg } from './protocol';
 export type LeaveMatchReason = 'quit' | 'roundEnd';
 
 /**
- * Everything this view needs from whatever is running the match. It is two
- * members wide on purpose: a match that renders server snapshots and a match
- * simulated in this very tab differ only in where the snapshots come from and
- * where a cast goes, so both satisfy this and the view cannot tell them apart.
- * `NetworkClient` satisfies it structurally; see `LocalSession`.
+ * Everything this view needs from whatever is running the match: a match that
+ * renders server snapshots and a match simulated in this very tab differ only
+ * in where the snapshots come from, so both satisfy this and the view cannot
+ * tell them apart. `NetworkClient` satisfies it structurally; see
+ * `LocalSession`.
  */
 export interface MatchTransport {
   readonly connected: boolean;
-  sendCast(cardId: string, position: { x: number; y: number }): void;
+  /**
+   * @deprecated Nothing in this view calls it since the idle pivot — a hand is
+   * played by its owner's program. Kept on the interface, rather than deleted
+   * from both implementations, because this is the seam an override mode would
+   * come back through, and `CastMsg` is still on the wire behind it.
+   */
+  sendCast(cardId?: string, position?: { x: number; y: number }): void;
 }
 
 /**
@@ -51,9 +56,6 @@ export interface MatchTransport {
  * even the deploy zones would sit in the wrong place.
  */
 const ONLINE_MAP = 'siege1.json';
-
-/** Keyboard shortcuts for the four hand slots, in slot order. */
-const HAND_KEYS = ['1', '2', '3', '4'];
 
 /** How far a press must travel before it counts as dragging the view, not clicking. */
 const DRAG_THRESHOLD_PX = 5;
@@ -113,16 +115,8 @@ export class OnlineMatch {
   private readonly overlay: HTMLDivElement;
   private readonly statusEl: HTMLParagraphElement;
 
-  /** World point under the cursor — where a selected card would be summoned. */
-  private groundPoint = { x: 0, y: 0 };
-  /** Set by the card-hand UI; the next click on the arena spends it. */
-  private selectedCardId: string | null = null;
   /** Wire id of the mage picked out of the squad panel, marked in the arena. */
   private highlightedMageId: string | null = null;
-  private readonly raycaster = new THREE.Raycaster();
-  private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  private readonly ndc = new THREE.Vector2();
-  private readonly hit = new THREE.Vector3();
 
   /** Screen position the current left-button press started at, or null when up. */
   private dragFrom: { x: number; y: number } | null = null;
@@ -144,7 +138,14 @@ export class OnlineMatch {
 
   constructor(
     container: HTMLElement,
-    private readonly net: MatchTransport,
+    /**
+     * Whatever is running this match. The view no longer reads it: since the
+     * idle pivot the flow is one-directional — snapshots arrive through
+     * `applySnapshot` and nothing goes back out. It stays on the signature
+     * because it is what ties a view to its session for the caller, and
+     * because an override mode would send through it again.
+     */
+    _net: MatchTransport,
     opts: {
       spectating: boolean;
       localPlayerId: string;
@@ -212,8 +213,6 @@ export class OnlineMatch {
       this.renderers.push(
         new MatchHUD(container, this.world, {
           getState: () => this.sync.matchState,
-          getSelectedCard: () => this.selectedCardId,
-          onSelectCard: (cardId) => this.selectCard(cardId),
           isVisible: () => !this.paused,
           isSpectating: () => this.spectating,
           getMySide: () => this.sync.mySide,
@@ -225,7 +224,6 @@ export class OnlineMatch {
           getMySide: () => this.sync.mySide,
           onSelect: (wireId) => this.watchMage(wireId),
           isVisible: () => !this.paused,
-          isCardArmed: () => this.selectedCardId !== null,
           getSideName: (team) => this.teamName(team),
         }),
       );
@@ -363,43 +361,13 @@ export class OnlineMatch {
     return this.getTeamName(team === Team.Player ? mine : 1 - mine);
   }
 
-  /** Arms a card; the next click on the arena summons it there. */
-  selectCard(cardId: string | null): void {
-    this.selectedCardId = cardId;
-  }
-
   /** Marks a mage in the arena, or clears the mark when it is already the one. */
   watchMage(wireId: string): void {
     this.highlightedMageId = this.highlightedMageId === wireId ? null : wireId;
   }
 
-  /** Spends mana to place a card at a world point (GDD §5). */
-  castCard(cardId: string, position: { x: number; y: number }): void {
-    if (this.spectating || !this.net.connected) return;
-    try {
-      this.net.sendCast(cardId, position);
-    } catch {
-      // disconnected mid-frame
-    }
-  }
-
   private onKey(ev: KeyboardEvent): void {
     if (ev.type !== 'keydown') return;
-
-    // 1–4 arm a hand slot, mirroring the card bar's own labels.
-    const slot = HAND_KEYS.indexOf(ev.key);
-    if (slot !== -1) {
-      const cardId = this.sync.matchState.hand[slot];
-      if (cardId) this.selectCard(this.selectedCardId === cardId ? null : cardId);
-      return;
-    }
-
-    if (ev.key === 'Escape' && this.selectedCardId) {
-      // Escape disarms first; only an unarmed Escape opens the pause menu, so a
-      // mis-picked card never costs you the match view.
-      this.selectCard(null);
-      return;
-    }
 
     if ((ev.key === 'Escape' || ev.key === 'p' || ev.key === 'P') && !this.roundEnded) {
       this.setPaused(!this.paused);
@@ -407,29 +375,18 @@ export class OnlineMatch {
   }
 
   /**
-   * Ground-plane raycast (same technique as engine/InputManager) so the cursor
-   * maps to a world point under the tilted orthographic camera.
+   * The left button drags the view around like a map. That is all it does since
+   * the idle pivot — a press used to double as a cast, which is why the
+   * {@link DRAG_THRESHOLD_PX} test exists at all, and the threshold stays
+   * because a drag that starts on the spot should not jitter the camera.
    *
-   * This used to feed the aim of a charged throw. It now feeds deployment: the
-   * point under the cursor is where a selected card will be summoned.
-   *
-   * The left button does double duty: held and moved it drags the view around
-   * like a map, pressed and released on the spot it casts. A press only becomes
-   * a drag past {@link DRAG_THRESHOLD_PX}, so the casting gesture is unchanged.
+   * The ground-plane raycast that used to run here went with the cast: it
+   * existed to turn the cursor into a world point to place a card at, and
+   * nothing reads that point now. `dragView` derives its delta analytically
+   * from pixels rather than raycasting, so it never needed it.
    */
   private onPointer(ev: PointerEvent): void {
     const rect = this.renderer.domElement.getBoundingClientRect();
-    this.ndc.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-    this.ndc.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
-    this.raycaster.setFromCamera(this.ndc, this.renderer.camera);
-    const point = this.raycaster.ray.intersectPlane(this.groundPlane, this.hit);
-    if (point) this.groundPoint = { x: point.x, y: point.z };
-
-    // Secondary button disarms instead of summoning, so a card can be taken back.
-    if (ev.type === 'pointerdown' && ev.button !== 0) {
-      this.selectCard(null);
-      return;
-    }
 
     if (ev.type === 'pointerdown' && ev.button === 0) {
       this.dragFrom = { x: ev.clientX, y: ev.clientY };
@@ -443,16 +400,7 @@ export class OnlineMatch {
       return;
     }
 
-    if (ev.type === 'pointerup' && ev.button === 0) {
-      const wasDrag = this.dragging;
-      this.endDrag(ev);
-      // A drag is a camera move, never a cast — otherwise letting go after
-      // looking around would fire the armed card wherever you stopped.
-      if (!wasDrag && this.selectedCardId) {
-        this.castCard(this.selectedCardId, this.groundPoint);
-        this.selectCard(null);
-      }
-    }
+    if (ev.type === 'pointerup' && ev.button === 0) this.endDrag(ev);
   }
 
   /**

@@ -7,6 +7,7 @@ import { teamFill, teamInk } from './teamInk';
 import { HAND_SIZE } from '../../sim/Deck';
 import { MANA_MAX, MATCH_DURATION, SUDDEN_DEATH_DURATION } from '../../sim/config';
 import { spellFor, type CardId, type SpellCard } from '../../sim/spells';
+import { selectorLabel } from './strategyText';
 import styles from './MatchHUD.module.css';
 
 /** What the player can be told about a spell at a glance (GDD §9). */
@@ -16,12 +17,8 @@ const KIND_LABEL: Readonly<Record<SpellCard['kind'], string>> = {
 };
 
 export interface MatchHudDeps {
-  /** The latest wire state: mana, clock and hand. */
+  /** The latest wire state: mana, clock, hand and the rule that last fired. */
   getState: () => MatchState;
-  /** The card armed and waiting for a click on the arena, if any. */
-  getSelectedCard: () => string | null;
-  /** Arms a card, or clears the selection with null. */
-  onSelectCard: (cardId: string | null) => void;
   isVisible: () => boolean;
   /** Spectators get the clock and the structures, but no hand of their own. */
   isSpectating: () => boolean;
@@ -37,11 +34,10 @@ export interface MatchHudDeps {
 }
 
 interface CardRefs {
-  root: HTMLButtonElement;
+  root: HTMLElement;
   cost: HTMLElement;
   name: HTMLElement;
   role: HTMLElement;
-  key: HTMLElement;
 }
 
 interface SideRefs {
@@ -67,7 +63,7 @@ interface HudRefs {
   manaText: HTMLElement;
   hand: CardRefs[];
   nextName: HTMLElement;
-  hint: HTMLElement;
+  trace: HTMLElement;
   bar: HTMLElement;
 }
 
@@ -133,23 +129,27 @@ function MatchHudView({ refs }: { refs: HudRefs }): JSX.Element {
       </div>
 
       <div class={styles.bar} ref={keep(refs, 'bar')}>
-        <span class={styles.hint} ref={keep(refs, 'hint')} />
+        <span class={styles.trace} ref={keep(refs, 'trace')} />
         <div class={styles.barRow}>
           <div class={styles.nextBox}>
             <span class={styles.nextLabel}>Next</span>
             <span class={styles.nextName} ref={keep(refs, 'nextName')} />
           </div>
           <div class={styles.hand}>
+            {/*
+              Plain divs, not buttons: the hand is a readout now. Nothing here
+              is pressable, and a disabled button would still announce itself to
+              a screen reader as a control the player is being denied.
+            */}
             {Array.from({ length: HAND_SIZE }, (_, slot) => {
               const cardRefs = {} as CardRefs;
               refs.hand[slot] = cardRefs;
               return (
-                <button key={slot} type="button" class={styles.card} ref={keep(cardRefs, 'root')}>
+                <div key={slot} class={styles.card} ref={keep(cardRefs, 'root')}>
                   <span class={styles.cardCost} ref={keep(cardRefs, 'cost')} />
                   <span class={styles.cardName} ref={keep(cardRefs, 'name')} />
                   <span class={styles.cardRole} ref={keep(cardRefs, 'role')} />
-                  <span class={styles.cardKey} ref={keep(cardRefs, 'key')} />
-                </button>
+                </div>
               );
             })}
           </div>
@@ -166,16 +166,27 @@ function MatchHudView({ refs }: { refs: HudRefs }): JSX.Element {
 }
 
 /**
- * The in-match commander interface for the siege model (GDD §13, step 6): a
- * hand of four cards you spend mana on, the card queued behind them, the match
- * clock, and how both Cores and Towers are holding up.
+ * The in-match readout for the siege model (GDD §13): the match clock, how both
+ * Cores and Towers are holding up, your mana, your hand — and which of your own
+ * rules last spent it.
  *
- * It replaces {@link HUD} for online matches rather than extending it: since the
- * pivot the player has no mage of their own, so lives/health/throw readiness
- * describe an avatar that no longer exists.
+ * Nothing here is pressable since the idle pivot. The hand stays on screen
+ * anyway and stays *honest* about affordability, because it answers the most
+ * common question an idle player has: "why has my Meteoro rule not fired?" —
+ * and the answer is usually that the card is two draws away, or that the bank
+ * is short. Hiding the hand would leave that question unanswerable, and the
+ * trace panel below it is the other half of the same account.
  */
 export class MatchHUD implements GameRenderer {
   private readonly host: HTMLDivElement;
+  /**
+   * The rule id the trace panel is currently showing.
+   *
+   * `sync` runs every frame and a rule changes every second or so, so writing
+   * `textContent` unconditionally would be ~60 pointless DOM writes a second
+   * for a string that is almost always the same one.
+   */
+  private tracedRuleId: string | null = null;
   /**
    * The nested holders have to exist before the view mounts: a callback ref
    * fires during render and writes straight into them.
@@ -193,17 +204,12 @@ export class MatchHUD implements GameRenderer {
   ) {
     this.host = document.createElement('div');
     this.host.hidden = true;
-    // Only the card buttons are interactive; clicks anywhere else must reach the
-    // arena underneath, which is how a card gets placed.
+    // Set once and never lifted: the whole HUD is a readout since the idle
+    // pivot, so every click belongs to the arena underneath — which is still
+    // how the camera gets dragged.
     this.host.style.pointerEvents = 'none';
     container.append(this.host);
     render(<MatchHudView refs={this.refs} />, this.host);
-
-    for (const [slot, card] of this.refs.hand.entries()) {
-      card.root.style.pointerEvents = 'auto';
-      card.key.textContent = String(slot + 1);
-      card.root.addEventListener('click', () => this.toggleSlot(slot));
-    }
   }
 
   sync(alpha: number): void {
@@ -216,18 +222,12 @@ export class MatchHUD implements GameRenderer {
     this.updateClock(state);
     this.updateSides();
     this.updateHand(state);
+    this.updateTrace(state);
   }
 
   dispose(): void {
     render(null, this.host);
     this.host.remove();
-  }
-
-  /** Arms the card in a hand slot, or disarms it when it is already selected. */
-  private toggleSlot(slot: number): void {
-    const cardId = this.deps.getState().hand[slot];
-    if (!cardId) return;
-    this.deps.onSelectCard(this.deps.getSelectedCard() === cardId ? null : cardId);
   }
 
   private updateClock(state: MatchState): void {
@@ -281,31 +281,51 @@ export class MatchHUD implements GameRenderer {
     this.refs.bar.hidden = spectating;
     if (spectating) return;
 
-    const selected = this.deps.getSelectedCard();
     for (const [slot, refs] of this.refs.hand.entries()) {
       const card = lookupCard(state.hand[slot]);
       refs.root.hidden = !card;
       if (!card) continue;
 
-      const affordable = state.mana >= card.cost;
       refs.cost.textContent = String(card.cost);
       refs.name.textContent = card.name;
       refs.role.textContent = KIND_LABEL[card.kind];
-      refs.root.classList.toggle(styles.cardSelected, selected === card.id);
-      refs.root.classList.toggle(styles.cardBroke, !affordable);
-      refs.root.disabled = !affordable;
+      // Still greyed when the bank is short. Not to refuse a click — there are
+      // no clicks — but because "I cannot afford that yet" is exactly what a
+      // player is looking for when a rule of theirs has gone quiet.
+      refs.root.classList.toggle(styles.cardBroke, state.mana < card.cost);
     }
 
     const next = lookupCard(state.next);
     this.refs.nextName.textContent = next ? `${next.name} · ${next.cost}` : '—';
 
-    const armed = lookupCard(selected);
-    this.refs.hint.textContent = armed
-      ? `Clique numa área do campo para conjurar ${armed.name}`
-      : 'Escolha uma carta (1–4) e clique no campo';
-
     const fraction = clamp01(state.mana / MANA_MAX);
     this.refs.manaFill.style.width = `${Math.round(fraction * 100)}%`;
     this.refs.manaText.textContent = `${Math.floor(state.mana)}/${MANA_MAX}`;
+  }
+
+  /**
+   * Names the rule that last spent the player's mana.
+   *
+   * This is the whole of an idle match's feedback loop. The player wrote a
+   * program and then stopped touching the game, so the one thing the match owes
+   * them is an account of which of their own rules is doing the work — without
+   * it, a won match and a lost one look equally like a screensaver.
+   */
+  private updateTrace(state: MatchState): void {
+    const fired = state.firedRule;
+    const id = fired?.ruleId ?? null;
+    if (id === this.tracedRuleId) return;
+    this.tracedRuleId = id;
+
+    if (!fired) {
+      this.refs.trace.textContent = 'Nenhuma regra disparou ainda';
+      return;
+    }
+
+    // Falls back to the wire id for a card this build does not know, rather
+    // than blanking the line — a server one version ahead still gets to say
+    // which rule fired.
+    const card = lookupCard(fired.cardId)?.name ?? fired.cardId;
+    this.refs.trace.textContent = `Regra ${fired.index + 1} · ${card} → ${selectorLabel(fired.at)}`;
   }
 }

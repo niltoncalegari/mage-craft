@@ -156,7 +156,13 @@
   display: none;
 }
 
-.hint {
+/*
+ * The trace: which of the player's own rules last cast. It sits where the
+ * "pick a card and click" hint used to, because it answers the same question
+ * that hint did — what do I do now — for a game where the answer is "nothing,
+ * watch your program work".
+ */
+.trace {
   -webkit-backdrop-filter: blur(14px) saturate(150%);
   backdrop-filter: blur(14px) saturate(150%);
   background: rgba(14, 27, 41, 0.5);
@@ -212,7 +218,6 @@
   border-radius: 14px;
   box-shadow: var(--glass-specular), var(--glass-shadow);
   color: var(--glass-ink);
-  cursor: pointer;
   display: flex;
   flex-direction: column;
   font: inherit;
@@ -221,26 +226,19 @@
   position: relative;
   text-align: left;
   text-shadow: var(--glass-halo);
-  transition: transform 90ms ease, box-shadow 90ms ease, border-color 90ms ease;
+  /* Only the greying transitions now — nothing here lifts under a cursor,
+     because nothing here is pressable since the idle pivot. */
+  transition: filter 90ms ease, opacity 90ms ease;
   width: 104px;
-}
-
-.card:hover:not(:disabled) {
-  transform: translateY(-3px);
 }
 
 .card[hidden] {
   display: none;
 }
 
-.cardSelected {
-  border-color: rgba(214, 168, 24, 0.95);
-  box-shadow: var(--glass-specular), 0 0 0 3px rgba(198, 138, 18, 0.4), var(--glass-shadow);
-  transform: translateY(-4px);
-}
-
+/* Not a refusal — a readout. It says the bank is short, which is the usual
+   answer to "why has my rule gone quiet?". */
 .cardBroke {
-  cursor: not-allowed;
   filter: grayscale(0.65);
   opacity: 0.55;
 }
@@ -266,16 +264,6 @@
   color: var(--glass-ink-soft);
   font-size: 10px;
   font-weight: 700;
-}
-
-.cardKey {
-  color: var(--glass-ink-soft);
-  font-size: 10px;
-  font-weight: 900;
-  opacity: 0.75;
-  position: absolute;
-  right: 8px;
-  top: 6px;
 }
 
 .manaBox {
@@ -364,10 +352,3 @@
   }
 }
 
-/* Touch needs a bigger target than a mouse cursor does; a card this small
-   under a fingertip is easy to miscast from. */
-@media (pointer: coarse) {
-  .card {
-    min-height: 44px;
-  }
-}

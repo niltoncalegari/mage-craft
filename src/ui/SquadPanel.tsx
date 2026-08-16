@@ -27,8 +27,6 @@ export interface SquadPanelDeps {
   /** Picks a mage to watch; passing the one already picked clears it. */
   onSelect: (wireId: string) => void;
   isVisible: () => boolean;
-  /** With a card armed the panel stops taking clicks — see `.armed` in the CSS. */
-  isCardArmed: () => boolean;
   /** The nick commanding a side, or null when the match never named them. */
   getSideName: (team: Team) => string | null;
 }
@@ -204,7 +202,6 @@ export class SquadPanel implements GameRenderer {
 
     const squad = this.deps.getSquad();
     const highlighted = this.deps.getHighlighted();
-    const armed = this.deps.isCardArmed();
 
     const mine = squad.filter((m) => m.team === Team.Player);
     const theirs = squad.filter((m) => m.team === Team.Enemy);
@@ -213,8 +210,8 @@ export class SquadPanel implements GameRenderer {
     // on. Pinning it to the left would have a right-hand commander reading their
     // own colours off the far edge of the board.
     const mineOnLeft = this.deps.getMySide() === 'left';
-    this.updateSide(0, mineOnLeft, mine, theirs, highlighted, armed);
-    this.updateSide(1, !mineOnLeft, theirs, mine, highlighted, armed);
+    this.updateSide(0, mineOnLeft, mine, theirs, highlighted);
+    this.updateSide(1, !mineOnLeft, theirs, mine, highlighted);
   }
 
   dispose(): void {
@@ -235,7 +232,6 @@ export class SquadPanel implements GameRenderer {
     rows: readonly SquadMemberView[],
     opponents: readonly SquadMemberView[],
     highlighted: string | null,
-    armed: boolean,
   ): void {
     const refs = this.refs.sides[side];
     const team = side === 0 ? Team.Player : Team.Enemy;
@@ -248,7 +244,6 @@ export class SquadPanel implements GameRenderer {
     // Kills this side has scored = bodies the other side has lost.
     const kills = opponents.reduce((n, m) => n + m.deaths, 0);
     refs.kills.textContent = `${kills} ${kills === 1 ? 'abate' : 'abates'}`;
-    refs.root.classList.toggle(styles.armed, armed);
     if (!refs.chevron.textContent) refs.chevron.textContent = '▾';
 
     // Folded away: the header above still counts, which is why it is outside.
