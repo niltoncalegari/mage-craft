@@ -95,7 +95,9 @@ export type CastRejection =
   | 'not_enough_mana'
   | 'out_of_bounds'
   | 'match_over'
-  | 'on_cooldown';
+  | 'on_cooldown'
+  /** Every mage this team has standing is stone; see {@link World.squadPetrified}. */
+  | 'squad_petrified';
 
 export type CastResult = { ok: true } | { ok: false; reason: CastRejection };
 
@@ -407,6 +409,12 @@ export class World {
 
     const spell = spellFor(spellId);
     if (!spell) return { ok: false, reason: 'unknown_card' };
+    // Ahead of the mana check, unlike everything else: a team whose whole squad
+    // is stone has no one to channel through, and answering "not enough mana"
+    // would send the player looking at the wrong readout entirely. It is also
+    // the one rejection that is *about the opponent* — it names something they
+    // did to you rather than something you got wrong.
+    if (this.squadPetrified(team)) return { ok: false, reason: 'squad_petrified' };
     if (this.manaOf(team) < spell.cost) return { ok: false, reason: 'not_enough_mana' };
     if (this.arena.outOfBounds(position)) return { ok: false, reason: 'out_of_bounds' };
     // Checked last on purpose: every rejection above says something is wrong
@@ -420,6 +428,31 @@ export class World {
     this.recordCastFx(team, spell, position);
     this.recordCast(team, spell.id);
     return { ok: true };
+  }
+
+  /**
+   * Whether every mage this team still has standing is stone (GDD §9).
+   *
+   * The only hard lock on casting in the game. Petrificar is an area card, so
+   * this is reachable exactly when the enemy has bunched up inside one cast —
+   * which is the situation the card asks a program to wait for, and the reason
+   * it is worth four mana against two and a half seconds of protecting what it
+   * caught.
+   *
+   * Guarded on *living* mages, and false for a team with none. A squad wiped to
+   * the last man is not petrified, it is dead: blocking its casts would turn a
+   * lost fight into an unrecoverable one for a reason nothing on screen
+   * explains. The empty case matters beyond taste, too — every test that casts
+   * before summoning anybody would otherwise be vacuously locked out.
+   */
+  squadPetrified(team: Team): boolean {
+    let living = 0;
+    for (const m of this.mages.values()) {
+      if (m.team !== team || !m.alive) continue;
+      living++;
+      if (!hasEffect(m, 'petrify')) return false;
+    }
+    return living > 0;
   }
 
   private recordCast(team: Team, spellId: SpellId): void {

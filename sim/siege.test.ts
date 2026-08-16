@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { damageTakenMultiplier, magnitudeOf, moveSpeedMultiplier } from './effects';
+import { damageTakenMultiplier, hasEffect, magnitudeOf, moveSpeedMultiplier, removeEffect } from './effects';
 import { defaultSquad } from './cards';
 import {
   CHARGE_TIME,
@@ -429,6 +429,49 @@ describe('spells (GDD §9)', () => {
     stepN(w, Math.ceil(3 / SIM_DT));
     w.dealDamage(victim, 40);
     expect(victim.health).toBeLessThan(full);
+  });
+
+  /**
+   * The reach of Petrificar, and the reason it is worth four mana.
+   *
+   * A squad that is entirely stone has no one left to channel through, so the
+   * player it belongs to cannot cast at all until someone cracks. That is the
+   * only hard lock in the game — nothing else stops a program from firing — and
+   * it is reachable exactly when the enemy has bunched up inside one area
+   * spell, which is the situation the card is asking you to wait for.
+   *
+   * Guarded on *living* mages: a team wiped to the last man is not petrified,
+   * it is dead, and blocking its casts would turn a lost fight into an
+   * unrecoverable one for a reason nobody could see.
+   */
+  it('locks a team out of casting only while its whole living squad is stone', () => {
+    const w = new World();
+    const a = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0));
+    const b = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0.6));
+    w.summon(TEAM_A, 'pyromancer', new Vec2(10, 0));
+
+    expect(w.castSpell(TEAM_B, 'blessing', a.position)).toEqual({ ok: true });
+    stepN(w, Math.ceil(SPELL_GLOBAL_COOLDOWN / SIM_DT) + 2);
+
+    // One area cast catching both of them is what buys the lock.
+    w.castSpell(TEAM_A, 'petrify', a.position);
+    expect(hasEffect(a, 'petrify')).toBe(true);
+    expect(hasEffect(b, 'petrify')).toBe(true);
+
+    expect(w.castSpell(TEAM_B, 'blessing', a.position)).toEqual({
+      ok: false,
+      reason: 'squad_petrified',
+    });
+
+    // One of them cracking is enough to get the program running again.
+    removeEffect(b, 'petrify');
+    expect(w.castSpell(TEAM_B, 'blessing', b.position)).toEqual({ ok: true });
+  });
+
+  it('never locks a team that simply has no one standing', () => {
+    const w = new World();
+    // No squad at all: vacuously "all petrified" is the trap this guards.
+    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({ ok: true });
   });
 
   it('shields absorb damage before health', () => {

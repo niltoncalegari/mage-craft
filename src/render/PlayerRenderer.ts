@@ -26,6 +26,12 @@ const FROST_COLOR = new THREE.Color(0xd8f7ff);
 /** Fire's. Deliberately the glow, not the core: the core is nearly white. */
 const EMBER_COLOR = new THREE.Color(0xff5a1f);
 const VULNERABLE_COLOR = 0x9b5de5;
+/**
+ * Petrify's grey. Applied at full strength, unlike every other tint here — see
+ * {@link PlayerRenderer.updateBodyTint}. Cool rather than neutral, so a statue
+ * still separates from the sand of the arena floor behind it.
+ */
+const STONE_COLOR = new THREE.Color(0x8a8f98);
 const STUN_COLOR = 0xffe066;
 /**
  * How pale a slowed mage goes at most. Well short of 1: the mage still has to
@@ -938,6 +944,19 @@ export class PlayerRenderer implements GameRenderer {
     const burning = !defeated && hasFx(player, 'burn');
     const frozen = !defeated && Boolean(player.slowed);
 
+    // Stone takes the whole body, and takes it outright rather than by degree.
+    // Every other tint here is partial on purpose — a mage still has to read as
+    // its team colour in a scrum — but petrify is the one status that removes a
+    // mage from the fight in both directions, and a body that is only *mostly*
+    // grey would be saying "somewhat out of the fight", which is not a state
+    // this card has. It also wins over fire and ice for the same reason fire
+    // wins over ice: it is the more urgent fact about that body.
+    if (!defeated && hasFx(player, 'petrify')) {
+      view.tint = 1;
+      this.setFigureTint(view, STONE_COLOR, 1);
+      return;
+    }
+
     let target = 0;
     let color = FROST_COLOR;
     if (burning) {
@@ -1036,6 +1055,16 @@ export class PlayerRenderer implements GameRenderer {
     view.figure.scale.set(1, 1, 1);
     this.setArmPose(view, 0, 0, 0);
 
+    // Stone does not breathe. Returning on the neutral pose above is the whole
+    // implementation: every animation here is a displacement from it, so
+    // skipping the switch leaves the mage standing dead still with its arms
+    // down. That matters more than it sounds — the idle bob is small but it is
+    // *constant*, and a grey mage still gently breathing reads as a mage with a
+    // palette problem rather than as a statue. The hat spring is skipped in
+    // `applySecondaryMotion` for the same reason: a statue with a swaying hat
+    // is a statue nobody believes.
+    if (hasFx(player, 'petrify') && player.state !== PlayerState.Defeated) return;
+
     switch (player.currentAnimation) {
       case 'idle':
         this.applyIdle(view, renderTime);
@@ -1115,6 +1144,19 @@ export class PlayerRenderer implements GameRenderer {
    * the spring state lives on the view precisely because of that reset.
    */
   private applySecondaryMotion(view: PlayerView, player: Player): void {
+    // A statue with a swaying hat is a statue nobody believes. Settled to rest
+    // rather than frozen where it was: a tip caught mid-swing would hold a
+    // diagonal for two and a half seconds, which reads as a stuck frame.
+    if (hasFx(player, 'petrify') && player.state !== PlayerState.Defeated) {
+      view.swayZ = 0;
+      view.swayX = 0;
+      view.swayVelZ = 0;
+      view.swayVelX = 0;
+      view.hatGroup.rotation.set(0, 0, 0);
+      view.robe.rotation.set(0, 0, 0);
+      return;
+    }
+
     // Velocity in the figure's own frame: +X is where the mage faces, +Z is its
     // left (see `coords.ts` and `root.rotation.y = -player.rotation`).
     const cos = Math.cos(player.rotation);

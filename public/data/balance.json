@@ -450,7 +450,7 @@
       "color": "blue",
       "kind": "curse",
       "cost": 4,
-      "radius": 2.5,
+      "radius": 3.5,
       "duration": 2.5,
       "target": "enemies",
       "apply": [{ "effect": "petrify" }]
