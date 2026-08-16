@@ -16,6 +16,7 @@ import {
   ROOT_BOUNCE,
   ROOT_SYSTEM_POOL,
   ROOT_VOXEL_POOL,
+  ROOT_VOXEL_SIZE,
   ROOT_VOXELS_PER_CAST,
   type RootVoxel,
 } from './rootGrowth';
@@ -74,6 +75,33 @@ describe('root growth — layout', () => {
     expect(earliest(near)).toBeLessThan(earliest(far));
   });
 
+  /**
+   * The first cut read as Lego: 0.26m cubes on a three-metre disc is about
+   * eleven across, and at that resolution a branch is a wall. Finer cells and a
+   * taper are what turn the same walk into something that reads as grown —
+   * a root that ends in a brick has no direction, one that thins to a thread
+   * points somewhere.
+   */
+  it('thins toward the tips, so a branch ends in a thread and not a brick', () => {
+    const voxels = planRootGrowth(3, cyclingRand()).filter((v) => !v.flower);
+    const inner = voxels.filter((v) => Math.hypot(v.x, v.y) < 0.6);
+    const outer = voxels.filter((v) => Math.hypot(v.x, v.y) > 1.6);
+
+    expect(inner.length).toBeGreaterThan(0);
+    expect(outer.length).toBeGreaterThan(0);
+
+    const mean = (list: RootVoxel[]): number => list.reduce((a, v) => a + v.taper, 0) / list.length;
+    expect(mean(outer)).toBeLessThan(mean(inner));
+    // Still visible: a taper that reaches zero is a branch that stops early.
+    for (const v of voxels) expect(v.taper).toBeGreaterThan(0.2);
+  });
+
+  it('draws the disc at a resolution that does not read as masonry', () => {
+    // Cells across the diameter of the card's own radius. Eleven was the first
+    // cut and looked like a wall; the bar is that a branch can bend within it.
+    expect((3 * 2) / ROOT_VOXEL_SIZE).toBeGreaterThan(30);
+  });
+
   it('sits every flower above ground, on the roots rather than beside them', () => {
     const voxels = planRootGrowth(3, cyclingRand());
     const flowers = voxels.filter((v) => v.flower);
@@ -84,7 +112,7 @@ describe('root growth — layout', () => {
 });
 
 describe('root growth — the growth curve', () => {
-  const voxel = (time: number): RootVoxel => ({ x: 0, y: 0, height: 0, time, flower: false });
+  const voxel = (time: number): RootVoxel => ({ x: 0, y: 0, height: 0, time, flower: false, taper: 1 });
 
   it('shows nothing before a voxel’s turn', () => {
     expect(rootVoxelScale(voxel(0.3), 0, 2)).toBe(0);

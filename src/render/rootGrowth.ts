@@ -15,12 +15,31 @@
  * shows as a bright blob precisely where the effect should read as thinnest.
  */
 
-/** Edge of one cube, in metres. Small enough that a radius-3 card reads as many. */
-export const ROOT_VOXEL_SIZE = 0.26;
+/**
+ * Edge of one cube, in metres.
+ *
+ * The first cut used 0.26, which is eleven cells across a three-metre disc, and
+ * it read as masonry: at that resolution a branch cannot bend inside its own
+ * width, so every root is a wall. Voxel is the house style — the meteor is
+ * voxel, and the reference this grew from is voxel — but voxel is a *grain*,
+ * not a size, and the grain has to be finer than the shape it is describing.
+ */
+export const ROOT_VOXEL_SIZE = 0.15;
 
 /** Branches radiating from the cast point, and how many cells each one walks. */
-export const ROOT_BRANCHES = 12;
-export const ROOT_STEPS = 9;
+export const ROOT_BRANCHES = 20;
+export const ROOT_STEPS = 16;
+
+/**
+ * How much a branch thins along its length: the tip ends at `1 - ROOT_TAPER` of
+ * a full cell.
+ *
+ * A root that ends in a full cube has no direction — it just stops. Thinning
+ * gives the branch a reading order, which is what makes the growth look like it
+ * travelled outward rather than appeared all at once. Floored well above zero,
+ * because a taper that reaches nothing is a branch that quietly ends early.
+ */
+export const ROOT_TAPER = 0.55;
 
 /** Chance a root cell puts a flower above it, and how far along a branch it may start. */
 export const ROOT_FLOWER_CHANCE = 0.14;
@@ -34,7 +53,7 @@ export const ROOT_FLOWER_MIN_STEP = 3;
  * pools fail *silently*. Capping the plan instead means the shortfall is a
  * slightly sparser root system rather than an effect that half-draws.
  */
-export const ROOT_VOXELS_PER_CAST = 128;
+export const ROOT_VOXELS_PER_CAST = 288;
 
 /**
  * Root systems that may be alive at once.
@@ -70,6 +89,8 @@ export interface RootVoxel {
   readonly time: number;
   /** Flowers are drawn in the accent colour and slightly smaller. */
   readonly flower: boolean;
+  /** Size of this cube as a fraction of a full cell; see {@link ROOT_TAPER}. */
+  readonly taper: number;
 }
 
 function snap(v: number): number {
@@ -94,7 +115,7 @@ export function planRootGrowth(radius: number, rand: () => number = Math.random)
   const visited = new Set<string>();
   // Roots stay under knee height: the card holds feet, and cubes at chest level
   // would hide the bodies the player is watching to read his own program.
-  const ceiling = ROOT_VOXEL_SIZE * 3;
+  const ceiling = 0.42;
 
   for (let b = 0; b < ROOT_BRANCHES && out.length < ROOT_VOXELS_PER_CAST; b++) {
     let px = 0;
@@ -139,10 +160,11 @@ export function planRootGrowth(radius: number, rand: () => number = Math.random)
       visited.add(key);
 
       const time = delay + step * 0.012;
-      out.push({ x: vx, y: vy, height: vh, time, flower: false });
+      const taper = 1 - (step / ROOT_STEPS) * ROOT_TAPER;
+      out.push({ x: vx, y: vy, height: vh, time, flower: false, taper });
 
       if (step >= ROOT_FLOWER_MIN_STEP && rand() < ROOT_FLOWER_CHANCE) {
-        pushFlower(out, visited, vx, vy, vh + ROOT_VOXEL_SIZE, time + 0.1, radius, rand);
+        pushFlower(out, visited, vx, vy, vh + ROOT_VOXEL_SIZE, time + 0.1, radius, taper, rand);
       }
     }
   }
@@ -166,6 +188,7 @@ function pushFlower(
   height: number,
   time: number,
   radius: number,
+  taper: number,
   rand: () => number,
 ): void {
   const s = ROOT_VOXEL_SIZE;
@@ -186,7 +209,9 @@ function pushFlower(
     const key = keyOf(fx, fy, fh);
     if (visited.has(key)) continue;
     visited.add(key);
-    out.push({ x: fx, y: fy, height: fh, time: time + rand() * 0.1, flower: true });
+    // A bloom is the one part that does not thin away — it is the accent the
+    // eye lands on, and a tapered flower at the tip of a branch is invisible.
+    out.push({ x: fx, y: fy, height: fh, time: time + rand() * 0.1, flower: true, taper: Math.max(taper, 0.8) });
   }
 }
 

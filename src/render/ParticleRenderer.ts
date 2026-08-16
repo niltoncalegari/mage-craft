@@ -2361,9 +2361,10 @@ export class ParticleRenderer implements GameRenderer {
           continue;
         }
 
-        // Flowers sit slightly smaller than the roots carrying them, which is
-        // what keeps a cross of four reading as a bloom rather than as a lump.
-        const size = ROOT_VOXEL_SIZE * scale * (voxel.flower ? 0.85 : 1);
+        // `taper` thins the branch toward its tip so it ends in a thread rather
+        // than a brick; flowers sit slightly under a full cell so a cross of
+        // four reads as a bloom and not a lump.
+        const size = ROOT_VOXEL_SIZE * scale * voxel.taper * (voxel.flower ? 0.85 : 1);
         toThree(this.tmp, slot.x + voxel.x, slot.y + voxel.y, voxel.height + ROOT_VOXEL_SIZE * 0.5);
         this.tmpMatrix.makeScale(size, size, size);
         this.tmpMatrix.setPosition(this.tmp);
