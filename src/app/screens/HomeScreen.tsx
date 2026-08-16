@@ -10,12 +10,17 @@ import { DeckBuilder } from './DeckBuilder';
 import { HistoryPanel } from './HistoryPanel';
 import { RankingPanel } from './RankingPanel';
 import { SquadBuilder } from './SquadBuilder';
+import { StrategyBuilder } from './StrategyBuilder';
 
-type LoadoutTab = 'squad' | 'deck' | 'history';
+type LoadoutTab = 'squad' | 'deck' | 'strategy' | 'history';
 
+// Reading order is assembly order (GDD §7): who fights, what they spend, and
+// what decides when to spend it. Strategy sits after Deck because a rule may
+// only name a card the deck brings.
 const LOADOUT_TABS: readonly (readonly [LoadoutTab, string])[] = [
   ['squad', 'Squad'],
   ['deck', 'Deck'],
+  ['strategy', 'Strategy'],
   ['history', 'History'],
 ];
 
@@ -160,6 +165,7 @@ export function HomeScreen(props: {
       </div>
       {loadoutTab === 'squad' ? <SquadBuilder onSaved={pushLoadout} /> : null}
       {loadoutTab === 'deck' ? <DeckBuilder onSaved={pushLoadout} /> : null}
+      {loadoutTab === 'strategy' ? <StrategyBuilder onSaved={pushLoadout} /> : null}
       {loadoutTab === 'history' ? <HistoryPanel user={props.user} /> : null}
 
       <div class={styles.panelHeader} style={{ marginTop: 28 }}>

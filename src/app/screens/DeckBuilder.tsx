@@ -1,25 +1,37 @@
 import type { JSX } from 'preact';
 import { useState } from 'preact/hooks';
-import { CARD_POOL, DECK_SIZE, HAND_SIZE, validateDeck } from '../../../sim/Deck';
-import { spellFor, type CardId } from '../../../sim/spells';
+import { CARD_POOL, DECK_SIZE, HAND_SIZE, MAX_COPIES, validateDeck } from '../../../sim/Deck';
+import { colorsOf, spellFor, type CardId } from '../../../sim/spells';
+import { cardInk, DECK_COLOR_LABEL } from '../../ui/deckColors';
 import { loadLoadout, saveDeck } from '../loadout';
 import styles from './Builders.module.css';
 import appStyles from '../App.module.css';
-
-const BUFF_COLOR = '#3ecfbf';
-const CURSE_COLOR = '#c9853e';
 
 /**
  * Choose the eight cards you cycle through. Duplicates are deliberate here (the
  * opposite of a squad): the deck is a rotating queue with no hidden randomness
  * (`sim/Deck.ts`), so doubling a card is how you guarantee it comes back around.
+ *
+ * Since the idle pivot the deck also decides what the strategy editor is
+ * allowed to say — a rule may only name a card you brought — so this screen
+ * says up front which rules a save would cost.
  */
 export function DeckBuilder(props: { onSaved?: () => void } = {}): JSX.Element {
   const [deck, setDeck] = useState<CardId[]>(() => loadLoadout().deck);
+  // Read once, from the store rather than from this screen's draft: the point
+  // of comparison is the program as saved, not as it would be after the edit.
+  const [savedRules] = useState(() => loadLoadout().strategy.rules);
   const [saved, setSaved] = useState(false);
 
   const validation = validateDeck(deck);
   const countOf = (id: CardId): number => deck.filter((c) => c === id).length;
+
+  // Rules the deck no longer supports. `saveDeck` drops them on its own — a
+  // rule naming a card you do not bring can never fire, so keeping it would
+  // just be a rule that quietly does nothing. Saying so first is the whole
+  // point: dropping them silently is the version that feels like a bug.
+  const orphaned = savedRules.filter((rule) => !deck.includes(rule.card));
+  const orphanedCards = [...new Set(orphaned.map((rule) => spellFor(rule.card)?.name ?? rule.card))];
 
   const setCount = (id: CardId, next: number): void => {
     const others = deck.filter((c) => c !== id);
@@ -50,19 +62,19 @@ export function DeckBuilder(props: { onSaved?: () => void } = {}): JSX.Element {
           const card = spellFor(id);
           if (!card) return null;
           const count = countOf(id);
-          const color = card.kind === 'buff' ? BUFF_COLOR : CURSE_COLOR;
           return (
             <div
               key={id}
               class={count > 0 ? `${styles.card} ${styles.cardPicked}` : styles.card}
-              style={{ '--element-color': color, cursor: 'default' } as JSX.CSSProperties}
+              style={{ '--element-color': cardInk(id), cursor: 'default' } as JSX.CSSProperties}
             >
               <div class={styles.cardHead}>
                 <h4 class={styles.cardName}>{card.name}</h4>
                 <span class={appStyles.badge}>{card.cost} mana</span>
               </div>
               <p class={styles.cardMeta}>
-                {card.kind === 'buff' ? 'Buff · your squad' : 'Curse · enemy squad'} · radius {card.radius} · {card.duration}s
+                {DECK_COLOR_LABEL[card.color]} · {card.kind === 'buff' ? 'Buff · your squad' : 'Curse · enemy squad'} ·
+                radius {card.radius} · {card.duration}s
               </p>
               <div class={styles.stepper}>
                 <button
@@ -79,7 +91,9 @@ export function DeckBuilder(props: { onSaved?: () => void } = {}): JSX.Element {
                   type="button"
                   class={styles.stepBtn}
                   aria-label={`One more ${card.name}`}
-                  disabled={deck.length >= DECK_SIZE}
+                  // The copy ceiling is a deck rule, not a total: without it the
+                  // stepper happily built a deck the validator then refused.
+                  disabled={deck.length >= DECK_SIZE || count >= MAX_COPIES}
                   onClick={() => setCount(id, count + 1)}
                 >
                   +
@@ -90,8 +104,17 @@ export function DeckBuilder(props: { onSaved?: () => void } = {}): JSX.Element {
         })}
       </div>
 
+      {orphaned.length > 0 ? (
+        <p class={styles.orphanNote}>
+          Saving drops {orphaned.length === 1 ? '1 rule' : `${orphaned.length} rules`} from your strategy —{' '}
+          {orphanedCards.join(', ')} {orphanedCards.length === 1 ? 'is' : 'are'} no longer in the deck, and a rule can
+          only name a card you bring. Every other rule is kept.
+        </p>
+      ) : null}
+
       <p class={appStyles.panelHint} style={{ margin: '18px 0 10px' }}>
-        Deck mix — {deck.length}/{DECK_SIZE} cards · {averageCost.toFixed(1)} average mana
+        Deck mix — {deck.length}/{DECK_SIZE} cards · {[...colorsOf(deck)].map((c) => DECK_COLOR_LABEL[c]).join(' + ') || '—'} ·{' '}
+        {averageCost.toFixed(1)} average mana
       </p>
       <ul class={styles.costCurve}>
         {CARD_POOL.map((id) => {
@@ -106,7 +129,7 @@ export function DeckBuilder(props: { onSaved?: () => void } = {}): JSX.Element {
                   class={styles.fill}
                   style={{
                     width: `${count === 0 ? 0 : Math.max(6, Math.round((count / maxCount) * 100))}%`,
-                    background: card.kind === 'buff' ? BUFF_COLOR : CURSE_COLOR,
+                    background: cardInk(id),
                   }}
                 />
               </div>

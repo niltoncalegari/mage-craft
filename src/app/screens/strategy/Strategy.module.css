@@ -600,18 +600,6 @@
   margin-bottom: 4px;
 }
 
-.warning {
-  background: rgba(201, 133, 62, 0.1);
-  border: 1px solid rgba(201, 133, 62, 0.4);
-  border-radius: 10px;
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.5;
-  margin: 14px 0 0;
-  padding: 10px 12px;
-}
-
 .count {
   color: var(--muted);
   font-size: 12px;
