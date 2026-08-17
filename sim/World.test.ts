@@ -574,3 +574,356 @@ describe('World — anti-stuck', () => {
     expect(w.pathGrid().isBlocked(tower.position)).toBe(false);
   });
 });
+
+/**
+ * Vínculo da Dor, and the first thing in the game that makes damage arrive
+ * somewhere it was not aimed.
+ *
+ * Every card until now answered "what happens to who I caught". This one
+ * answers "what happens to who I caught *later*, because of something else
+ * entirely" — the enemy's own focus fire is what pays it out, which makes it
+ * the only card whose value is spent by the opponent rather than by the caster.
+ */
+describe('a pain bond', () => {
+  it('spreads a share of every hit to the others in the web', () => {
+    const w = new World();
+    const hit = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+    const bound = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 1));
+    const loose = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 14));
+
+    w.castSpell(TEAM_A, 'bond_of_pain', new Vec2(0, 0.5));
+    w.dealDamage(hit, 20, {});
+
+    expect(hit.health).toBeLessThan(hit.maxHealth);
+    expect(bound.health).toBeLessThan(bound.maxHealth);
+    expect(loose.health).toBe(loose.maxHealth);
+  });
+
+  it('never spreads more than it took', () => {
+    const w = new World();
+    const hit = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+    const bound = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 1));
+
+    w.castSpell(TEAM_A, 'bond_of_pain', new Vec2(0, 0.5));
+    w.dealDamage(hit, 20, {});
+
+    expect(hit.maxHealth - bound.health).toBeLessThan(hit.maxHealth - hit.health);
+  });
+
+  /**
+   * The failure this card is one line away from: the mirrored damage is damage,
+   * so it walks back into the same function and mirrors again. Two bound mages
+   * would trade a shrinking hit forever inside a single call, and with a share
+   * of 1 they would not shrink at all.
+   */
+  it('does not echo between the bodies it binds', () => {
+    const w = new World();
+    const a = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+    const b = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 1));
+
+    w.castSpell(TEAM_A, 'bond_of_pain', new Vec2(0, 0.5));
+    w.dealDamage(a, 10, {});
+
+    expect(a.alive).toBe(true);
+    expect(b.alive).toBe(true);
+    expect(b.health).toBeGreaterThan(b.maxHealth - 10);
+  });
+
+  it('binds only what the cast caught, not the whole squad', () => {
+    const w = new World();
+    const theirs = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+    const ours = w.summon(TEAM_A, 'pyromancer', new Vec2(0, 0.5));
+
+    w.castSpell(TEAM_A, 'bond_of_pain', new Vec2(0, 0.25));
+    w.dealDamage(theirs, 20, {});
+
+    expect(ours.health).toBe(ours.maxHealth);
+  });
+});
+
+/**
+ * Vínculo de Solidariedade, and Vínculo da Dor's answer.
+ *
+ * The two are the same wire read from opposite ends: one copies a share of
+ * every hit onto the others, one takes a share *off* the body that was struck
+ * and hands it round. Black adds damage to a squad standing together; white
+ * refuses to let a squad standing together lose a body.
+ *
+ * That is the whole card, and it is worth explaining why it is worth four mana
+ * for no mitigation at all: a death costs six seconds of presence, and focus
+ * fire is how a death happens. Spreading a hit across four bars changes nothing
+ * about the total and everything about whether anybody falls off the field.
+ */
+describe('a solidarity bond', () => {
+  function bondedSquad(): { w: World; struck: Mage; others: Mage[] } {
+    const w = new World();
+    const struck = w.summon(TEAM_A, 'pyromancer', new Vec2(0, 0));
+    const others = [
+      w.summon(TEAM_A, 'pyromancer', new Vec2(0, 1)),
+      w.summon(TEAM_A, 'pyromancer', new Vec2(0, 2)),
+    ];
+    w.castSpell(TEAM_A, 'bond_of_solidarity', new Vec2(0, 1));
+    return { w, struck, others };
+  }
+
+  it('takes the hit off the body it landed on and hands it round', () => {
+    const { w, struck, others } = bondedSquad();
+
+    w.dealDamage(struck, 30, {});
+
+    expect(struck.maxHealth - struck.health).toBeLessThan(30);
+    for (const o of others) expect(o.health).toBeLessThan(o.maxHealth);
+  });
+
+  /**
+   * No mitigation, and that is the design. A bond that quietly lost damage on
+   * the way round would be a damage-reduction card wearing a bond's clothes,
+   * and every number in the game would have to be re-read against it.
+   */
+  it('moves the damage without shrinking it', () => {
+    const { w, struck, others } = bondedSquad();
+
+    w.dealDamage(struck, 30, {});
+
+    const total = [struck, ...others].reduce((sum, m) => sum + (m.maxHealth - m.health), 0);
+    expect(total).toBeCloseTo(30, 5);
+  });
+
+  it('shares with the squad it was cast on, and nobody else', () => {
+    const { w, struck } = bondedSquad();
+    const enemy = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 1));
+
+    w.dealDamage(struck, 30, {});
+
+    expect(enemy.health).toBe(enemy.maxHealth);
+  });
+
+  it('does not pass the same hit round twice', () => {
+    const { w, struck, others } = bondedSquad();
+
+    w.dealDamage(struck, 30, {});
+
+    // A share that re-split on arrival would keep circulating, and the clearest
+    // symptom is one of the receivers ending up worse off than the body that
+    // was actually hit.
+    for (const o of others) {
+      expect(o.maxHealth - o.health).toBeLessThan(struck.maxHealth - struck.health);
+    }
+  });
+});
+
+/**
+ * Dobra Espacial, and the only card that moves a squad without moving it —
+ * position is otherwise something a program can only ask for and wait out.
+ *
+ * The whole idle model is that a rule fires and the squad *then* walks
+ * somewhere, which takes seconds a fight does not always have. This puts them
+ * there, which is why it is worth four mana for no damage at all: every zone
+ * card in the game is a bet on where the enemy will be, and this is the only
+ * answer to being read.
+ */
+describe('a spatial fold', () => {
+  it('gathers the squad it caught onto the spot it was cast', () => {
+    const w = new World();
+    const scattered = [
+      w.summon(TEAM_A, 'pyromancer', new Vec2(-4, -4)),
+      w.summon(TEAM_A, 'pyromancer', new Vec2(4, 4)),
+      w.summon(TEAM_A, 'pyromancer', new Vec2(-4, 4)),
+    ];
+    const to = new Vec2(0, 0);
+
+    w.castSpell(TEAM_A, 'spatial_fold', to);
+
+    for (const m of scattered) expect(m.position.distanceTo(to)).toBeLessThan(3);
+  });
+
+  /**
+   * Landed on top of each other they would be shoved apart by the spacing pass
+   * over the next few ticks, which reads as the card throwing the squad about.
+   * Worse, a stack of four inside one body is a single point that one Chuva de
+   * Meteoros deletes.
+   */
+  it('does not stack them inside one another', () => {
+    const w = new World();
+    const squad = [
+      w.summon(TEAM_A, 'pyromancer', new Vec2(-4, -4)),
+      w.summon(TEAM_A, 'pyromancer', new Vec2(4, 4)),
+      w.summon(TEAM_A, 'pyromancer', new Vec2(-4, 4)),
+    ];
+
+    w.castSpell(TEAM_A, 'spatial_fold', new Vec2(0, 0));
+
+    for (const a of squad) {
+      for (const b of squad) {
+        if (a === b) continue;
+        expect(a.position.distanceTo(b.position)).toBeGreaterThan(MAGE_RADIUS);
+      }
+    }
+  });
+
+  it('never puts a body inside a wall', () => {
+    const w = new World();
+    const m = w.summon(TEAM_A, 'pyromancer', new Vec2(-4, -4));
+
+    // The enemy Core: the most solid thing on the map, and the spot a program
+    // would most like to fold onto if the card let it.
+    const core = [...w.structures.values()].find((s) => s.kind === 'core' && s.team === TEAM_B)!;
+    w.castSpell(TEAM_A, 'spatial_fold', core.position);
+
+    expect(m.position.distanceTo(core.position)).toBeGreaterThan(core.radius);
+  });
+
+  it('leaves the other squad standing where it was', () => {
+    const w = new World();
+    const enemy = w.summon(TEAM_B, 'pyromancer', new Vec2(4, 4));
+    const at = enemy.position;
+
+    w.castSpell(TEAM_A, 'spatial_fold', new Vec2(0, 0));
+
+    expect(enemy.position).toEqual(at);
+  });
+});
+
+/**
+ * Vórtice Gravitacional, and the first thing in the game that changes where
+ * bodies go rather than what happens to them.
+ *
+ * Every other card writes on the mages it caught and is then finished with the
+ * field. This one writes on the *field*: for three seconds a patch of ground
+ * pulls, and what that is worth depends entirely on what else the program has
+ * to say about the place it made. Alone it is nearly nothing — a squad walks
+ * out of it. Under a Chuva de Meteoros it is the difference between a hazard
+ * they scatter out of and one they cannot leave.
+ */
+describe('a gravity well', () => {
+  /**
+   * Compared against a world where the card was never cast, rather than against
+   * the starting distance: a body left alone still settles a little under the
+   * arena's own bookkeeping, and a test that called that settling "the pull"
+   * would pass whether or not the well did anything.
+   */
+  function pulledFrom(start: Vec2, seconds: number, cast: boolean): number {
+    const w = new World();
+    const m = w.summon(TEAM_B, 'pyromancer', start);
+    if (cast) w.castSpell(TEAM_A, 'gravity_well', new Vec2(0, 0));
+    for (let t = 0; t < seconds; t += 1 / 60) w.step(1 / 60);
+    return m.position.distanceTo(new Vec2(0, 0));
+  }
+
+  it('drags what stands in it toward the middle', () => {
+    const start = new Vec2(0, 2.5);
+    expect(pulledFrom(start, 1, true)).toBeLessThan(pulledFrom(start, 1, false));
+  });
+
+  it('leaves alone what stands outside it', () => {
+    const start = new Vec2(0, 9);
+    expect(pulledFrom(start, 1, true)).toBeCloseTo(pulledFrom(start, 1, false), 5);
+  });
+
+  /**
+   * A field is a place, not a curse. It has no caster's team to be polite
+   * about, and a program that walks its own squad into its own vortex has made
+   * a mistake the game should let it make — the alternative is a card that is
+   * safe to leave lying anywhere, which is no decision at all.
+   */
+  it('pulls the squad that cast it too', () => {
+    const w = new World();
+    const ours = w.summon(TEAM_A, 'pyromancer', new Vec2(0, 2.5));
+    w.castSpell(TEAM_A, 'gravity_well', new Vec2(0, 0));
+    for (let t = 0; t < 1; t += 1 / 60) w.step(1 / 60);
+
+    expect(ours.position.distanceTo(new Vec2(0, 0))).toBeLessThan(2.5);
+  });
+
+  it('lets go when it is over', () => {
+    const w = new World();
+    const m = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 2.5));
+    w.castSpell(TEAM_A, 'gravity_well', new Vec2(0, 0));
+    for (let t = 0; t < 6; t += 1 / 60) w.step(1 / 60);
+    const settled = m.position.distanceTo(new Vec2(0, 0));
+
+    for (let t = 0; t < 3; t += 1 / 60) w.step(1 / 60);
+
+    expect(m.position.distanceTo(new Vec2(0, 0))).toBeCloseTo(settled, 5);
+  });
+});
+
+/**
+ * Fenda de Cristal: the first thing that changes the *map*.
+ *
+ * The arena has been a constant since the pivot — obstacles are authored on
+ * disk, structures only ever come down, and nothing a player does has ever put
+ * something new in the way. This card does, for five seconds, which makes it
+ * the only card that can cut a lane, hold a Core off, or wall a squad away from
+ * the fight it was walking to.
+ */
+describe('a crystal rift', () => {
+  const AT = new Vec2(0, 0);
+
+  it('stands in the way while it lasts, and then does not', () => {
+    const w = new World();
+    expect(w.blockedAt(AT)).toBe(false);
+
+    w.castSpell(TEAM_A, 'crystal_rift', AT);
+    expect(w.blockedAt(AT)).toBe(true);
+
+    for (let t = 0; t < 6; t += 1 / 60) w.step(1 / 60);
+    expect(w.blockedAt(AT)).toBe(false);
+  });
+
+  /**
+   * The trap the plan named, and the reason this card is Tier 3 rather than a
+   * `balance.json` edit. `pathGrid()` was cached on the *count of living
+   * structures*, because until now that was the only thing that could ever open
+   * or close a route. A barrier that does not touch that count leaves every bot
+   * walking a grid planned before it existed — and the symptom is not a crash
+   * or a mage in a wall. It is a wall that simply does nothing, which looks
+   * exactly like a card that was never implemented.
+   */
+  it('is a wall the planner has actually heard of', () => {
+    const w = new World();
+    const from = new Vec2(-7, 0);
+    const to = new Vec2(7, 0);
+    // Warm the cache on the open map, the way a match does long before anyone
+    // casts anything.
+    const before = w.pathGrid().findPath(from, to);
+    expect(before).not.toBeNull();
+
+    w.castSpell(TEAM_A, 'crystal_rift', AT);
+    const detour = w.pathGrid().findPath(from, to);
+
+    expect(detour).not.toBeNull();
+    expect(detour).not.toEqual(before);
+    // The assertion that actually catches a stale grid: a route planned before
+    // the crystal existed walks straight through it.
+    for (const point of detour!) expect(w.blockedAt(point)).toBe(false);
+  });
+
+  it('opens the route again when it goes', () => {
+    const w = new World();
+    const from = new Vec2(-7, 0);
+    const to = new Vec2(7, 0);
+    const open = w.pathGrid().findPath(from, to);
+
+    w.castSpell(TEAM_A, 'crystal_rift', AT);
+    expect(w.pathGrid().findPath(from, to)).not.toEqual(open);
+
+    for (let t = 0; t < 6; t += 1 / 60) w.step(1 / 60);
+    expect(w.pathGrid().findPath(from, to)).toEqual(open);
+  });
+
+  /**
+   * Cast on top of somebody, which a program aiming at a cluster will do
+   * constantly. A body left inside the crystal is a mage removed from the match
+   * — it cannot walk out of a blocker it is already in.
+   */
+  it('does not bury the bodies it rises under', () => {
+    const w = new World();
+    const caught = w.summon(TEAM_B, 'pyromancer', AT);
+
+    w.castSpell(TEAM_A, 'crystal_rift', AT);
+    for (let t = 0; t < 0.5; t += 1 / 60) w.step(1 / 60);
+
+    expect(w.blockedAt(caught.position)).toBe(false);
+  });
+});

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultSquad } from '../../sim/cards';
+import { SIM_DT } from '../../sim/config';
 import { defaultDeck } from '../../sim/Deck';
 import type { MatchSummary } from '../../sim/matchStats';
 import type { SnapshotMsg } from './protocol';
@@ -77,7 +78,30 @@ describe('LocalSession', () => {
     expect(session.connected).toBe(false);
   });
 
-  it('ignores a cast for a card that is not in hand', () => {
+  it('plays the player’s hand from their program, with nobody clicking', () => {
+    const snaps: SnapshotMsg[] = [];
+    const session = new LocalSession({
+      squad: defaultSquad(),
+      deck: defaultDeck(),
+      difficulty: 'normal',
+      seed: 1,
+      onSnapshot: (msg) => snaps.push(msg),
+      onMatchResult: () => {},
+    });
+
+    // A practice match is the same idle match the server runs: the hand moves
+    // and the trace names a rule, without a single call into the session.
+    for (let i = 0; i < 2 / SIM_DT; i++) session.tick(SIM_DT);
+
+    expect(snaps.at(-1)?.hand).not.toEqual(snaps[0]?.hand);
+    expect(snaps.at(-1)?.firedRule).toMatchObject({
+      ruleId: expect.any(String),
+      at: expect.any(String),
+    });
+    session.dispose();
+  });
+
+  it('ignores a by-hand cast — a seat is played by its program now', () => {
     const session = new LocalSession({
       squad: defaultSquad(),
       deck: defaultDeck(),
@@ -87,8 +111,8 @@ describe('LocalSession', () => {
       onMatchResult: () => {},
     });
 
-    // Never throws, whatever the client sends.
-    expect(() => session.sendCast('not_a_spell', { x: 0, y: 0 })).not.toThrow();
+    // Still on `MatchTransport`, so the view can call it; it just does nothing.
+    expect(() => session.sendCast()).not.toThrow();
     session.dispose();
   });
 });

@@ -3,8 +3,9 @@ import type { EventBus } from '../core/EventBus';
 import type { GameRenderer } from '../core/Game';
 import type { EntityId } from '../ecs/Entity';
 import type { AssetManager } from '../engine/AssetManager';
+import { prefersReducedMotion } from '../engine/reducedMotion';
 import { PLAYER, SNOWBALL, BUFF_COLORS } from '../game/config';
-import { fxStacks, hasFx } from '../game/effects';
+import { fxStacks } from '../game/effects';
 import type { ElementId } from '../game/elements';
 import type { Player, Puddle, Snowball } from '../game/types';
 import type { World } from '../game/World';
@@ -17,8 +18,31 @@ import {
   projectileGeometry,
   runeRingGeometry,
   UPRIGHT_SPIN_SHAPES,
+  voxelRockGeometry,
   type ProjectileShape,
 } from './projectileGeometry';
+import {
+  METEOR_DEBRIS_COUNT,
+  METEOR_DEBRIS_LIFE,
+  METEOR_FALL_TIME,
+  METEOR_POOL_SIZE,
+  METEOR_TRAIL_LIFE,
+  METEOR_TRAIL_RATE,
+  planColumnFall,
+  VOXEL_POOL_SIZE,
+} from './columnFall';
+import { BOLT_POINTS, planBoltPath } from './boltPath';
+import { EFFECT_VFX, newEmissionTimers, type EffectEmission } from './effectVfx';
+import {
+  planRootGrowth,
+  rootVoxelScale,
+  ROOT_SYSTEM_POOL,
+  ROOT_VOXEL_POOL,
+  ROOT_VOXEL_SIZE,
+  ROOT_VOXELS_PER_CAST,
+  type RootVoxel,
+} from './rootGrowth';
+import { spellVfxFor, type SpellVfx } from './spellVfx';
 
 const SNOWBALL_POOL_SIZE = 64;
 const PARTICLE_POOL_SIZE = 900;
@@ -27,6 +51,21 @@ const SPARKLE_POOL_SIZE = 72;
 const RING_POOL_SIZE = 32;
 const ZONE_POOL_SIZE = 8;
 const DOME_POOL_SIZE = 4;
+
+/**
+ * Bolts a `strike` cast keeps.
+ *
+ * Small on purpose. A strike lasts {@link STRIKE_LIFE} against a global cast
+ * cooldown four times longer, so two overlapping needs both teams to fire the
+ * same card within a couple of frames of each other — and unlike a zone, a
+ * dropped bolt costs a flash nobody was going to look at twice.
+ */
+const STRIKE_POOL_SIZE = 3;
+/** How long the arc hangs before it is gone, in seconds. */
+const STRIKE_LIFE = 0.22;
+/** Ribbon widths for the white core and the coloured aura around it. */
+const STRIKE_CORE_WIDTH = 0.16;
+const STRIKE_GLOW_WIDTH = 0.42;
 const PLAYER_FX_STATE_SIZE = 32;
 const PARTICLE_DT = 1 / 60;
 const PARTICLE_GRAVITY = 7.5;
@@ -63,22 +102,84 @@ const MIST_COLOR = 0x3f7d20;
 /** Fraction of bubbles that come up as a slow, wide drifting mist puff instead. */
 const MIST_CHANCE = 0.22;
 
-/* ---- Status effect emission (GDD §8) --------------------------------------- */
-/*
- * The particle pool is a shared 900 slots and `spawnParticle` silently drops a
- * request when it is full, so a continuous per-mage effect has to be cheap: a
- * burning squad of four must not starve the impact bursts of their own fight.
- * These rates are the budget — one flame every ~55ms per stack, three stacks
- * max, is at worst ~55 particles/sec across a whole team.
+/* ---- Cast shapes (GDD §17) ------------------------------------------------- */
+/** Where a falling meteor starts, in world units above the ground. */
+const METEOR_HEIGHT = 5.5;
+/**
+ * The stone itself: charcoal body, hot glow, and it tumbles.
+ *
+ * A `MeshStandardMaterial` rather than the additive sprites the rest of this
+ * file is built from, because a stone on fire has to read as an *object* the
+ * arena lights and not as a streak of light. It is the same lesson the element
+ * pass already learned about the Golem's boulder — a rock with a spell's glow
+ * reads as a grey orb — so the fire is the tail behind it, never the body.
  */
-const FLAME_INTERVAL = 0.055;
-const FLAME_COLORS = [0xffb238, 0xff5a1f, 0xffe9a8];
-/** Flames rise, so gravity works against them rather than for them. */
-const FLAME_GRAVITY_SCALE = -0.35;
-const FLAME_LIFE = 0.42;
-/** Dissonance is a nag, not a fire — one mote every third of a second. */
-const DISSONANCE_INTERVAL = 0.34;
-const DISSONANCE_COLOR = 0xf72585;
+const METEOR_BODY_COLOR = 0x222222;
+/** Deep red rather than the trail's yellow: the body glows, the fire burns. */
+const METEOR_BODY_GLOW = 0xff3300;
+/*
+ * Small enough to still be debris. The voxel lump spans about 1.9 units before
+ * scaling, so this lands it a little over half a unit across — bigger than the
+ * Golem's thrown boulder, because it falls from five units up, and well short
+ * of the mage it is falling next to. Twice this read as masonry dropped by a
+ * crane.
+ */
+const METEOR_SCALE = 0.3;
+const METEOR_SPIN = 7.5;
+/**
+ * The fire itself. Three temperatures rather than one, so the trail has depth
+ * instead of reading as a single coloured smear.
+ */
+const METEOR_FIRE_COLORS = [0xffdd00, 0xff6600, 0xff2200];
+/** Cold rock thrown out of the crater, as opposed to the fire around it. */
+const METEOR_DEBRIS_COLOR = 0x6b6560;
+/** Fraction of the impact spray that is rock rather than flame. */
+const METEOR_DEBRIS_SHARE = 0.4;
+/** Where a settled chunk sits, and how fast it stops sliding once it lands. */
+const DEBRIS_REST_HEIGHT = 0.07;
+const DEBRIS_SKID = 0.86;
+/** The spray where a body breaks, and the ring it leaves. */
+const METEOR_HIT_SPEED = 2.1;
+const METEOR_HIT_RING = 1.3;
+/** Tangential speed of a `torus`'s rim motes — what makes the rim read as turning. */
+const TORUS_RIM_SPEED = 2.2;
+/**
+ * How long a `flash`'s motes take to cross the disc, and how high off the
+ * ground they start. Their speed is derived from the first of these and the
+ * card's own radius, so a wider card collapses faster rather than leaving a
+ * ring of motes stranded where the middle should be.
+ */
+const FLASH_MOTE_LIFE = 0.3;
+const FLASH_MOTE_HEIGHT = 0.5;
+/** How long a cast's ground disc lies there, for a card that lands when it is cast. */
+const CAST_ZONE_LIFE = 0.85;
+/**
+ * The warning of a telegraphed card: rings pulsing at the cast radius while
+ * the disc waits, and how long one of them lasts.
+ *
+ * Three, so the wait reads as a count rather than as a card that failed to go
+ * off — two is a blink and four at this spacing is a strobe. They are spread
+ * across the telegraph rather than pinned to a rate, so a longer warning
+ * pulses slower instead of pulsing more.
+ */
+const WARNING_PULSES = 3;
+const WARNING_PULSE_LIFE = 0.3;
+/** One jet of an eruption: cubes thrown straight up, and how hard. */
+const PILLAR_VOXELS = 8;
+const PILLAR_RISE = 6.4;
+const PILLAR_SPREAD = 0.5;
+/**
+ * What a cast's mote count is multiplied by under `prefers-reduced-motion`.
+ *
+ * The motes are thinned and the ground footprint — zone, rings, the white
+ * friendly flash — is left completely alone, because those are not decoration:
+ * they are the answer to *where* and *whose*, and a player who has asked for
+ * less motion has not asked to be told less. Same reason the continuous status
+ * emission is untouched: a stream of embers is how you know a mage is burning.
+ * What goes is the scatter over the top of it.
+ */
+const REDUCED_MOTE_SCALE = 0.4;
+
 const SHIELD_BREAK_COLOR = 0xfff3c4;
 
 /**
@@ -350,73 +451,6 @@ function vfxFor(element: ElementId | undefined): ElementVfx {
   return element ? ELEMENT_VFX[element] : DEFAULT_VFX;
 }
 
-/**
- * Per-spell look for the four cards in the deck (GDD §9). Only Praga left
- * anything on screen before this — it spawns a puddle, so it got a renderer
- * for free — while a Bênção, a Maldição or an Escudo landed completely
- * silently. The shared grammar is: a ground zone marking the radius it
- * covered, a shockwave ring, and motes that *rise* for a blessing or *fall*
- * for a curse, so which half of the deck was played reads without knowing the
- * colors.
- */
-interface SpellVfx {
-  /** Shockwave ring + the brighter accents. */
-  ring: number;
-  /** Flat ground disc marking the affected radius. */
-  zone: number;
-  motes: readonly number[];
-  moteCount: number;
-  /** +1 for a buff (motes lift), -1 for a curse (motes press down). */
-  direction: 1 | -1;
-  /** Escudo Arcano only: a translucent dome snapping over the area it protected. */
-  dome: boolean;
-}
-
-const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
-  blessing: {
-    ring: 0xffe9a8,
-    zone: 0xffb703,
-    motes: [0xfff3c4, 0xffd166, 0xffb703],
-    moteCount: 26,
-    direction: 1,
-    dome: false,
-  },
-  slow_curse: {
-    ring: 0xcaf0f8,
-    zone: 0x4361ee,
-    motes: [0xcaf0f8, 0x8ecae6, 0x4895ef],
-    moteCount: 22,
-    direction: -1,
-    dome: false,
-  },
-  arcane_shield: {
-    ring: 0xe0fbfc,
-    zone: 0x4cc9f0,
-    motes: [0xe0fbfc, 0x7dd3fc, 0x9b5de5],
-    moteCount: 20,
-    direction: 1,
-    dome: true,
-  },
-  plague: {
-    ring: 0xb6e84a,
-    zone: 0x4f772d,
-    motes: [0xb6e84a, 0x80b918, 0x2f6b1a],
-    moteCount: 26,
-    direction: 1,
-    dome: false,
-  },
-};
-
-/** An unknown card still gets a cast beat rather than nothing at all. */
-const DEFAULT_SPELL_VFX: SpellVfx = {
-  ring: 0xe6d1ff,
-  zone: 0x9b5de5,
-  motes: [0xe6d1ff, 0x9b5de5, 0x6a2fb0],
-  moteCount: 18,
-  direction: 1,
-  dome: false,
-};
-
 interface SnowballSlot {
   readonly mesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
   /** Built on demand: only lightning needs these, and most matches never field it. */
@@ -450,6 +484,8 @@ interface ParticleSlot {
   size: number;
   /** Multiplier on world gravity; <1 lets smoke/bubbles hang and drift up longer. */
   gravityScale: number;
+  /** Whether it settles on the ground instead of falling through it. */
+  floor: boolean;
   active: boolean;
 }
 
@@ -500,6 +536,66 @@ interface DomeSlot {
   active: boolean;
 }
 
+/**
+ * A root system growing under a cast — Raízes Entrelaçadas' beat.
+ *
+ * One entry owns a contiguous slice of the shared instanced mesh, so a system
+ * costs one draw call regardless of how many cubes it plans. The slice is fixed
+ * at {@link ROOT_VOXELS_PER_CAST} rather than sized to the plan, because a
+ * moving base would mean recomputing every later system's offset whenever one
+ * expired.
+ */
+interface RootSystemSlot {
+  voxels: readonly RootVoxel[];
+  /** Gameplay-plane centre of the cast. */
+  x: number;
+  y: number;
+  elapsed: number;
+  life: number;
+  active: boolean;
+}
+
+/** A bolt hanging in the air after a `strike` cast, crackling as it fades. */
+interface StrikeSlot {
+  readonly core: LightningBolt;
+  readonly glow: LightningBolt;
+  /** The traced arc, kept so both layers re-skin the same path every frame. */
+  readonly path: Float32Array;
+  life: number;
+  active: boolean;
+}
+
+/** Which beat of a falling meteor a queued entry is: the body, or the break. */
+type PendingKind = 'fall' | 'hit' | 'warn' | 'erupt';
+
+/** A stone on its way down. The fire is the trail it sheds, never the body. */
+interface MeteorSlot {
+  readonly mesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+  life: number;
+  x: number;
+  y: number;
+  /** Fractional embers owed from the last frame; see updateMeteors. */
+  trailDebt: number;
+  spinX: number;
+  spinY: number;
+  spinZ: number;
+  rateX: number;
+  rateY: number;
+  rateZ: number;
+  active: boolean;
+}
+
+/** One scheduled beat of a `column` shower. */
+interface PendingImpact {
+  x: number;
+  y: number;
+  remaining: number;
+  kind: PendingKind;
+  cfg: SpellVfx;
+  /** What the beat is drawn at: the cast's radius for a warning, one jet's for a pillar. */
+  radius: number;
+}
+
 interface PlayerFxState {
   playerId: number;
   footprintTimer: number;
@@ -508,9 +604,12 @@ interface PlayerFxState {
   wasMoving: boolean;
   lastVx: number;
   lastVy: number;
-  /** Accumulators for the continuous status emissions; see updateStatusEmission. */
-  flameTimer: number;
-  dissonanceTimer: number;
+  /**
+   * One accumulator per {@link EFFECT_VFX} row, by index; see
+   * updateStatusEmission. Allocated once with the slot, so a mage picking up a
+   * fourth effect mid-fight allocates nothing.
+   */
+  readonly timers: number[];
 }
 
 /**
@@ -523,6 +622,7 @@ interface PlayerFxState {
 export class ParticleRenderer implements GameRenderer {
   private readonly group = new THREE.Group();
   private readonly tmp = new THREE.Vector3();
+  private readonly tmpMatrix = new THREE.Matrix4();
   /** Scratch heading + roll for {@link orientBody}; reused so flight allocates nothing. */
   private readonly tmpDir = new THREE.Vector3();
   private readonly tmpSpin = new THREE.Quaternion();
@@ -535,6 +635,16 @@ export class ParticleRenderer implements GameRenderer {
   private readonly domeSlots: DomeSlot[] = [];
   private readonly playerFxStates: PlayerFxState[] = [];
   private readonly puddleBubbleTimers = new Map<EntityId, number>();
+  /** Beats of a `column` shower still to come; see {@link spawnColumnShaft}. */
+  private readonly pendingImpacts: PendingImpact[] = [];
+  private readonly meteorSlots: MeteorSlot[] = [];
+  /** Cube particles: the fire a meteor sheds and the chunks it throws. */
+  private readonly voxelSlots: ParticleSlot[] = [];
+  /** Bolts of a `strike` cast; two per slot, a white core inside a coloured aura. */
+  private readonly strikeSlots: StrikeSlot[] = [];
+  /** Root systems, and the one instanced mesh all of their cubes are drawn from. */
+  private readonly rootSlots: RootSystemSlot[] = [];
+  private rootMesh: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | null = null;
   private readonly defaultBallMaterial: THREE.MeshStandardMaterial;
   private readonly offSnowballImpact: () => void;
   private readonly offPlayerHit: () => void;
@@ -622,6 +732,7 @@ export class ParticleRenderer implements GameRenderer {
         maxLife: 1,
         size: 1,
         gravityScale: 1,
+        floor: false,
         active: false,
       });
     }
@@ -717,6 +828,102 @@ export class ParticleRenderer implements GameRenderer {
       this.domeSlots.push({ mesh, life: 0, maxLife: 1, radius: 1, active: false });
     }
 
+    // Cubes rather than the shared sphere: the meteor's fire and debris are
+    // voxels, so they hold their corners while everything else in the game
+    // stays round. Its own pool, so a long shower cannot eat the slots the
+    // impact bursts of an ordinary fight are drawing from.
+    const voxelGeometry = assets.geometry(
+      'particle-renderer-voxel-cube',
+      () => new THREE.BoxGeometry(1, 1, 1),
+    );
+    for (let i = 0; i < VOXEL_POOL_SIZE; i++) {
+      const material = new THREE.MeshBasicMaterial({
+        color: WHITE,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const mesh = new THREE.Mesh(voxelGeometry, material);
+      mesh.visible = false;
+      this.group.add(mesh);
+      this.voxelSlots.push({
+        mesh,
+        x: 0, y: 0, z: 0,
+        vx: 0, vy: 0, vz: 0,
+        life: 0,
+        maxLife: 1,
+        size: 1,
+        gravityScale: 1,
+        floor: false,
+        active: false,
+      });
+    }
+
+    // Two bolts per strike, the same core-and-aura pair the Stormcaller's
+    // projectile uses. A small pool: a strike lasts a fifth of a second against
+    // a global cast cooldown four times that, so overlap needs both teams to
+    // fire the same card within a frame or two of each other.
+    for (let i = 0; i < STRIKE_POOL_SIZE; i++) {
+      const core = this.createBolt(WHITE, 1);
+      const glow = this.createBolt(WHITE, 0.5);
+      this.strikeSlots.push({
+        core,
+        glow,
+        path: new Float32Array(BOLT_POINTS * 3),
+        life: 0,
+        active: false,
+      });
+    }
+
+    // Roots are instanced rather than pooled as individual meshes: a system is
+    // over a hundred cubes and three can be alive at once, which is a scale the
+    // one-mesh-per-particle pools here were never meant to reach. Not additive,
+    // unlike almost everything else in this file — roots are solid matter
+    // shoving out of the ground, and additive blending would make a dense
+    // tangle glow like fire exactly where it should look like wood.
+    const rootGeometry = assets.geometry(
+      'particle-renderer-root-cube',
+      () => new THREE.BoxGeometry(1, 1, 1),
+    );
+    const rootMaterial = new THREE.MeshBasicMaterial({ color: WHITE, transparent: true, opacity: 1 });
+    this.rootMesh = new THREE.InstancedMesh(rootGeometry, rootMaterial, ROOT_VOXEL_POOL);
+    this.rootMesh.instanceColor = new THREE.InstancedBufferAttribute(
+      new Float32Array(ROOT_VOXEL_POOL * 3),
+      3,
+    );
+    this.rootMesh.frustumCulled = false;
+    this.rootMesh.visible = false;
+    this.group.add(this.rootMesh);
+    for (let i = 0; i < ROOT_SYSTEM_POOL; i++) {
+      this.rootSlots.push({ voxels: [], x: 0, y: 0, elapsed: 0, life: 1, active: false });
+    }
+    this.hideAllRootInstances();
+
+    // A voxel lump, not the Golem's smoothed boulder: a meteor is debris, and
+    // corners survive being small, tumbling and half-hidden behind fire.
+    const meteorGeometry = voxelRockGeometry(assets);
+    for (let i = 0; i < METEOR_POOL_SIZE; i++) {
+      const mesh = new THREE.Mesh(meteorGeometry, this.defaultBallMaterial);
+      mesh.castShadow = true;
+      mesh.visible = false;
+      this.group.add(mesh);
+      this.meteorSlots.push({
+        mesh,
+        life: 0,
+        x: 0,
+        y: 0,
+        trailDebt: 0,
+        spinX: 0,
+        spinY: 0,
+        spinZ: 0,
+        rateX: 0,
+        rateY: 0,
+        rateZ: 0,
+        active: false,
+      });
+    }
+
     for (let i = 0; i < PLAYER_FX_STATE_SIZE; i++) {
       this.playerFxStates.push({
         playerId: -1,
@@ -726,8 +933,7 @@ export class ParticleRenderer implements GameRenderer {
         wasMoving: false,
         lastVx: 0,
         lastVy: 0,
-        flameTimer: 0,
-        dissonanceTimer: 0,
+        timers: newEmissionTimers(),
       });
     }
 
@@ -828,6 +1034,10 @@ export class ParticleRenderer implements GameRenderer {
     this.updateRings();
     this.updateZones();
     this.updateDomes();
+    this.updatePendingImpacts();
+    this.updateRoots();
+    this.updateStrikes();
+    this.updateMeteors();
     this.updatePuddleBubbles();
   }
 
@@ -853,6 +1063,9 @@ export class ParticleRenderer implements GameRenderer {
     }
     for (const particle of this.particleSlots) {
       particle.mesh.material.dispose();
+    }
+    for (const voxel of this.voxelSlots) {
+      voxel.mesh.material.dispose();
     }
     for (const footprint of this.footprintSlots) {
       footprint.mesh.material.dispose();
@@ -1235,7 +1448,28 @@ export class ParticleRenderer implements GameRenderer {
     color: number,
     gravityScale = 1,
   ): void {
-    for (const particle of this.particleSlots) {
+    this.emit(this.particleSlots, x, y, z, vx, vy, vz, size, life, color, gravityScale);
+  }
+
+  /**
+   * Claims a slot from a given pool. Returns it so a caller can set the few
+   * per-particle behaviours that are not worth another positional argument —
+   * `floor`, so far — without allocating an options object on a hot path.
+   */
+  private emit(
+    slots: readonly ParticleSlot[],
+    x: number,
+    y: number,
+    z: number,
+    vx: number,
+    vy: number,
+    vz: number,
+    size: number,
+    life: number,
+    color: number,
+    gravityScale = 1,
+  ): ParticleSlot | null {
+    for (const particle of slots) {
       if (particle.active) continue;
       particle.x = x;
       particle.y = y;
@@ -1253,12 +1487,19 @@ export class ParticleRenderer implements GameRenderer {
       particle.mesh.position.set(x, y, z);
       particle.mesh.scale.setScalar(size);
       particle.mesh.visible = true;
-      return;
+      particle.floor = false;
+      return particle;
     }
+    return null;
   }
 
   private updateParticles(): void {
-    for (const particle of this.particleSlots) {
+    this.stepParticles(this.particleSlots);
+    this.stepParticles(this.voxelSlots);
+  }
+
+  private stepParticles(slots: readonly ParticleSlot[]): void {
+    for (const particle of slots) {
       if (!particle.active) continue;
 
       particle.life -= PARTICLE_DT;
@@ -1273,6 +1514,15 @@ export class ParticleRenderer implements GameRenderer {
       particle.x += particle.vx * PARTICLE_DT;
       particle.y += particle.vy * PARTICLE_DT;
       particle.z += particle.vz * PARTICLE_DT;
+
+      // Debris lands and stays landed rather than sinking through the floor:
+      // chunks lying where a meteor broke are half of what says it broke.
+      if (particle.floor && particle.y <= DEBRIS_REST_HEIGHT) {
+        particle.y = DEBRIS_REST_HEIGHT;
+        particle.vx *= DEBRIS_SKID;
+        particle.vy = 0;
+        particle.vz *= DEBRIS_SKID;
+      }
 
       const t = particle.life / particle.maxLife;
       particle.mesh.position.set(particle.x, particle.y, particle.z);
@@ -1335,76 +1585,61 @@ export class ParticleRenderer implements GameRenderer {
   }
 
   /**
-   * The continuous per-mage effect emissions (GDD §8): flames off a burning
-   * mage, motes off one under a Bard's dissonance.
+   * The continuous per-mage effect emissions (GDD §8), one pass over
+   * {@link EFFECT_VFX}.
    *
    * Same accumulator shape as {@link ParticleRenderer.updatePuddleBubbles} —
    * count down by the frame step, spawn, add the interval back — because the
    * pool cannot take a spawn-per-frame and the interval is what caps the cost.
    */
   private updateStatusEmission(state: PlayerFxState, player: Player): void {
-    if (!player.alive) {
-      state.flameTimer = 0;
-      state.dissonanceTimer = 0;
-      return;
-    }
-
-    const burnStacks = fxStacks(player, 'burn');
-    if (burnStacks > 0) {
-      // Deeper stacks burn harder, which is the only cue that a mage is on
-      // three stacks rather than one.
-      state.flameTimer -= PARTICLE_DT * burnStacks;
-      while (state.flameTimer <= 0) {
-        this.spawnFlame(player);
-        state.flameTimer += FLAME_INTERVAL * (0.7 + Math.random() * 0.6);
+    for (let i = 0; i < EFFECT_VFX.length; i++) {
+      const emission = EFFECT_VFX[i];
+      const stacks = player.alive ? fxStacks(player, emission.kind) : 0;
+      if (stacks <= 0) {
+        state.timers[i] = 0;
+        continue;
       }
-    } else {
-      state.flameTimer = 0;
-    }
 
-    if (hasFx(player, 'cast_slow')) {
-      state.dissonanceTimer -= PARTICLE_DT;
-      while (state.dissonanceTimer <= 0) {
-        this.spawnDissonanceMote(player);
-        state.dissonanceTimer += DISSONANCE_INTERVAL * (0.6 + Math.random() * 0.8);
+      state.timers[i] -= PARTICLE_DT * (emission.perStack ? stacks : 1);
+      while (state.timers[i] <= 0) {
+        this.spawnEffectMote(player, emission);
+        state.timers[i] += emission.interval * (0.7 + Math.random() * 0.6);
       }
-    } else {
-      state.dissonanceTimer = 0;
     }
   }
 
-  /** One ember licking up off the mage's body. */
-  private spawnFlame(player: Player): void {
+  /**
+   * One mote of a running effect, thrown off the mage's body.
+   *
+   * Note the {@link toThree} — the two hand-written emitters this replaced went
+   * straight to `spawnParticle` with gameplay coordinates, so every ember and
+   * every dissonance note has been spawning at `worldY = gameplay.y`: floating
+   * in the air at a height equal to the mage's distance up the field, and at a
+   * depth of about a metre from the top edge of the arena. They were visible,
+   * which is presumably why it survived — just never anywhere near the mage
+   * they belonged to.
+   */
+  private spawnEffectMote(player: Player, e: EffectEmission): void {
     const angle = Math.random() * SPARKLE_TWO_PI;
-    const radius = 0.1 + Math.random() * 0.28;
-    this.spawnParticle(
-      player.position.x + Math.cos(angle) * radius,
-      player.position.y + Math.sin(angle) * radius,
-      0.15 + Math.random() * 0.7,
-      Math.cos(angle) * 0.25,
-      Math.sin(angle) * 0.25,
-      0.9 + Math.random() * 0.7,
-      0.07 + Math.random() * 0.05,
-      FLAME_LIFE * (0.75 + Math.random() * 0.5),
-      FLAME_COLORS[Math.floor(Math.random() * FLAME_COLORS.length)],
-      FLAME_GRAVITY_SCALE,
+    const dist = e.radius + Math.random() * e.spread;
+    toThree(
+      this.tmp,
+      player.position.x + Math.cos(angle) * dist,
+      player.position.y + Math.sin(angle) * dist,
+      e.height + Math.random() * e.heightSpread,
     );
-  }
-
-  /** A note sagging off a mage whose concentration is being jammed. */
-  private spawnDissonanceMote(player: Player): void {
-    const angle = Math.random() * SPARKLE_TWO_PI;
     this.spawnParticle(
-      player.position.x + Math.cos(angle) * 0.34,
-      player.position.y + Math.sin(angle) * 0.34,
-      1.25 + Math.random() * 0.25,
-      Math.cos(angle) * 0.12,
-      Math.sin(angle) * 0.12,
-      -0.15,
-      0.06,
-      0.75,
-      DISSONANCE_COLOR,
-      0.12,
+      this.tmp.x,
+      this.tmp.y,
+      this.tmp.z,
+      Math.cos(angle) * e.drift,
+      e.rise * (0.75 + Math.random() * 0.5),
+      Math.sin(angle) * e.drift,
+      e.size * (0.8 + Math.random() * 0.4),
+      e.life * (0.75 + Math.random() * 0.5),
+      e.colors[Math.floor(Math.random() * e.colors.length)],
+      e.gravityScale,
     );
   }
 
@@ -1610,14 +1845,24 @@ export class ParticleRenderer implements GameRenderer {
   /* ---- Spell casts (GDD §9) ------------------------------------------------ */
 
   /**
-   * The one beat that tells both players a card was spent and where it landed.
-   * Everything here is driven off {@link SPELL_VFX}, so retuning a spell's look
-   * is a table edit.
+   * The one beat that tells both players a card was spent and where it landed —
+   * and, since the idle pivot, the only thing on the field that connects a rule
+   * the player wrote to a thing that happened. Everything here is driven off
+   * {@link spellVfxFor}, so retuning a spell's look is a table edit.
+   *
+   * The ground footprint (zone, two rings, the friendly flash) is shared by
+   * every card, because *where* and *whose* are the two questions the answer
+   * must never depend on knowing the card. `shape` answers the third — *which
+   * card* — and is the only part that branches.
    */
   private spawnSpellCast(spellId: string, x: number, y: number, radius: number, friendly: boolean): void {
-    const cfg = SPELL_VFX[spellId] ?? DEFAULT_SPELL_VFX;
+    const cfg = spellVfxFor(spellId);
 
-    this.spawnZone(x, y, radius, cfg.zone, 0.85);
+    // A telegraphed card holds its ground disc for the whole warning instead of
+    // drawing a second thing over the top of it. The footprint already answers
+    // *where* and *whose*; a card that lands late only needs it to answer
+    // *when*, and it does that by still being there.
+    this.spawnZone(x, y, radius, cfg.zone, cfg.telegraph ?? CAST_ZONE_LIFE);
     this.spawnRing(x, y, cfg.ring, radius, 0.5);
     this.spawnRing(x, y, cfg.zone, radius * 0.62, 0.32);
     // Your own cast gets a white core flash: on a busy field the colour alone
@@ -1625,15 +1870,435 @@ export class ParticleRenderer implements GameRenderer {
     // small — these all blend additively, and a wide white disc on top of the
     // zone blows the whole area out to a featureless glare.
     if (friendly) this.spawnRing(x, y, WHITE, radius * 0.26, 0.18);
-    if (cfg.dome) this.spawnDome(x, y, radius, cfg.ring);
-    this.spawnSpellMotes(x, y, radius, cfg);
+
+    switch (cfg.shape) {
+      case 'dome':
+        this.spawnDome(x, y, radius, cfg.ring);
+        this.spawnSpellMotes(x, y, radius, cfg);
+        break;
+      case 'column':
+        this.spawnColumnShaft(x, y, radius, cfg);
+        this.spawnSpellMotes(x, y, radius, cfg);
+        break;
+      case 'torus':
+        this.spawnRimMotes(x, y, radius, cfg);
+        break;
+      case 'roots':
+        this.spawnRoots(x, y, radius, cfg);
+        break;
+      case 'strike':
+        this.spawnBoltStrike(x, y, radius, cfg);
+        this.spawnSpellMotes(x, y, radius, cfg);
+        break;
+      case 'flash':
+        this.spawnFlashCollapse(x, y, radius, cfg);
+        break;
+      case 'pillars':
+        this.spawnEruption(x, y, radius, cfg);
+        break;
+      case 'burst':
+        this.spawnSpellMotes(x, y, radius, cfg);
+        break;
+      default: {
+        /*
+         * Exhaustiveness, not defence. `cfg.shape` narrows to `never` here only
+         * while every member of the union has a case above, so adding a shape
+         * without a spawner is a compile error in this line — instead of a card
+         * that quietly draws the shared footprint and nothing else, which is the
+         * same silent no-op `spells.ts` refuses to allow in the catalog.
+         * The runtime fallback is the burst, because throwing inside the render
+         * loop would take the whole match down over a cosmetic gap.
+         */
+        const unhandled: never = cfg.shape;
+        void unhandled;
+        this.spawnSpellMotes(x, y, radius, cfg);
+        break;
+      }
+    }
+  }
+
+  /**
+   * A `column` cast: a shower of separate impacts scattered over the disc and
+   * spread over a second, each one a body falling out of the sky and breaking
+   * on the ground.
+   *
+   * The first cut of this drew a single narrow shaft down the middle, which was
+   * wrong about the only card that uses the shape. Chuva de Meteoros covers a
+   * radius of five and ticks three times — a lone shaft showed a pinprick where
+   * the card covers a disc, and one arrival where the card has several. Where
+   * and when each one lands is {@link planColumnFall}, which is tested; this
+   * method is only the drawing.
+   */
+  private spawnColumnShaft(x: number, y: number, radius: number, cfg: SpellVfx): void {
+    const count = this.moteBudget(cfg.impacts ?? 1);
+    const window = cfg.impactWindow ?? 0;
+    const fall = planColumnFall(count, radius, window);
+
+    for (const impact of fall) {
+      // Two beats per meteor: the body on its way down, then the break when it
+      // arrives. Scheduling the second rather than drawing both at once is what
+      // makes the thing read as *falling* instead of as a flash at altitude.
+      this.schedule(x + impact.dx, y + impact.dy, impact.at, 'fall', cfg);
+      this.schedule(x + impact.dx, y + impact.dy, impact.at + METEOR_FALL_TIME, 'hit', cfg);
+    }
+  }
+
+  /**
+   * Queues one beat of a shower. Allocates, unlike everything else in this
+   * file — but a shower is cast at most every few seconds and costs a dozen of
+   * these, against a particle pool that turns over hundreds per second. Pooling
+   * it would buy nothing and cost a slot budget to get wrong.
+   */
+  private schedule(x: number, y: number, at: number, kind: PendingKind, cfg: SpellVfx, radius = 0): void {
+    this.pendingImpacts.push({ x, y, remaining: at, kind, cfg, radius });
+  }
+
+  /** Advances the queue of scheduled beats and fires whatever has come due. */
+  private updatePendingImpacts(): void {
+    for (let i = this.pendingImpacts.length - 1; i >= 0; i--) {
+      const pending = this.pendingImpacts[i];
+      pending.remaining -= PARTICLE_DT;
+      if (pending.remaining > 0) continue;
+
+      this.pendingImpacts.splice(i, 1);
+      switch (pending.kind) {
+        case 'fall':
+          this.spawnMeteorBody(pending.x, pending.y);
+          break;
+        case 'warn':
+          this.spawnRing(pending.x, pending.y, pending.cfg.ring, pending.radius, WARNING_PULSE_LIFE);
+          break;
+        case 'erupt':
+          this.spawnPillar(pending.x, pending.y, pending.cfg);
+          break;
+        default:
+          this.spawnMeteorHit(pending.x, pending.y, pending.cfg);
+          break;
+      }
+    }
+  }
+
+  /**
+   * Sends one stone down: claims a slot, drops it above the point it will
+   * break on, and rolls a fresh tumble.
+   *
+   * The tumble is re-rolled per body for the same reason {@link rollSpin} does
+   * it for projectiles — slots are reused, and a stone inheriting the last
+   * one's rotation pops on the frame it appears.
+   */
+  private spawnMeteorBody(x: number, y: number): void {
+    for (const meteor of this.meteorSlots) {
+      if (meteor.active) continue;
+
+      meteor.life = METEOR_FALL_TIME;
+      meteor.active = true;
+      meteor.x = x;
+      meteor.y = y;
+      meteor.trailDebt = 0;
+
+      // Three independent rates rather than one axis: a cube tumbling about a
+      // single axis reads as a wheel, and the corners are the whole point.
+      meteor.spinX = Math.random() * SPARKLE_TWO_PI;
+      meteor.spinY = Math.random() * SPARKLE_TWO_PI;
+      meteor.spinZ = Math.random() * SPARKLE_TWO_PI;
+      meteor.rateX = (0.5 + Math.random()) * METEOR_SPIN;
+      meteor.rateY = (0.5 + Math.random()) * METEOR_SPIN;
+      meteor.rateZ = (0.5 + Math.random()) * METEOR_SPIN;
+
+      meteor.mesh.material = this.meteorMaterial();
+      meteor.mesh.scale.setScalar(METEOR_SCALE * (0.8 + Math.random() * 0.45));
+      meteor.mesh.visible = true;
+      return;
+    }
+    // Pool dry. Sized against `peakConcurrentMeteors` and held there by a test,
+    // so reaching this means a descriptor outgrew the arithmetic rather than
+    // that the arithmetic was wrong.
+  }
+
+  /**
+   * Flies the stones one frame: down their line, tumbling, shedding fire.
+   *
+   * Position is derived from remaining life rather than integrated, so a body
+   * cannot drift off its scheduled break — the ground beat is queued
+   * separately, and the two have to arrive together.
+   */
+  private updateMeteors(): void {
+    for (const meteor of this.meteorSlots) {
+      if (!meteor.active) continue;
+
+      meteor.life -= PARTICLE_DT;
+      if (meteor.life <= 0) {
+        meteor.active = false;
+        meteor.mesh.visible = false;
+        continue;
+      }
+
+      const fallen = meteor.life / METEOR_FALL_TIME;
+      const height = METEOR_HEIGHT * fallen;
+      toThree(this.tmp, meteor.x, meteor.y, height);
+      meteor.mesh.position.set(this.tmp.x, this.tmp.y, this.tmp.z);
+
+      const spun = METEOR_FALL_TIME - meteor.life;
+      meteor.mesh.rotation.set(
+        meteor.spinX + spun * meteor.rateX,
+        meteor.spinY + spun * meteor.rateY,
+        meteor.spinZ + spun * meteor.rateZ,
+      );
+
+      // Debt rather than a timer: at this speed a frame owes more than one
+      // ember, and dropping the surplus would thin the trail at exactly the
+      // moment the stone is moving fastest.
+      meteor.trailDebt += METEOR_TRAIL_RATE * PARTICLE_DT;
+      while (meteor.trailDebt >= 1) {
+        meteor.trailDebt -= 1;
+        this.spawnMeteorEmber(meteor, height);
+      }
+    }
+  }
+
+  /** One ember peeling off a falling stone and hanging in its wake. */
+  private spawnMeteorEmber(meteor: MeteorSlot, height: number): void {
+    const spread = METEOR_SCALE * 1.1;
+    toThree(
+      this.tmp,
+      meteor.x + (Math.random() - 0.5) * spread,
+      meteor.y + (Math.random() - 0.5) * spread,
+      // Behind rather than around: the stone is falling, so its wake is above.
+      height + Math.random() * 0.7,
+    );
+    this.emit(
+      this.voxelSlots,
+      this.tmp.x,
+      this.tmp.y,
+      this.tmp.z,
+      (Math.random() - 0.5) * 0.5,
+      // Fire rises, so it climbs out of the wake instead of chasing the body.
+      0.8 + Math.random() * 1.2,
+      (Math.random() - 0.5) * 0.5,
+      0.11 + Math.random() * 0.1,
+      METEOR_TRAIL_LIFE * (0.7 + Math.random() * 0.6),
+      METEOR_FIRE_COLORS[Math.floor(Math.random() * METEOR_FIRE_COLORS.length)],
+      // Weightless: an ember that fell would race the stone it came off.
+      0,
+    );
+  }
+
+  /**
+   * The break: a crater ring, a spray of flame, and chunks of cold rock thrown
+   * up and out that land and stay landed.
+   *
+   * The rock is what separates this from any other bright impact in the game.
+   * Fire alone reads as an explosion; fire plus debris that settles on the
+   * ground reads as something solid having *hit* it, which is the whole claim
+   * a meteor makes.
+   */
+  private spawnMeteorHit(x: number, y: number, cfg: SpellVfx): void {
+    this.spawnRing(x, y, cfg.ring, METEOR_HIT_RING, 0.26);
+
+    const count = this.moteBudget(METEOR_DEBRIS_COUNT);
+    for (let i = 0; i < count; i++) {
+      const rock = Math.random() < METEOR_DEBRIS_SHARE;
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.5;
+      const speed = METEOR_HIT_SPEED * (0.6 + Math.random() * 0.9);
+      toThree(this.tmp, x, y, 0.1);
+      const slot = this.emit(
+        this.voxelSlots,
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        Math.cos(angle) * speed,
+        // Thrown up hard: the arc is what says it was flung rather than
+        // painted on the floor.
+        2.4 + Math.random() * 2.2,
+        Math.sin(angle) * speed,
+        rock ? 0.1 + Math.random() * 0.07 : 0.13 + Math.random() * 0.1,
+        rock ? METEOR_DEBRIS_LIFE * (0.7 + Math.random() * 0.5) : 0.4 + Math.random() * 0.2,
+        rock ? METEOR_DEBRIS_COLOR : METEOR_FIRE_COLORS[i % METEOR_FIRE_COLORS.length],
+        rock ? 1.6 : 0.9,
+      );
+      // Only the rock lands. Flame that piled up on the floor would read as a
+      // puddle, and this card already has one of those underneath it.
+      if (slot && rock) slot.floor = true;
+    }
+  }
+
+  private meteorMaterial(): THREE.MeshStandardMaterial {
+    return this.assets.material(
+      'particle-renderer-meteor',
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: METEOR_BODY_COLOR,
+          emissive: METEOR_BODY_GLOW,
+          /*
+           * Half the strength the reference uses, because the reference sits
+           * in a near-black scene and this arena is lit bright: at 0.8 the glow
+           * swamped the base colour and the stone came out flat red, like
+           * painted plastic rather than rock with heat in it. Low enough here
+           * that the sun still models the faces, which is what says "voxel".
+           */
+          emissiveIntensity: 0.42,
+          roughness: 0.95,
+          metalness: 0.05,
+          flatShading: true,
+        }),
+    );
+  }
+
+  /**
+   * Motes for a `torus`: they hug the rim and travel around it instead of
+   * filling the disc.
+   *
+   * That difference is the whole shape. A filled disc says "this was thrown at
+   * the people standing here"; a turning rim says "this area is now switched
+   * on", which is what a field card actually does — and, for Campo de
+   * Sobrecarga, the reason it must not read as an attack on one squad is that
+   * it catches both.
+   */
+  private spawnRimMotes(x: number, y: number, radius: number, cfg: SpellVfx): void {
+    const total = this.moteBudget(cfg.moteCount);
+    for (let i = 0; i < total; i++) {
+      const angle = (i / total) * Math.PI * 2;
+      const dist = radius * (0.82 + Math.random() * 0.18);
+      toThree(this.tmp, x + Math.cos(angle) * dist, y + Math.sin(angle) * dist, 0.1 + Math.random() * 0.5);
+      this.spawnParticle(
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        -Math.sin(angle) * TORUS_RIM_SPEED,
+        cfg.direction * (0.5 + Math.random() * 0.5),
+        Math.cos(angle) * TORUS_RIM_SPEED,
+        0.08 + (i % 3) * 0.03,
+        0.75 + Math.random() * 0.3,
+        cfg.motes[i % cfg.motes.length],
+        0.1,
+      );
+    }
+  }
+
+  /**
+   * How many motes a cast is allowed, after the motion preference. Read per
+   * cast rather than cached at construction — {@link prefersReducedMotion} is
+   * itself cached behind a change listener, so this costs nothing and picks up
+   * a player changing the setting mid-match.
+   */
+  private moteBudget(count: number): number {
+    return prefersReducedMotion() ? Math.max(1, Math.round(count * REDUCED_MOTE_SCALE)) : count;
+  }
+
+  /**
+   * A `pillars` cast: a warning, then jets of burning rock out of the floor.
+   *
+   * The mirror of {@link spawnColumnShaft}, and it reuses that shape's
+   * arithmetic — where the mouths open is the same question as where the
+   * meteors land, so it is the same {@link planColumnFall} rather than a second
+   * scatter written by eye. What differs is the direction and the fact that
+   * this one is *late*: nothing at all happens for `telegraph` seconds except
+   * the disc lying there and a ring pulsing on it.
+   *
+   * Those seconds are the card. This is the only moment in the game where a
+   * player watches a patch of ground knowing exactly what is about to happen
+   * on it, so the beat is not allowed to be quiet — a warning nobody notices is
+   * a card that simply deals damage a second after it was cast.
+   */
+  private spawnEruption(x: number, y: number, radius: number, cfg: SpellVfx): void {
+    const telegraph = cfg.telegraph ?? 0;
+    for (let i = 1; i <= WARNING_PULSES; i++) {
+      this.schedule(x, y, (telegraph * i) / (WARNING_PULSES + 1), 'warn', cfg, radius);
+    }
+
+    const mouths = planColumnFall(this.moteBudget(cfg.impacts ?? 1), radius, cfg.impactWindow ?? 0);
+    for (const mouth of mouths) {
+      this.schedule(x + mouth.dx, y + mouth.dy, telegraph + mouth.at, 'erupt', cfg);
+    }
+  }
+
+  /**
+   * One mouth of an eruption: cubes thrown straight up out of the ground, and
+   * a ring where the floor broke.
+   *
+   * Cubes rather than motes, and out of the voxel pool the meteors use, because
+   * this is rock — the same material arriving by the opposite route. They are
+   * given almost no horizontal speed on purpose: a jet that fans out reads as
+   * an explosion, and an explosion is the card next to this one in the deck.
+   */
+  private spawnPillar(x: number, y: number, cfg: SpellVfx): void {
+    this.spawnRing(x, y, cfg.ring, 0.9, 0.24);
+
+    const count = this.moteBudget(PILLAR_VOXELS);
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * SPARKLE_TWO_PI;
+      const dist = Math.random() * PILLAR_SPREAD;
+      toThree(this.tmp, x + Math.cos(angle) * dist, y + Math.sin(angle) * dist, 0.05);
+      const slot = this.emit(
+        this.voxelSlots,
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        Math.cos(angle) * 0.5,
+        // Staggered by index rather than rolled flat, so the jet has a nose and
+        // a tail instead of a front of cubes rising like a lift.
+        PILLAR_RISE * (0.55 + (i / count) * 0.55),
+        Math.sin(angle) * 0.5,
+        0.09 + Math.random() * 0.08,
+        0.55 + Math.random() * 0.35,
+        cfg.motes[i % cfg.motes.length],
+        1.5,
+      );
+      // The rock comes back down and lies there; the burning half burns out in
+      // the air, the same split the meteor's debris makes.
+      if (slot && i % 2 === 0) slot.floor = true;
+    }
+  }
+
+  /**
+   * A `flash` cast: the disc collapsing to its own centre.
+   *
+   * The only beat in the file that converges, and it is the only one that has
+   * to. Every other shape answers "something arrived here"; Clarão Nulo's whole
+   * sentence is "what was here is gone", and an outward burst would say the
+   * exact opposite of the card at the moment it fires.
+   *
+   * So the motes start on the rim at chest height and are thrown *inward* fast
+   * enough to cross the disc inside their own life — the arithmetic is
+   * `radius / life`, not a speed picked by eye, or a wide cast would leave a
+   * ring of motes hanging where the collapse was supposed to be. They die where
+   * they meet, which is also the one place on the field the player is looking.
+   */
+  private spawnFlashCollapse(x: number, y: number, radius: number, cfg: SpellVfx): void {
+    const total = this.moteBudget(cfg.moteCount);
+    for (let i = 0; i < total; i++) {
+      const angle = (i / total) * Math.PI * 2 + Math.random() * 0.3;
+      const life = FLASH_MOTE_LIFE * (0.8 + Math.random() * 0.25);
+      const speed = radius / life;
+      toThree(
+        this.tmp,
+        x + Math.cos(angle) * radius,
+        y + Math.sin(angle) * radius,
+        FLASH_MOTE_HEIGHT + Math.random() * 0.5,
+      );
+      this.spawnParticle(
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        -Math.cos(angle) * speed,
+        // Barely any lift: this is a horizontal gesture, and motes arcing over
+        // the middle would read as a fountain rather than as a drain.
+        0.2 + Math.random() * 0.25,
+        -Math.sin(angle) * speed,
+        0.07 + (i % 3) * 0.025,
+        life,
+        cfg.motes[i % cfg.motes.length],
+        0.05,
+      );
+    }
   }
 
   /** Motes filling the affected disc: they lift for a buff and rain down for a curse. */
   private spawnSpellMotes(x: number, y: number, radius: number, cfg: SpellVfx): void {
     const rising = cfg.direction > 0;
-    for (let i = 0; i < cfg.moteCount; i++) {
-      const angle = (i / cfg.moteCount) * Math.PI * 2 + Math.random() * 0.5;
+    const total = this.moteBudget(cfg.moteCount);
+    for (let i = 0; i < total; i++) {
+      const angle = (i / total) * Math.PI * 2 + Math.random() * 0.5;
       const dist = Math.sqrt(Math.random()) * radius;
       toThree(
         this.tmp,
@@ -1689,6 +2354,187 @@ export class ParticleRenderer implements GameRenderer {
       const eased = 1 - (1 - t) * (1 - t);
       zone.mesh.scale.setScalar(zone.radius * (0.6 + eased * 0.4));
       zone.mesh.material.opacity = ZONE_OPACITY * (1 - t);
+    }
+  }
+
+  /**
+   * A `roots` cast: branches of voxels shoving out of the soil across the disc,
+   * holding for the card's duration, then withdrawing.
+   *
+   * The only shape whose body persists. Every other beat in this file is an
+   * arrival — it happens, it fades, and what the card *did* is carried by the
+   * status ring on the mage afterwards. Raízes Entrelaçadas has no ring worth
+   * the name: a rooted mage looks like a standing mage, and the one thing on
+   * screen saying "this one cannot walk" is the ground it is standing in. So
+   * the roots stay for as long as the effect does, and `life` is the card's
+   * duration rather than a fade time chosen here.
+   *
+   * Where the cubes go and when each appears is {@link planRootGrowth}, which is
+   * tested; this method is only the drawing.
+   */
+  private spawnRoots(x: number, y: number, radius: number, cfg: SpellVfx): void {
+    const slot = this.rootSlots.find((s) => !s.active) ?? this.oldestRootSlot();
+    if (!slot) return;
+
+    slot.voxels = planRootGrowth(radius);
+    slot.x = x;
+    slot.y = y;
+    slot.elapsed = 0;
+    // The duration the card actually holds its victims for; see the note above.
+    slot.life = cfg.persist ?? 2;
+    slot.active = true;
+
+    this.writeRootColors(slot, cfg);
+  }
+
+  /**
+   * Replaces the longest-running system when all three slots are taken.
+   *
+   * The same rule the voice cap in `AudioManager` uses, and for the same
+   * reason: the newest cast is the one the player is being told about, and the
+   * oldest has already been seen. Dropping the new one instead would make a
+   * card silently stop drawing in exactly the fights busy enough to matter.
+   */
+  private oldestRootSlot(): RootSystemSlot | null {
+    let best: RootSystemSlot | null = null;
+    for (const slot of this.rootSlots) {
+      if (!best || slot.elapsed > best.elapsed) best = slot;
+    }
+    return best;
+  }
+
+  /** Root cubes take the card's zone colour; flowers take its ring accent. */
+  private writeRootColors(slot: RootSystemSlot, cfg: SpellVfx): void {
+    const mesh = this.rootMesh;
+    if (!mesh?.instanceColor) return;
+
+    const base = this.rootSlots.indexOf(slot) * ROOT_VOXELS_PER_CAST;
+    const root = new THREE.Color(cfg.zone);
+    const flower = new THREE.Color(cfg.ring);
+
+    for (let i = 0; i < slot.voxels.length; i++) {
+      const c = slot.voxels[i].flower ? flower : root;
+      mesh.instanceColor.setXYZ(base + i, c.r, c.g, c.b);
+    }
+    mesh.instanceColor.needsUpdate = true;
+  }
+
+  private hideAllRootInstances(): void {
+    const mesh = this.rootMesh;
+    if (!mesh) return;
+
+    this.tmpMatrix.makeScale(0, 0, 0);
+    for (let i = 0; i < ROOT_VOXEL_POOL; i++) mesh.setMatrixAt(i, this.tmpMatrix);
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private updateRoots(): void {
+    const mesh = this.rootMesh;
+    if (!mesh) return;
+
+    let anyActive = false;
+
+    for (let s = 0; s < this.rootSlots.length; s++) {
+      const slot = this.rootSlots[s];
+      const base = s * ROOT_VOXELS_PER_CAST;
+
+      if (!slot.active) continue;
+
+      slot.elapsed += PARTICLE_DT;
+      if (slot.elapsed >= slot.life) {
+        slot.active = false;
+        this.tmpMatrix.makeScale(0, 0, 0);
+        for (let i = 0; i < ROOT_VOXELS_PER_CAST; i++) mesh.setMatrixAt(base + i, this.tmpMatrix);
+        continue;
+      }
+
+      anyActive = true;
+
+      for (let i = 0; i < ROOT_VOXELS_PER_CAST; i++) {
+        const voxel = slot.voxels[i];
+        const scale = voxel ? rootVoxelScale(voxel, slot.elapsed, slot.life) : 0;
+
+        if (scale <= 0) {
+          this.tmpMatrix.makeScale(0, 0, 0);
+          mesh.setMatrixAt(base + i, this.tmpMatrix);
+          continue;
+        }
+
+        // `taper` thins the branch toward its tip so it ends in a thread rather
+        // than a brick; flowers sit slightly under a full cell so a cross of
+        // four reads as a bloom and not a lump.
+        const size = ROOT_VOXEL_SIZE * scale * voxel.taper * (voxel.flower ? 0.85 : 1);
+        toThree(this.tmp, slot.x + voxel.x, slot.y + voxel.y, voxel.height + ROOT_VOXEL_SIZE * 0.5);
+        this.tmpMatrix.makeScale(size, size, size);
+        this.tmpMatrix.setPosition(this.tmp);
+        mesh.setMatrixAt(base + i, this.tmpMatrix);
+      }
+    }
+
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.visible = anyActive;
+  }
+
+  /**
+   * A `strike` cast: one bolt down through the roof of the arena onto the spot.
+   *
+   * The only beat in the catalog that arrives from outside the play space, and
+   * the only one drawn as a line rather than as an area — which is the point.
+   * Chuva de Meteoros also falls, but as seven bodies over a second: weather.
+   * This is one arrival, once. A bombardment against a verdict.
+   *
+   * Reuses the two-bolt core-and-glow pair the Stormcaller's projectile already
+   * has, welded to a single traced path through `updateFrom` so the aura sits on
+   * the arc instead of wandering off on its own walk. The path itself is
+   * {@link planBoltPath}, which is tested; this is only the drawing.
+   */
+  private spawnBoltStrike(x: number, y: number, radius: number, cfg: SpellVfx): void {
+    const slot = this.strikeSlots.find((s) => !s.active) ?? this.strikeSlots[0];
+    if (!slot) return;
+
+    toThree(this.tmp, x, y, 0);
+    slot.path.set(planBoltPath(this.tmp.x, this.tmp.z, 1 + radius * 0.25));
+    slot.life = STRIKE_LIFE;
+    slot.active = true;
+
+    slot.core.mesh.material.color.setHex(WHITE);
+    slot.glow.mesh.material.color.setHex(cfg.ring);
+    slot.core.mesh.visible = true;
+    slot.glow.mesh.visible = true;
+
+    // The flash at the foot of the bolt. Small and bright rather than wide: the
+    // strike's radius is already drawn by the shared zone disc, and a second
+    // wide white disc on top of it blows the whole area to a flat glare.
+    this.spawnRing(x, y, WHITE, radius * 0.5, 0.22);
+  }
+
+  /**
+   * Re-jitters every live strike and fades it out.
+   *
+   * The arc is re-traced every frame rather than drawn once, which is what makes a
+   * discharge crackle instead of sitting there as a static ribbon — the same
+   * reason `LightningBolt.update` re-jitters a projectile's trail.
+   */
+  private updateStrikes(): void {
+    for (const slot of this.strikeSlots) {
+      if (!slot.active) continue;
+
+      slot.life -= PARTICLE_DT;
+      if (slot.life <= 0) {
+        slot.active = false;
+        slot.core.mesh.visible = false;
+        slot.glow.mesh.visible = false;
+        continue;
+      }
+
+      const t = slot.life / STRIKE_LIFE;
+      // Re-traced from the same endpoints, so the bolt stays anchored on the
+      // spot the card was aimed at while everything between the ends moves.
+      const head = slot.path;
+      slot.core.updateFrom(head, 1, 0, STRIKE_CORE_WIDTH * t);
+      slot.glow.updateFrom(head, 1, 0, STRIKE_GLOW_WIDTH * t);
+      slot.core.mesh.material.opacity = t;
+      slot.glow.mesh.material.opacity = t * 0.5;
     }
   }
 
@@ -1748,8 +2594,9 @@ export class ParticleRenderer implements GameRenderer {
     empty.lastVy = 0;
     // Staggered rather than zeroed, so four mages set alight on the same tick
     // do not pulse in lockstep like a string of lights.
-    empty.flameTimer = Math.random() * FLAME_INTERVAL;
-    empty.dissonanceTimer = Math.random() * DISSONANCE_INTERVAL;
+    for (let i = 0; i < EFFECT_VFX.length; i++) {
+      empty.timers[i] = Math.random() * EFFECT_VFX[i].interval;
+    }
     return empty;
   }
 

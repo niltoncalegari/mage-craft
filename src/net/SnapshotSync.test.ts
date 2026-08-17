@@ -126,6 +126,38 @@ describe('SnapshotSync — structures', () => {
     expect(tower?.alive).toBe(false);
     expect(world.structures).toHaveLength(3);
   });
+
+  /*
+   * The falling edge, same derivation as `ShieldBroken` and for the same
+   * reason: the wire carries state, never events. The server holds a destroyed
+   * structure in every later snapshot so the map can draw rubble, so anything
+   * reading `alive === false` directly would fire this once per frame forever.
+   */
+  it('announces a structure the moment it falls, and only then', () => {
+    const { sync, events } = makeSync(TEAM_A);
+    const fallen: string[] = [];
+    events.on('StructureDestroyed', (event) => fallen.push(`${event.kind}:${event.team}`));
+
+    const rubble = structure(TEAM_B, 'tower', { health: 0, alive: false, invulnerable: false });
+    sync.applySnapshot(snapshot({ structures: [structure(TEAM_B, 'tower')] }));
+    expect(fallen).toEqual([]);
+
+    sync.applySnapshot(snapshot({ tick: 6, structures: [rubble] }));
+    sync.applySnapshot(snapshot({ tick: 9, structures: [rubble] }));
+    expect(fallen).toEqual([`tower:${Team.Enemy}`]);
+  });
+
+  it('stays quiet about a structure that was already rubble when we joined', () => {
+    const { sync, events } = makeSync(TEAM_A);
+    let fired = 0;
+    events.on('StructureDestroyed', () => fired++);
+
+    // Spectating a match in progress: the first snapshot is not an event.
+    sync.applySnapshot(
+      snapshot({ structures: [structure(TEAM_B, 'tower', { health: 0, alive: false })] }),
+    );
+    expect(fired).toBe(0);
+  });
 });
 
 describe('SnapshotSync — match state', () => {
@@ -139,7 +171,19 @@ describe('SnapshotSync — match state', () => {
       suddenDeath: false,
       hand: ['stone_golem', 'pyromancer', 'cleric', 'wind_dervish'],
       next: 'arcane_archer',
+      // Omitted on the wire until a rule has actually cast, which is what an
+      // empty program should look like on screen.
+      firedRule: null,
     });
+  });
+
+  it('carries the rule that fired, so the HUD can name it', () => {
+    const { sync } = makeSync(TEAM_A);
+    const fired = { ruleId: 'answer-cluster', index: 0, cardId: 'plague', at: 'enemy_cluster' };
+
+    sync.applySnapshot(snapshot({ firedRule: fired }));
+
+    expect(sync.matchState.firedRule).toEqual(fired);
   });
 
   it('reports an empty hand before the first snapshot, not a stale one', () => {
@@ -475,5 +519,36 @@ describe('SnapshotSync — which half of the arena is yours', () => {
   it('falls back to the left before any structure has arrived', () => {
     const { sync } = makeSync(TEAM_A);
     expect(sync.mySide).toBe('left');
+  });
+});
+
+/**
+ * The colour of a ground hazard belongs to the card that left it, and the wire
+ * is the only place the client can learn which card that was. Without it every
+ * puddle was drawn in Praga's poison green, including Chuva de Meteoros'
+ * crater of burning rock.
+ */
+describe('SnapshotSync — ground hazards', () => {
+  const puddle = {
+    id: 'puddle-1',
+    position: { x: 2, y: -1 },
+    radius: 3.5,
+    remaining: 4,
+    spellId: 'meteor_shower',
+  };
+
+  it('carries the card that left the puddle', () => {
+    const { sync, world } = makeSync(TEAM_A);
+    sync.applySnapshot(snapshot({ puddles: [puddle] }));
+
+    expect(world.puddles).toHaveLength(1);
+    expect(world.puddles[0].spellId).toBe('meteor_shower');
+  });
+
+  it('leaves an element-borne puddle unattributed', () => {
+    const { sync, world } = makeSync(TEAM_A);
+    sync.applySnapshot(snapshot({ puddles: [{ ...puddle, spellId: null }] }));
+
+    expect(world.puddles[0].spellId).toBeNull();
   });
 });

@@ -4,17 +4,23 @@ import { defaultSquad, isRosterId, rosterFor } from '../../../sim/cards';
 import { getElement, toCssColor } from '../../game/elements';
 import { ApiClient, type UserSummary } from '../../net/ApiClient';
 import type { UserProfile } from '../auth';
+import { pushLoadoutToServer, syncLoadoutFromServer } from '../loadout';
 import styles from '../App.module.css';
 import { DeckBuilder } from './DeckBuilder';
 import { HistoryPanel } from './HistoryPanel';
 import { RankingPanel } from './RankingPanel';
 import { SquadBuilder } from './SquadBuilder';
+import { StrategyBuilder } from './StrategyBuilder';
 
-type LoadoutTab = 'squad' | 'deck' | 'history';
+type LoadoutTab = 'squad' | 'deck' | 'strategy' | 'history';
 
+// Reading order is assembly order (GDD §7): who fights, what they spend, and
+// what decides when to spend it. Strategy sits after Deck because a rule may
+// only name a card the deck brings.
 const LOADOUT_TABS: readonly (readonly [LoadoutTab, string])[] = [
   ['squad', 'Squad'],
   ['deck', 'Deck'],
+  ['strategy', 'Strategy'],
   ['history', 'History'],
 ];
 
@@ -44,10 +50,21 @@ export function HomeScreen(props: {
       .catch(() => {
         /* the tiles matter more than the stat row; the dashboard reports errors */
       });
+
+    // The account's loadout wins on boot, so signing in on a new machine brings
+    // your squad, deck and program with you. Fire-and-forget: a pull that fails
+    // leaves this device playing its own copy, which is not worth a banner.
+    syncLoadoutFromServer(props.user.token).catch(() => {});
+
     return () => {
       cancelled = true;
     };
   }, [props.user.token]);
+
+  /** The local copy wins on save — push it, and never block the builder on it. */
+  const pushLoadout = (): void => {
+    pushLoadoutToServer(props.user.token).catch(() => {});
+  };
 
   const wins = serverStats?.wins ?? props.stats?.wins ?? props.user.wins;
   const losses = serverStats?.losses ?? props.stats?.losses ?? props.user.losses;
@@ -146,8 +163,9 @@ export function HomeScreen(props: {
           </button>
         ))}
       </div>
-      {loadoutTab === 'squad' ? <SquadBuilder /> : null}
-      {loadoutTab === 'deck' ? <DeckBuilder /> : null}
+      {loadoutTab === 'squad' ? <SquadBuilder onSaved={pushLoadout} /> : null}
+      {loadoutTab === 'deck' ? <DeckBuilder onSaved={pushLoadout} /> : null}
+      {loadoutTab === 'strategy' ? <StrategyBuilder onSaved={pushLoadout} /> : null}
       {loadoutTab === 'history' ? <HistoryPanel user={props.user} /> : null}
 
       <div class={styles.panelHeader} style={{ marginTop: 28 }}>

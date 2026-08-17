@@ -4,10 +4,15 @@ import { requireAuth } from '../middleware/auth.js';
 import { MatchLog } from '../models/MatchLog.js';
 import { User } from '../models/User.js';
 import type { AuthedRequest } from '../types.js';
+import { loadoutRouter } from './loadout.js';
 
 export const meRouter = Router();
 
 meRouter.use(requireAuth);
+
+// Its own module: the loadout body is the only one here with a free-form part
+// (a rule's condition), so its parsing is long enough to drown this file.
+meRouter.use('/loadout', loadoutRouter);
 
 meRouter.get('/', async (req: AuthedRequest, res) => {
   const user = await User.findById(req.userId, { username: 1, email: 1, createdAt: 1 }).lean();

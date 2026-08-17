@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_SPELLS, spellFor } from './spells';
-import { Deck, DECK_SIZE, defaultDeck, HAND_SIZE, validateDeck } from './Deck';
+import {
+  colorLimitIsPlayable,
+  Deck,
+  DECK_SIZE,
+  defaultDeck,
+  HAND_SIZE,
+  MAX_COLORS,
+  MAX_COPIES,
+  validateDeck,
+} from './Deck';
+import { colorsOf } from './spells';
 import { Rng } from './rng';
 
 describe('deck construction (GDD §9)', () => {
@@ -15,14 +25,28 @@ describe('deck construction (GDD §9)', () => {
   });
 
   /*
-   * Unlike the v1.0 unit pool, a repeated spell is expected and allowed: with
-   * only 4 spells designed so far (GDD §9), the provisional 8-card deck is
-   * those 4 each duplicated once. Revisit once the pool grows (GDD §16.4).
+   * Unlike the v1.0 unit pool, a repeated spell is expected: the deck is a
+   * rotating queue, so a second copy is how you make a card come back sooner
+   * (GDD §9). What is capped is how far that goes — see MAX_COPIES.
    */
   it('allows a repeated spell', () => {
     const dupe = defaultDeck();
-    dupe[1] = dupe[0];
+    expect(dupe.filter((c) => c === dupe[0])).toHaveLength(MAX_COPIES);
     expect(validateDeck(dupe)).toEqual({ ok: true });
+  });
+
+  it('rejects more copies of one card than the cycle makes meaningful', () => {
+    const stacked = Array<string>(DECK_SIZE).fill('blessing');
+    expect(validateDeck(stacked).ok).toBe(false);
+  });
+
+  /*
+   * A deck of two cards is not a deck, it is a habit — and it collapses a
+   * whole strategy program to one rule, which is the thing to design against.
+   */
+  it('rejects a deck built from too few different cards', () => {
+    const thin = ['blessing', 'blessing', 'plague', 'plague', 'blessing', 'blessing', 'plague', 'plague'];
+    expect(validateDeck(thin).ok).toBe(false);
   });
 
   it('rejects an unknown card', () => {
@@ -69,7 +93,7 @@ describe('hand and cycle', () => {
       seen.add(card);
       d.play(card);
     }
-    expect(seen).toEqual(new Set(ALL_SPELLS));
+    expect(seen).toEqual(new Set(defaultDeck()));
   });
 
   it('shuffles deterministically from a seed', () => {
@@ -85,5 +109,51 @@ describe('hand and cycle', () => {
     for (const id of d.hand()) {
       expect(spellFor(id)!.cost).toBeGreaterThanOrEqual(cost);
     }
+  });
+});
+
+/*
+ * The two-colour rule (GDD §16.4), enforced since Raízes Entrelaçadas.
+ *
+ * It was deferred, not designed late: the rule is right for the catalog the GDD
+ * calls for and was wrong for the one that existed, because black held a single
+ * card and no partner colour could carry it to DECK_SIZE inside MAX_COPIES.
+ * Turning it on then would have removed Maldição da Lentidão from the game
+ * instead of constraining how it is used. The third green card is what gave
+ * black a partner, so this is the commit that could afford the rule.
+ *
+ * The tripwire below stays, inverted. It is the guard in the other direction
+ * now: a catalog edit that strands a colour again fails here rather than
+ * quietly making some card unbuildable.
+ */
+describe('the two-colour rule (GDD §16.4)', () => {
+  it('is playable across the whole catalog, which is what lets it be enforced', () => {
+    expect(colorLimitIsPlayable()).toBe(true);
+  });
+
+  it('accepts a deck drawn from two colours', () => {
+    // The default is White + Green.
+    expect(validateDeck(defaultDeck())).toEqual({ ok: true });
+    expect(colorsOf(defaultDeck()).size).toBe(2);
+  });
+
+  it('rejects a deck that reaches into a third colour', () => {
+    const threeColours = [
+      'blessing',
+      'blessing',
+      'arcane_shield',
+      'arcane_shield', // white
+      'plague',
+      'plague', // green
+      'slow_curse',
+      'slow_curse', // black
+    ];
+    // Legal on every other axis: eight cards, four distinct, two copies each.
+    expect(threeColours).toHaveLength(DECK_SIZE);
+    expect(colorsOf(threeColours).size).toBe(3);
+
+    const result = validateDeck(threeColours);
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toContain(String(MAX_COLORS));
   });
 });

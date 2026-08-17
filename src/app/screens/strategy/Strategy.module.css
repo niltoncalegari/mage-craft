@@ -1,0 +1,671 @@
+/*
+ * The strategy editor.
+ *
+ * One idea carries the screen: **a single spine running down the left of the
+ * rule stack**, with every rule hanging off it and a notch marked "senão" cut
+ * into it between each pair. That is a claim about the data, not decoration. A
+ * program here is a priority list — first match wins, everything below is a
+ * fallthrough — and a spine says so at a glance, where a node graph would
+ * promise branching this language does not have.
+ *
+ * Everything else stays quiet on purpose. The rule card is the same chrome the
+ * deck and squad builders use (`Builders.module.css`): the glass fill, the
+ * hairline, and the 3px accent on the left edge, which here carries the deck
+ * colour of the card the rule plays. No new gradient, no new face.
+ *
+ * The one typographic move: SE / ENTÃO / EM are set in Cinzel, the display face
+ * already in the shell, right-aligned in a fixed gutter. They read as carved
+ * keywords in a listing rather than as form labels — which is what they are.
+ */
+
+/* The palette is a name and a cost; the flow is five controls on a line. Every
+   pixel the left column does not need is one the deepest condition row does. */
+.editor {
+  align-items: start;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(150px, 175px) minmax(0, 1fr);
+}
+
+.paletteHead,
+.flowHead {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  margin: 0 0 10px;
+  text-transform: uppercase;
+}
+
+/* ---- Palette --------------------------------------------------------------- */
+
+.palette {
+  display: grid;
+  gap: 8px;
+}
+
+.paletteCard {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--element-color, var(--copper));
+  border-radius: 10px;
+  color: var(--ink);
+  cursor: grab;
+  display: grid;
+  font: inherit;
+  gap: 2px;
+  padding: 8px 10px;
+  text-align: left;
+  /* The whole card is a drag source, so the browser must not treat a vertical
+     swipe on it as a scroll of the panel behind. */
+  touch-action: none;
+  transition: background 160ms ease;
+}
+
+.paletteCard:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.paletteCard:active:not(:disabled) {
+  cursor: grabbing;
+}
+
+.paletteCard:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.paletteName {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.paletteMeta {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.paletteHint {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 10px 0 0;
+}
+
+/* ---- The spine ------------------------------------------------------------- */
+
+.flow {
+  position: relative;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+}
+
+/* Runs from the first node's centre to the bottom of the last "senão" notch;
+   `.terminal` carries the short stub that closes the gap into its diamond. */
+.stack::before {
+  background: linear-gradient(180deg, var(--copper), rgba(201, 133, 62, 0.22));
+  bottom: 0;
+  content: '';
+  left: 12px;
+  position: absolute;
+  top: 13px;
+  width: 2px;
+}
+
+.step {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 26px minmax(0, 1fr);
+  padding-bottom: 28px;
+  position: relative;
+}
+
+/* The numbered node is the drag handle. Priority *is* the number, so the thing
+   you grab to change it should be the thing that shows it — a separate grip
+   would be a second control for one idea. */
+.node {
+  align-self: start;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: grab;
+  display: grid;
+  font-family: Cinzel, Georgia, serif;
+  font-size: 12px;
+  font-weight: 700;
+  height: 26px;
+  padding: 0;
+  place-items: center;
+  position: relative;
+  touch-action: none;
+  transition: color 160ms ease, border-color 160ms ease;
+  width: 26px;
+  /* Opaque and above the spine: this is what cuts it into segments. */
+  z-index: 1;
+}
+
+.node:hover {
+  border-color: var(--copper);
+  color: var(--ink);
+}
+
+.node:active {
+  cursor: grabbing;
+}
+
+.node:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+/* The notch: a hairline tick across the spine, then the word. */
+.elseTag {
+  align-items: center;
+  bottom: 6px;
+  color: var(--muted);
+  display: flex;
+  font-size: 10px;
+  gap: 8px;
+  left: 0;
+  letter-spacing: 0.22em;
+  position: absolute;
+  text-transform: uppercase;
+}
+
+.elseTag::before {
+  background: var(--line);
+  content: '';
+  height: 1px;
+  width: 26px;
+}
+
+.terminal {
+  color: var(--muted);
+  display: grid;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 14px;
+  grid-template-columns: 26px minmax(0, 1fr);
+  line-height: 1.5;
+  margin: 0;
+  padding-top: 0;
+  position: relative;
+}
+
+/* With no rules there is no spine above to join, so the stub would hang off
+   nothing. The diamond stands alone and still says where the list ends. */
+.terminalLoose::before {
+  display: none;
+}
+
+/* The stub the stack's spine stops short of, ending in the closing diamond. */
+.terminal::before {
+  background: rgba(201, 133, 62, 0.22);
+  content: '';
+  height: 13px;
+  left: 12px;
+  position: absolute;
+  top: 0;
+  width: 2px;
+}
+
+.terminalNode {
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  height: 12px;
+  justify-self: center;
+  margin-top: 7px;
+  transform: rotate(45deg);
+  width: 12px;
+}
+
+.terminalText {
+  padding-top: 4px;
+}
+
+/* ---- A rule ---------------------------------------------------------------- */
+
+/* Clauses on the left, the rule's own controls pinned right. Giving the tools
+   a column rather than a row of their own is what keeps the card from ending in
+   a wide empty band beside three short sentences. */
+.rule {
+  align-items: start;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--element-color, var(--copper));
+  border-radius: 12px;
+  display: grid;
+  gap: 6px 18px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px 12px;
+}
+
+.clauses {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.step[data-dragging] {
+  z-index: 3;
+}
+
+.step[data-dragging] .rule {
+  border-color: var(--teal);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
+}
+
+/* An off rule visibly lets go of the spine: the program still numbers it, but
+   nothing in it will run. */
+.stepOff .rule {
+  opacity: 0.45;
+}
+
+.stepOff .node {
+  border-style: dashed;
+}
+
+.ruleTools {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/*
+ * Emphasis is inverted on purpose: a rule is normally on, so *on* is the state
+ * that says nothing. What earns the eye is a rule the program is carrying but
+ * will never run — the likeliest answer to "why did that not fire?".
+ */
+.toggle {
+  background: rgba(201, 133, 62, 0.16);
+  border: 1px solid rgba(201, 133, 62, 0.55);
+  border-radius: 999px;
+  color: var(--copper);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 3px 10px;
+  text-transform: uppercase;
+}
+
+/* Still outlined, just dimly: quiet enough to ignore, framed enough to read as
+   something you can press. */
+.toggle[aria-pressed='true'] {
+  background: none;
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--muted);
+}
+
+.toggle[aria-pressed='true']:hover {
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.remove {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 16px;
+  height: 24px;
+  line-height: 1;
+  width: 24px;
+}
+
+.remove:hover {
+  border-color: var(--line);
+  color: #ff8f8f;
+}
+
+.clause {
+  align-items: start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 4.2rem minmax(0, 1fr);
+  /* Controls size to their content instead of stretching to the card. A rule
+     is a sentence, and a sentence should end where its words do. */
+  justify-items: start;
+}
+
+/*
+ * The ceiling that `justify-items: start` removes.
+ *
+ * A start-justified grid item is sized to its content and will happily run past
+ * a `minmax(0, 1fr)` track — which on a phone meant the whole panel scrolled
+ * sideways rather than the condition wrapping. Capping the item at the track is
+ * what turns "too wide" back into "wrap" and "shrink".
+ */
+.clause > *,
+.condStack > * {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.kw {
+  color: var(--copper);
+  font-family: Cinzel, Georgia, serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding-top: 8px;
+  text-align: right;
+}
+
+/* ---- Controls -------------------------------------------------------------- */
+
+/*
+ * One condition, one line. `nowrap` is load-bearing: a wrapping flex container
+ * breaks the line *before* it shrinks anything, so the number would drop below
+ * the fact it belongs to while there was still room beside it. Nowrap forces
+ * the shrink instead, and `.factPick` is the item that absorbs it.
+ *
+ * On a phone the priority flips — see the narrow breakpoint.
+ */
+.row {
+  align-items: center;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pick,
+.num {
+  background: #0b1118;
+  border: 1px solid rgba(154, 173, 192, 0.28);
+  border-radius: 8px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  max-width: 100%;
+  padding: 6px 8px;
+}
+
+/*
+ * No native spinner. It cost about twenty pixels of a row that already holds
+ * five controls, and it was the difference between a condition reading on one
+ * line and its number wrapping onto a line of its own. Arrow keys still step
+ * the field, and `min`/`max`/`step` still bound it.
+ */
+.num {
+  appearance: textfield;
+  text-align: center;
+  width: 3.6rem;
+}
+
+.num::-webkit-outer-spin-button,
+.num::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.pick:focus-visible,
+.num:focus-visible {
+  border-color: var(--teal);
+  outline: 2px solid rgba(62, 207, 191, 0.5);
+  outline-offset: 1px;
+}
+
+/*
+ * The one control on the row allowed to give ground.
+ *
+ * A select is sized by its longest option, so the fact picker is wide even
+ * while showing "mana" — and inside a group, where the joiner and the remove
+ * button take their share, that width was pushing the number onto a line of
+ * its own. Letting it shrink (form controls need `min-width` cleared to do so)
+ * trades a truncated label, which is still readable in the open list and in the
+ * label, for a condition that stays one sentence on one line.
+ */
+.factPick {
+  flex: 0 1 auto;
+  min-width: 7rem;
+}
+
+.unit {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/*
+ * `não` sits in front of every condition, so it has to stay legible while off
+ * without ever reading as *applied*. Off it is a bare word at half strength;
+ * pressed it is the only red on the row, because inverting a condition is the
+ * one edit here that reverses a rule's meaning without changing a word of it.
+ */
+.mod {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.6;
+  padding: 5px 8px;
+}
+
+.mod:hover {
+  border-color: var(--line);
+  opacity: 1;
+}
+
+.mod[aria-pressed='true'] {
+  background: rgba(224, 86, 86, 0.16);
+  border-color: rgba(224, 86, 86, 0.5);
+  color: #ff8f8f;
+  opacity: 1;
+}
+
+.condStack {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  min-width: 0;
+}
+
+.addCond {
+  background: none;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+}
+
+.addCond:hover {
+  border-style: solid;
+  color: var(--ink);
+}
+
+.group {
+  display: grid;
+  gap: 6px;
+}
+
+/* Flex rather than a track grid: a `1fr` middle column stretched the row to
+   the card and pushed the remove button off on its own, and forced the
+   condition to wrap while there was still space beside it. */
+.groupRow {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+}
+
+.joinerCell {
+  flex: 0 0 2.6rem;
+  padding-top: 6px;
+  text-align: right;
+}
+
+/* The joiner, repeated down the left of a group so a four-condition rule still
+   says which way it reads without the player counting brackets. */
+.joiner {
+  color: var(--teal);
+  font-family: Cinzel, Georgia, serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.joinerPick {
+  background: rgba(62, 207, 191, 0.12);
+  border: 1px solid rgba(62, 207, 191, 0.35);
+  border-radius: 8px;
+  color: var(--teal);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 2px;
+  text-align: center;
+  width: 100%;
+}
+
+.cardChip {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.dot {
+  background: var(--element-color, var(--copper));
+  border-radius: 999px;
+  flex: 0 0 auto;
+  height: 9px;
+  width: 9px;
+}
+
+.cost {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ---- Drop indicator -------------------------------------------------------- */
+
+/* Absolutely positioned so showing it never moves a row — the drop index is
+   hit-tested against live rects, and a marker that reflowed the list would
+   change the answer it is reporting. */
+.dropAbove::after {
+  background: var(--teal);
+  border-radius: 2px;
+  box-shadow: 0 0 10px rgba(62, 207, 191, 0.6);
+  content: '';
+  height: 2px;
+  left: 4px;
+  position: absolute;
+  right: 0;
+  top: -10px;
+}
+
+/* ---- Empty and warning ----------------------------------------------------- */
+
+.empty {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.6;
+  margin-bottom: 28px;
+  padding: 18px;
+}
+
+.emptyLead {
+  color: var(--ink);
+  display: block;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.count {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* The palette becomes a shelf above the flow rather than a column beside it,
+     which is also the reading order a phone gets: pick a card, then place it. */
+  .palette {
+    grid-auto-columns: minmax(150px, 1fr);
+    grid-auto-flow: column;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  /* Reclaim the gutters: the spine and the keyword column are the two fixed
+     costs on every row, and a phone has none to spare. */
+  .step,
+  .terminal {
+    gap: 10px;
+    grid-template-columns: 22px minmax(0, 1fr);
+  }
+
+  .stack::before,
+  .terminal::before {
+    left: 10px;
+  }
+
+  .elseTag::before {
+    width: 22px;
+  }
+
+  .clause {
+    grid-template-columns: 3.2rem minmax(0, 1fr);
+  }
+
+  /* The rule's own controls go back above the clauses. Beside them they were
+     a third column competing with a sentence that already had no room. */
+  .rule {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ruleTools {
+    order: -1;
+  }
+
+  /* Narrow enough that shrinking the fact picker further would leave it
+     unreadable, so the condition takes two lines instead. */
+  .row {
+    flex-wrap: wrap;
+  }
+
+  .factPick {
+    max-width: 100%;
+    min-width: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paletteCard,
+  .node {
+    transition: none;
+  }
+}

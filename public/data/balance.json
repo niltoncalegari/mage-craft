@@ -41,6 +41,8 @@
     "suddenDeathDuration": 60,
 
     "spellCastFxDuration": 1,
+    "spellGlobalCooldown": 0.75,
+    "executeThreshold": 0.4,
 
     "obstacleTopHeight": {
       "tree": 2.4,
@@ -168,14 +170,23 @@
   },
 
   "effects": {
-    "slow": { "stacking": "refresh_strongest", "maxMagnitude": 0.8 },
-    "haste": { "stacking": "refresh_strongest", "maxMagnitude": 1.5 },
-    "cast_slow": { "stacking": "refresh_strongest", "maxMagnitude": 0.75 },
-    "cast_haste": { "stacking": "refresh_strongest", "maxMagnitude": 1.5 },
-    "vulnerable": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
-    "stun": { "stacking": "refresh_strongest", "maxMagnitude": 1 },
-    "burn": { "stacking": "stack_intensity", "maxStacks": 3, "maxMagnitude": 1 },
-    "shield": { "stacking": "pool", "maxMagnitude": 9999 }
+    "slow": { "stacking": "refresh_strongest", "maxMagnitude": 0.8, "polarity": "debuff" },
+    "haste": { "stacking": "refresh_strongest", "maxMagnitude": 1.5, "polarity": "buff" },
+    "cast_slow": { "stacking": "refresh_strongest", "maxMagnitude": 0.75, "polarity": "debuff" },
+    "cast_haste": { "stacking": "refresh_strongest", "maxMagnitude": 1.5, "polarity": "buff" },
+    "vulnerable": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
+    "fortify": { "stacking": "refresh_strongest", "maxMagnitude": 0.5, "polarity": "buff" },
+    "empower": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "buff" },
+    "marked": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
+    "petrify": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
+    "regen": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "buff" },
+    "stun": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
+    "root": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
+    "burn": { "stacking": "stack_intensity", "maxStacks": 3, "maxMagnitude": 1, "polarity": "debuff" },
+    "linked": { "stacking": "refresh_strongest", "maxMagnitude": 0.6, "polarity": "debuff" },
+    "bonded": { "stacking": "refresh_strongest", "maxMagnitude": 0.75, "polarity": "buff" },
+    "confused": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
+    "shield": { "stacking": "pool", "maxMagnitude": 9999, "polarity": "buff" }
   },
 
   "elements": {
@@ -329,36 +340,279 @@
 
   "spells": {
     "blessing": {
-      "name": "Blessing of Haste",
+      "name": "Bênção de Ímpeto",
+      "color": "white",
       "kind": "buff",
       "cost": 2,
       "radius": 4,
       "duration": 5,
-      "effect": { "kind": "buff_haste", "speedFactor": 0.4, "castFactor": 0.25 }
+      "target": "allies",
+      "apply": [
+        { "effect": "haste", "magnitude": 0.4 },
+        { "effect": "cast_haste", "magnitude": 0.25 }
+      ]
     },
     "slow_curse": {
-      "name": "Curse of Slowing",
+      "name": "Maldição da Lentidão",
+      "color": "black",
       "kind": "curse",
       "cost": 3,
       "radius": 4,
       "duration": 4,
-      "effect": { "kind": "curse_slow", "slowFactor": 0.5 }
+      "target": "enemies",
+      "apply": [{ "effect": "slow", "magnitude": 0.5 }]
     },
     "arcane_shield": {
       "name": "Escudo Arcano",
+      "color": "white",
       "kind": "buff",
       "cost": 3,
       "radius": 4,
       "duration": 6,
-      "effect": { "kind": "buff_shield", "amount": 60 }
+      "target": "allies",
+      "apply": [{ "effect": "shield", "magnitude": 60 }]
     },
     "plague": {
       "name": "Praga",
+      "color": "green",
       "kind": "curse",
       "cost": 4,
       "radius": 3.5,
       "duration": 5,
-      "effect": { "kind": "curse_zone", "tickDamage": 10, "tickInterval": 1 }
+      "target": "ground",
+      "apply": [{ "effect": "puddle", "tickDamage": 10, "tickInterval": 1, "bypassShield": true }]
+    },
+    "sticky_swamp": {
+      "name": "Pântano Pegajoso",
+      "color": "green",
+      "kind": "curse",
+      "cost": 3,
+      "radius": 4,
+      "duration": 5,
+      "target": "enemies",
+      "apply": [
+        { "effect": "slow", "magnitude": 0.35 },
+        { "effect": "cast_slow", "magnitude": 0.35 }
+      ]
+    },
+    "entangling_roots": {
+      "name": "Raízes Entrelaçadas",
+      "color": "green",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 3,
+      "duration": 2,
+      "target": "enemies",
+      "apply": [{ "effect": "root" }]
+    },
+    "rejuvenating_breeze": {
+      "name": "Brisa Rejuvenescedora",
+      "color": "green",
+      "kind": "buff",
+      "cost": 3,
+      "radius": 4,
+      "duration": 4,
+      "target": "allies",
+      "apply": [{ "effect": "regen", "tickInterval": 1, "tickHeal": 8 }]
+    },
+    "consecrated_ground": {
+      "name": "Solo Consagrado",
+      "color": "white",
+      "kind": "buff",
+      "cost": 4,
+      "radius": 4,
+      "duration": 4,
+      "target": "allies",
+      "apply": [
+        { "effect": "regen", "tickInterval": 1, "tickHeal": 5 },
+        { "effect": "fortify", "magnitude": 0.3 }
+      ]
+    },
+    "blood_frenzy": {
+      "name": "Frenesi Sanguinário",
+      "color": "red",
+      "kind": "buff",
+      "cost": 4,
+      "radius": 3.5,
+      "duration": 4,
+      "target": "allies",
+      "apply": [{ "effect": "empower", "magnitude": 0.4 }]
+    },
+    "executioners_mark": {
+      "name": "Marca do Carrasco",
+      "color": "red",
+      "kind": "curse",
+      "cost": 3,
+      "radius": 3.5,
+      "duration": 6,
+      "target": "enemies",
+      "apply": [{ "effect": "marked", "magnitude": 0.5 }]
+    },
+    "petrify": {
+      "name": "Petrificar",
+      "color": "blue",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 3.5,
+      "duration": 2.5,
+      "target": "enemies",
+      "apply": [{ "effect": "petrify" }]
+    },
+    "thunderstrike": {
+      "name": "Fúria do Trovão",
+      "color": "blue",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 2.5,
+      "duration": 0.9,
+      "target": "enemies",
+      "apply": [
+        { "effect": "strike", "magnitude": 26 },
+        { "effect": "stun" }
+      ]
+    },
+    "overload_field": {
+      "name": "Campo de Sobrecarga",
+      "color": "red",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 3.5,
+      "duration": 4,
+      "target": "all",
+      "apply": [
+        { "effect": "vulnerable", "magnitude": 0.5 },
+        { "effect": "cast_haste", "magnitude": 0.5 }
+      ]
+    },
+    "null_flash": {
+      "name": "Clarão Nulo",
+      "color": "blue",
+      "kind": "curse",
+      "cost": 3,
+      "radius": 3.5,
+      "duration": 0.5,
+      "target": "all",
+      "apply": [{ "effect": "dispel" }]
+    },
+    "volcanic_eruption": {
+      "name": "Erupção Vulcânica",
+      "color": "red",
+      "kind": "curse",
+      "cost": 5,
+      "radius": 4,
+      "duration": 0.7,
+      "target": "enemies",
+      "apply": [
+        { "effect": "strike", "magnitude": 24, "delay": 0.7 },
+        { "effect": "knockback", "magnitude": 9, "delay": 0.7 },
+        { "effect": "burn", "duration": 3, "tickInterval": 0.5, "tickDamage": 5, "delay": 0.7 }
+      ]
+    },
+    "dark_tribute": {
+      "name": "Tributo Obscuro",
+      "color": "black",
+      "kind": "buff",
+      "cost": 1,
+      "radius": 3,
+      "duration": 0.6,
+      "target": "allies",
+      "apply": [
+        { "effect": "strike", "magnitude": 10 },
+        { "effect": "tribute", "magnitude": 1 }
+      ]
+    },
+    "call_to_battle": {
+      "name": "Chamado à Batalha",
+      "color": "white",
+      "kind": "buff",
+      "cost": 4,
+      "radius": 5,
+      "duration": 4,
+      "target": "allies",
+      "apply": [
+        { "effect": "haste", "magnitude": 0.35 },
+        { "effect": "rally", "magnitude": 3 }
+      ]
+    },
+    "mana_flow": {
+      "name": "Fluxo de Mana",
+      "color": "blue",
+      "kind": "buff",
+      "cost": 3,
+      "radius": 3.5,
+      "duration": 6,
+      "target": "allies",
+      "apply": [{ "effect": "attune", "magnitude": 2.5 }]
+    },
+    "bond_of_pain": {
+      "name": "Vínculo da Dor",
+      "color": "black",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 3,
+      "duration": 6,
+      "target": "enemies",
+      "apply": [{ "effect": "linked", "magnitude": 0.3 }]
+    },
+    "bond_of_solidarity": {
+      "name": "Vínculo de Solidariedade",
+      "color": "white",
+      "kind": "buff",
+      "cost": 4,
+      "radius": 3.5,
+      "duration": 5,
+      "target": "allies",
+      "apply": [{ "effect": "bonded", "magnitude": 0.5 }]
+    },
+    "spatial_fold": {
+      "name": "Dobra Espacial",
+      "color": "blue",
+      "kind": "buff",
+      "cost": 4,
+      "radius": 3,
+      "duration": 0.5,
+      "target": "allies",
+      "apply": [{ "effect": "fold" }]
+    },
+    "gravity_well": {
+      "name": "Vórtice Gravitacional",
+      "color": "blue",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 4,
+      "duration": 3,
+      "target": "ground",
+      "apply": [{ "effect": "vortex", "magnitude": 2.2 }]
+    },
+    "crystal_rift": {
+      "name": "Fenda de Cristal",
+      "color": "green",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 2,
+      "duration": 5,
+      "target": "ground",
+      "apply": [{ "effect": "barrier" }]
+    },
+    "paranoia": {
+      "name": "Paranoia",
+      "color": "black",
+      "kind": "curse",
+      "cost": 3,
+      "radius": 3.5,
+      "duration": 4,
+      "target": "enemies",
+      "apply": [{ "effect": "confused" }]
+    },
+    "meteor_shower": {
+      "name": "Chuva de Meteoros",
+      "color": "red",
+      "kind": "curse",
+      "cost": 5,
+      "radius": 5,
+      "duration": 1.5,
+      "target": "ground",
+      "apply": [{ "effect": "puddle", "tickDamage": 18, "tickInterval": 0.5 }]
     }
   }
 }

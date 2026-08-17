@@ -156,8 +156,11 @@ export class NetworkClient {
   }
 
   /**
-   * The only in-match message since the pivot (GDD §13): spend mana to put a
-   * card down. Sparse and event-driven, where the old input was ~60 Hz.
+   * Spends mana to put a card down.
+   *
+   * @deprecated The server answers this with `idle_mode` since the idle pivot —
+   * a seat is played by its owner's program, not by hand. It stays because
+   * `MatchTransport` declares it and an override mode would want it back.
    */
   sendCast(cardId: string, position: { x: number; y: number }): void {
     this.send({ type: 'cast', cardId, position });
@@ -169,12 +172,21 @@ export class NetworkClient {
   }
 
   /**
-   * Registers the squad and deck for this connection's next match. Send it
-   * right after connecting: it applies to the queue and to a room seat alike,
-   * whichever the player reaches for.
+   * Registers the squad, deck and strategy program for this connection's next
+   * match. Send it right after connecting: it applies to the queue and to a
+   * room seat alike, whichever the player reaches for.
+   *
+   * The server re-validates all three; omitting the strategy leaves the seat
+   * with `defaultStrategy(deck)` rather than with nothing, so an older client
+   * still plays — just not the program its player wrote.
    */
-  setLoadout(deck?: string[], squad?: string[]): void {
-    this.send({ type: 'set_loadout', ...(deck ? { deck } : {}), ...(squad ? { squad } : {}) });
+  setLoadout(deck?: string[], squad?: string[], strategy?: unknown): void {
+    this.send({
+      type: 'set_loadout',
+      ...(deck ? { deck } : {}),
+      ...(squad ? { squad } : {}),
+      ...(strategy !== undefined ? { strategy } : {}),
+    });
   }
 
   leaveQueue(): void {

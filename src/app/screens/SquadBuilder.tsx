@@ -16,7 +16,7 @@ type RoleFilter = (typeof ROLE_FILTERS)[number];
  * match and respawns on death (GDD §4), so this is the single most consequential
  * choice a player makes — and until now the sim hardcoded it.
  */
-export function SquadBuilder(): JSX.Element {
+export function SquadBuilder(props: { onSaved?: () => void } = {}): JSX.Element {
   const [squad, setSquad] = useState<RosterId[]>(() => loadLoadout().squad);
   const [filter, setFilter] = useState<RoleFilter>('all');
   const [saved, setSaved] = useState(false);
@@ -38,6 +38,7 @@ export function SquadBuilder(): JSX.Element {
     if (!validation.ok) return;
     saveSquad(squad);
     setSaved(true);
+    props.onSaved?.();
   };
 
   const pool = ALL_ROSTER.filter((id) => filter === 'all' || rosterFor(id)!.role === filter);

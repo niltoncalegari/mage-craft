@@ -44,25 +44,113 @@ export type EffectKind =
   /** A pool of absorption drained before health; `magnitude` is what is left. */
   | 'shield'
   /** Rooted. Mirrored onto `Mage.stunTimer`, which is what actually roots. */
-  | 'stun';
+  | 'stun'
+  /**
+   * Held in place, but not silenced: move speed is pinned to the floor while
+   * casting and shooting carry on. `magnitude` is unused — a root is a root.
+   */
+  | 'root'
+  /** Healing over time; `tickHeal` per `tickInterval`. The DoT run backwards. */
+  | 'regen'
+  /** Damage taken down by `magnitude` (0.3 = 30% less). Vulnerable's mirror. */
+  | 'fortify'
+  /** Damage *dealt* up by `magnitude`. Asked of the attacker, not the target. */
+  | 'empower'
+  /**
+   * Marked for execution: `magnitude` more damage taken, but only once the
+   * target is already under {@link EXECUTE_THRESHOLD} of its health. Inert
+   * against anything healthy, which is the card's whole design.
+   */
+  | 'marked'
+  /**
+   * Turned to stone. Cannot move, cannot act, and cannot be hurt — the only
+   * effect in the game that cuts both ways at once, which is the whole of the
+   * card that applies it: three seconds of silence bought by three seconds of
+   * invulnerability.
+   */
+  | 'petrify'
+  /**
+   * Bound to everything else carrying this: a share of every hit one of them
+   * takes arrives on all the others. `magnitude` is that share.
+   */
+  | 'linked'
+  /**
+   * Bound to the rest of the squad the other way round: `magnitude` of every
+   * hit this body takes is lifted off it and handed to the others.
+   */
+  | 'bonded'
+  /**
+   * Cannot agree with its own squad about who the enemy is: the mage ignores
+   * the focus target and shoots whatever is nearest to it. `magnitude` is
+   * unused — you are either sure or you are not.
+   */
+  | 'confused';
 
 /**
  * Iteration and wire order. Fixed so the effect list is canonical: a mage
  * slowed-then-burned and one burned-then-slowed serialise identically.
  */
 export const EFFECT_ORDER: readonly EffectKind[] = [
+  'petrify',
   'stun',
+  'root',
   'slow',
   'haste',
   'cast_slow',
   'cast_haste',
   'burn',
+  'regen',
   'vulnerable',
+  'fortify',
+  'empower',
+  'marked',
+  'linked',
+  'bonded',
+  'confused',
   'shield',
 ];
 
 export function isEffectKind(value: string): value is EffectKind {
   return (EFFECT_ORDER as readonly string[]).includes(value);
+}
+
+/**
+ * Which side of a fight an effect is on.
+ *
+ * Nothing needed to know this until Clarão Nulo: the derived stats fold slow
+ * and haste into one multiplier precisely so that no call site has to decide
+ * which is the good one. A card that strips *what the other side did* has no
+ * such luxury, and answering it per-card would mean a list of kinds written
+ * into the dispel and forgotten the first time the catalog grew.
+ *
+ * So it is a tag on the effect in `balance.json`, next to that effect's
+ * stacking rule, and the question it answers is **"who wanted this to
+ * happen?"** — not "is the carrier better off?". Those come apart exactly once,
+ * at `petrify`, which protects the body it takes off the board. It is a debuff,
+ * because the enemy is who cast it.
+ */
+export type EffectPolarity = 'buff' | 'debuff';
+
+/**
+ * Built eagerly, and throws on a kind with no tag, the same way `spells.ts`
+ * validates the catalog at module load. An untagged effect would otherwise
+ * default to something and be silently un-dispellable — the exact class of bug
+ * a data-driven catalog makes cheap to introduce and expensive to find.
+ */
+const POLARITY: Readonly<Record<EffectKind, EffectPolarity>> = (() => {
+  const out = {} as Record<EffectKind, EffectPolarity>;
+  for (const kind of EFFECT_ORDER) {
+    const tag = BALANCE.effects[kind]?.polarity;
+    if (tag !== 'buff' && tag !== 'debuff') {
+      throw new Error(`effect ${JSON.stringify(kind)}: polarity must be "buff" or "debuff", got ${JSON.stringify(tag)}`);
+    }
+    out[kind] = tag;
+  }
+  return Object.freeze(out);
+})();
+
+export function polarityOf(kind: EffectKind): EffectPolarity {
+  return POLARITY[kind];
 }
 
 export interface ActiveEffect {
@@ -77,6 +165,8 @@ export interface ActiveEffect {
   tickInterval: number;
   tickTimer: number;
   tickDamage: number;
+  /** HoT bookkeeping; 0 for everything that is not a HoT. */
+  tickHeal: number;
   /** Who to credit for a DoT kill; `null` when nobody can be. */
   sourceId: string | null;
 }
@@ -88,6 +178,7 @@ export interface EffectSpec {
   duration?: number;
   tickInterval?: number;
   tickDamage?: number;
+  tickHeal?: number;
   sourceId?: string | null;
 }
 
@@ -161,6 +252,7 @@ export function applyEffect(carrier: EffectCarrier, spec: EffectSpec): ActiveEff
     // target in fire does not push the next tick further away every hit.
     if (spec.tickInterval !== undefined) existing.tickInterval = spec.tickInterval;
     if (spec.tickDamage !== undefined) existing.tickDamage = spec.tickDamage;
+    if (spec.tickHeal !== undefined) existing.tickHeal = spec.tickHeal;
     if (spec.sourceId !== undefined) existing.sourceId = spec.sourceId;
     return existing;
   }
@@ -173,6 +265,7 @@ export function applyEffect(carrier: EffectCarrier, spec: EffectSpec): ActiveEff
     tickInterval: spec.tickInterval ?? 0,
     tickTimer: 0,
     tickDamage: spec.tickDamage ?? 0,
+    tickHeal: spec.tickHeal ?? 0,
     sourceId: spec.sourceId ?? null,
   };
 
@@ -193,10 +286,20 @@ export function clearEffects(carrier: EffectCarrier): void {
   carrier.effects.length = 0;
 }
 
-/** What a DoT wants to do this tick. The world turns it into actual damage. */
+/**
+ * What a periodic effect wants to do this tick. The world turns it into actual
+ * damage or actual healing.
+ *
+ * Two channels rather than one signed number. Damage runs a gauntlet healing
+ * has no business in — the vulnerability multiplier, the shield pool, hit-stun,
+ * kill credit — and a negative `damage` would have to mean the right thing at
+ * every one of those, or quietly mean the wrong one. Exactly one of the two is
+ * ever non-zero.
+ */
 export interface EffectTick {
   readonly kind: EffectKind;
   readonly damage: number;
+  readonly heal: number;
   readonly sourceId: string | null;
 }
 
@@ -213,7 +316,7 @@ export function tickEffects(carrier: EffectCarrier, dt: number): EffectTick[] | 
   for (let i = carrier.effects.length - 1; i >= 0; i--) {
     const e = carrier.effects[i];
 
-    if (e.tickInterval > 0 && e.tickDamage > 0) {
+    if (e.tickInterval > 0 && (e.tickDamage > 0 || e.tickHeal > 0)) {
       e.tickTimer += dt;
       // The epsilon is load-bearing, not defensive. A 4s burn ticking every
       // 0.5s must deal exactly 8 ticks; without it the eighth comes due on the
@@ -222,7 +325,12 @@ export function tickEffects(carrier: EffectCarrier, dt: number): EffectTick[] | 
       while (e.tickTimer >= e.tickInterval - EPSILON) {
         e.tickTimer -= e.tickInterval;
         due ??= [];
-        due.push({ kind: e.kind, damage: e.tickDamage * e.stacks, sourceId: e.sourceId });
+        due.push({
+          kind: e.kind,
+          damage: e.tickDamage * e.stacks,
+          heal: e.tickHeal * e.stacks,
+          sourceId: e.sourceId,
+        });
       }
     }
 
@@ -246,9 +354,16 @@ export function tickEffects(carrier: EffectCarrier, dt: number): EffectTick[] | 
 
 /**
  * Multiplier on base move speed. Floored at 0.1 so no stack of slows can ever
- * root a mage outright — rooting is what `stun` is for, and it is visible.
+ * root a mage outright — rooting is what `root` and `stun` are for, and both
+ * are visible.
+ *
+ * `root` returns that floor rather than multiplying into it: the floor guards a
+ * *product*, so a hasted target would otherwise walk out of the deepest slow in
+ * the catalog at a quarter speed. A root that haste can argue with is not a
+ * root.
  */
 export function moveSpeedMultiplier(carrier: EffectCarrier): number {
+  if (hasEffect(carrier, 'root') || hasEffect(carrier, 'petrify')) return 0.1;
   const slow = magnitudeOf(carrier, 'slow');
   const haste = magnitudeOf(carrier, 'haste');
   return Math.max(0.1, 1 - slow) * (1 + haste);
@@ -265,9 +380,53 @@ export function chargeRateMultiplier(carrier: EffectCarrier, auraBonus = 0): num
   return (1 + boost) * Math.max(0.25, 1 - drag);
 }
 
-/** Multiplier on incoming damage — arcane's contribution to a focus-fire team. */
+/**
+ * Multiplier on incoming damage — arcane's contribution to a focus-fire team,
+ * and white's answer to it.
+ *
+ * The two terms multiply rather than add. Subtracting would let a big enough
+ * fortify drive the multiplier to zero and make a mage flatly immune, which is
+ * a thing this game has exactly one card for and it is not this one. As a
+ * product, being braced blunts what a marking is worth without undoing it.
+ */
 export function damageTakenMultiplier(carrier: EffectCarrier): number {
-  return 1 + magnitudeOf(carrier, 'vulnerable');
+  return (1 + magnitudeOf(carrier, 'vulnerable')) * (1 - magnitudeOf(carrier, 'fortify'));
+}
+
+/**
+ * Multiplier on damage this carrier *deals*.
+ *
+ * Kept a separate question from {@link damageTakenMultiplier} rather than a
+ * signed version of it: one is asked of the body being hit and one of the body
+ * doing the hitting, and the only thing stopping a card from buffing the wrong
+ * squad is that the two never share a function.
+ */
+export function damageDealtMultiplier(carrier: EffectCarrier): number {
+  return 1 + magnitudeOf(carrier, 'empower');
+}
+
+/**
+ * Whether this carrier may shoot, charge or otherwise take its turn.
+ *
+ * Two kinds say no, and they are not interchangeable. A stun is a flinch — it
+ * costs a moment and leaves the body exactly as hittable as it was. Petrify
+ * takes the mage off the board entirely, which is why {@link damageImmune} is a
+ * separate question with a different answer for each.
+ */
+export function canAct(carrier: EffectCarrier): boolean {
+  return !hasEffect(carrier, 'petrify') && !hasEffect(carrier, 'stun');
+}
+
+/**
+ * Whether damage simply does not land on this carrier.
+ *
+ * Deliberately not a multiplier of zero in {@link damageTakenMultiplier}: a
+ * zero there would still drain a shield, still credit a kill on a corpse that
+ * took no damage, and still read as "took 0 damage" rather than "was not a
+ * legal target". Immunity is a different sentence from a very small number.
+ */
+export function damageImmune(carrier: EffectCarrier): boolean {
+  return hasEffect(carrier, 'petrify');
 }
 
 /** Damage left after the shield pool ate what it could; drains the pool. */

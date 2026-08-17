@@ -16,6 +16,7 @@
  */
 
 import { MAGE_RADIUS, SPACING } from '../config';
+import { hasEffect } from '../effects';
 import { clamp, inverseLerp, lerp, Vec2 } from '../Vec2';
 import {
   emptyInput,
@@ -29,6 +30,7 @@ import {
 import { ROLE_BEHAVIOR } from '../roles';
 import type { Rng } from '../rng';
 import type { World } from '../World';
+import { prefersSquadFocus } from './focus';
 import { coveringTower, isOurGround, SquadPlanner, type SquadPlan } from './Squad';
 
 /** Mirrors the client's easy/normal/hard AI tuning (AISystem's AI_TUNING). */
@@ -477,10 +479,24 @@ export class Brain {
 
     // Prefer the squad's focus target when it is visible and not much further
     // away than the nearest enemy (AISystem.perceive's 1.8x rule).
+    //
+    // Unless this one is paranoid, which is the whole of Paranoia: the card
+    // does not stop a mage shooting, it stops it *agreeing*. Focus fire is the
+    // bot's only teamwork — four mages each answering their own nearest body
+    // are four squads of one, spreading damage across four health bars and
+    // finishing none of them. Dropped here rather than in `chooseFocusTarget`
+    // so a confused mage stops following the squad without stopping the squad
+    // from having a plan: the other three keep concentrating, and this one
+    // wanders off it.
     if (
       focusTarget &&
-      focusLos &&
-      (focusDistSq <= ENGAGE_RANGE * ENGAGE_RANGE || focusDistSq <= nearestDistSq * 1.8)
+      prefersSquadFocus({
+        focusVisible: focusLos,
+        focusDistSq,
+        nearestDistSq,
+        engageRangeSq: ENGAGE_RANGE * ENGAGE_RANGE,
+        confused: hasEffect(bot, 'confused'),
+      })
     ) {
       nearest = focusTarget;
       nearestDistSq = focusDistSq;

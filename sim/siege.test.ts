@@ -5,10 +5,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { magnitudeOf } from './effects';
+import { damageTakenMultiplier, hasEffect, magnitudeOf, moveSpeedMultiplier, removeEffect } from './effects';
 import { defaultSquad } from './cards';
 import {
   CHARGE_TIME,
+  EXECUTE_THRESHOLD,
   HEAL_INTERRUPT_DURATION,
   MANA_MAX,
   MANA_REGEN_INTERVAL,
@@ -18,6 +19,7 @@ import {
   SHIELD_AMOUNT,
   SIM_DT,
   SPELL_CAST_FX_DURATION,
+  SPELL_GLOBAL_COOLDOWN,
   SQUAD_SIZE,
   TOWER_RANGE,
 } from './config';
@@ -269,6 +271,209 @@ describe('spells (GDD §9)', () => {
     expect(magnitudeOf(ally, 'slow')).toBe(0);
   });
 
+  /**
+   * The card the green deck buys instead of a second Pântano Pegajoso. The
+   * swamp is the wide soft zone; the roots are the tight hard lock, and the
+   * difference has to survive contact with the sim: a rooted mage is pinned to
+   * the floor no matter what haste is on it, and — unlike a stun — it is still
+   * awake. Losing the ground is not losing the turn.
+   */
+  it('roots enemies where they stand without taking their turn away', () => {
+    const w = new World();
+    const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    const enemy = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0.5));
+
+    // Haste first, so the assertion cannot pass by the slow floor alone.
+    w.castSpell(TEAM_B, 'blessing', enemy.position);
+    expect(moveSpeedMultiplier(enemy)).toBeGreaterThan(1);
+
+    w.castSpell(TEAM_A, 'entangling_roots', enemy.position);
+
+    expect(moveSpeedMultiplier(enemy)).toBe(0.1);
+    expect(enemy.stunTimer).toBe(0);
+    expect(moveSpeedMultiplier(ally)).toBeGreaterThanOrEqual(1);
+  });
+
+  /**
+   * Green's answer to Escudo Arcano, and deliberately the worse card to cast
+   * late. A shield is worth most the instant before the hit lands; a regen is
+   * worth nothing then and everything between fights. The sim has to make that
+   * true rather than merely say it, so the healing arrives on a cadence and the
+   * overflow is thrown away.
+   */
+  it('heals an ally on a cadence and stops at full health', () => {
+    const w = new World();
+    const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    // Less than the card's whole output (4 ticks x 8), so the last tick has an
+    // overflow to throw away and the clamp is actually exercised.
+    w.dealDamage(ally, 20);
+    const hurt = ally.health;
+
+    w.castSpell(TEAM_A, 'rejuvenating_breeze', ally.position);
+
+    // Gradual, not a lump sum: nothing has arrived before the first interval.
+    stepN(w, 2);
+    expect(ally.health).toBe(hurt);
+
+    stepN(w, Math.ceil(1 / SIM_DT));
+    expect(ally.health).toBeGreaterThan(hurt);
+    expect(ally.health).toBeLessThan(ally.maxHealth);
+
+    // Run past the card's duration; the overflow is discarded, not banked.
+    stepN(w, Math.ceil(6 / SIM_DT));
+    expect(ally.health).toBe(ally.maxHealth);
+  });
+
+  /**
+   * White's third card, and the one that stacks two slow goods rather than one
+   * fast one. Escudo Arcano is a wall that arrives whole and is gone when spent;
+   * this pays out over four seconds in two currencies at once, which is why it
+   * is the more expensive card and the worse panic button.
+   */
+  it('consecrates ground under its own line only, healing and bracing at once', () => {
+    const w = new World();
+    const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    const enemy = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0.5));
+    w.dealDamage(ally, 30);
+    const hurt = ally.health;
+
+    w.castSpell(TEAM_A, 'consecrated_ground', ally.position);
+
+    // Standing well inside the radius, and still not caught: this is a buff.
+    expect(magnitudeOf(enemy, 'fortify')).toBe(0);
+    expect(damageTakenMultiplier(enemy)).toBe(1);
+
+    expect(damageTakenMultiplier(ally)).toBeLessThan(1);
+    stepN(w, Math.ceil(1 / SIM_DT));
+    expect(ally.health).toBeGreaterThan(hurt);
+  });
+
+  /**
+   * The first card that changes what a mage's *own* attacks are worth, rather
+   * than what happens to it. Red already had Campo de Sobrecarga making a
+   * target softer; this makes a shooter harder, and the two have to be
+   * separable — a bug that swapped them would buff whoever you aimed at.
+   */
+  it('makes an empowered mage hit harder, and leaves the rest of the squad alone', () => {
+    const w = new World();
+    const frenzied = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
+    const plainAlly = w.summon(TEAM_A, 'pyromancer', new Vec2(10, 0));
+    const target = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+
+    w.castSpell(TEAM_A, 'blood_frenzy', frenzied.position);
+
+    target.health = target.maxHealth;
+    w.dealDamage(target, 20, { attackerId: frenzied.id });
+    const empowered = target.maxHealth - target.health;
+
+    target.health = target.maxHealth;
+    w.dealDamage(target, 20, { attackerId: plainAlly.id });
+    const plain = target.maxHealth - target.health;
+
+    expect(plain).toBe(20);
+    expect(empowered).toBeCloseTo(28, 5);
+  });
+
+  /**
+   * The first card in the game whose value depends on the situation rather than
+   * on the target. Campo de Sobrecarga is worth the same against a full-health
+   * mage and a dying one; this is worth nothing against the first and a great
+   * deal against the second, which is the whole point — a program that writes
+   * `SE vida do inimigo mais ferido ≤ 40% ENTÃO Marca` beats one that fires it
+   * on sight, and until now no card rewarded asking.
+   */
+  it('pays only against a target already below the execute threshold', () => {
+    const w = new World();
+    const healthy = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0));
+    const dying = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0.5));
+
+    w.castSpell(TEAM_A, 'executioners_mark', healthy.position);
+    expect(magnitudeOf(healthy, 'marked')).toBeGreaterThan(0);
+    expect(magnitudeOf(dying, 'marked')).toBeGreaterThan(0);
+
+    // Well above the threshold: the mark is inert and the hit is just a hit.
+    healthy.health = healthy.maxHealth;
+    w.dealDamage(healthy, 10);
+    expect(healthy.maxHealth - healthy.health).toBe(10);
+
+    // Under it: the same 10 lands for half again as much.
+    dying.health = dying.maxHealth * (EXECUTE_THRESHOLD - 0.05);
+    const before = dying.health;
+    w.dealDamage(dying, 10);
+    expect(before - dying.health).toBeCloseTo(15, 5);
+  });
+
+  /**
+   * Blue's first card, and the only one in the game that is a bad idea half the
+   * time. Petrifying the enemy carry buys silence and pays for it by making that
+   * carry unkillable for the same window — so this is the card that punishes a
+   * program which fires on sight hardest, because the wrong moment is not merely
+   * wasteful, it is a rescue.
+   */
+  it('turns a mage to stone: it neither acts nor can be hurt, until it wears off', () => {
+    const w = new World();
+    const victim = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0));
+
+    w.castSpell(TEAM_A, 'petrify', victim.position);
+    const full = victim.health;
+
+    w.dealDamage(victim, 40);
+    expect(victim.health).toBe(full);
+    expect(moveSpeedMultiplier(victim)).toBe(0.1);
+
+    // `state` is assigned in updateMage, so it takes a tick to show.
+    w.step(SIM_DT);
+    expect(victim.state).toBe('petrified');
+
+    // Past the duration the stone is gone and so is the protection.
+    stepN(w, Math.ceil(3 / SIM_DT));
+    w.dealDamage(victim, 40);
+    expect(victim.health).toBeLessThan(full);
+  });
+
+  /**
+   * The reach of Petrificar, and the reason it is worth four mana.
+   *
+   * A squad that is entirely stone has no one left to channel through, so the
+   * player it belongs to cannot cast at all until someone cracks. That is the
+   * only hard lock in the game — nothing else stops a program from firing — and
+   * it is reachable exactly when the enemy has bunched up inside one area
+   * spell, which is the situation the card is asking you to wait for.
+   *
+   * Guarded on *living* mages: a team wiped to the last man is not petrified,
+   * it is dead, and blocking its casts would turn a lost fight into an
+   * unrecoverable one for a reason nobody could see.
+   */
+  it('locks a team out of casting only while its whole living squad is stone', () => {
+    const w = new World();
+    const a = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0));
+    const b = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0.6));
+    w.summon(TEAM_A, 'pyromancer', new Vec2(10, 0));
+
+    expect(w.castSpell(TEAM_B, 'blessing', a.position)).toEqual({ ok: true });
+    stepN(w, Math.ceil(SPELL_GLOBAL_COOLDOWN / SIM_DT) + 2);
+
+    // One area cast catching both of them is what buys the lock.
+    w.castSpell(TEAM_A, 'petrify', a.position);
+    expect(hasEffect(a, 'petrify')).toBe(true);
+    expect(hasEffect(b, 'petrify')).toBe(true);
+
+    expect(w.castSpell(TEAM_B, 'blessing', a.position)).toEqual({
+      ok: false,
+      reason: 'squad_petrified',
+    });
+
+    // One of them cracking is enough to get the program running again.
+    removeEffect(b, 'petrify');
+    expect(w.castSpell(TEAM_B, 'blessing', b.position)).toEqual({ ok: true });
+  });
+
+  it('never locks a team that simply has no one standing', () => {
+    const w = new World();
+    // No squad at all: vacuously "all petrified" is the trap this guards.
+    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({ ok: true });
+  });
+
   it('shields absorb damage before health', () => {
     const w = new World();
     const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
@@ -349,6 +554,63 @@ describe('spells (GDD §9)', () => {
     const w = new World();
     w.castSpell(TEAM_A, 'fireball_of_doom', new Vec2(-10, 0));
     expect(w.spellCasts.size).toBe(0);
+  });
+});
+
+/*
+ * The global cooldown exists because the caster is about to stop being a pair
+ * of human hands. A Tactician runs inside the 60 Hz tick, so a full mana bank
+ * spent on 2-cost cards is five casts in five consecutive ticks — something no
+ * player could ever do through the HUD. Rate-limiting inside the Tactician
+ * would not do: this is the one seam every caster goes through (submitCast,
+ * Commander, Tactician, and every headless harness), so it is the only place
+ * the limit cannot be bypassed.
+ */
+describe('spells — the global cast cooldown', () => {
+  it('refuses a second cast from the same team inside the cooldown', () => {
+    const w = new World();
+    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({ ok: true });
+
+    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({
+      ok: false,
+      reason: 'on_cooldown',
+    });
+  });
+
+  it('allows the next cast once the cooldown has run out', () => {
+    const w = new World();
+    w.castSpell(TEAM_A, 'blessing', Vec2.zero);
+    stepN(w, Math.ceil(SPELL_GLOBAL_COOLDOWN / SIM_DT) + 1);
+
+    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({ ok: true });
+  });
+
+  it('is per team — one side casting does not lock the other out', () => {
+    const w = new World();
+    w.castSpell(TEAM_A, 'blessing', Vec2.zero);
+
+    expect(w.castSpell(TEAM_B, 'blessing', Vec2.zero)).toEqual({ ok: true });
+  });
+
+  it('does not start on a rejected cast', () => {
+    const w = new World();
+    // A misnamed card must not cost the team its next cast window.
+    w.castSpell(TEAM_A, 'fireball_of_doom', Vec2.zero);
+
+    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({ ok: true });
+  });
+
+  it('reports what is wrong with the request before it reports timing', () => {
+    const w = new World();
+    // Plague costs 4 of the opening 5, so the second cast is both broke and
+    // on cooldown. "Not enough mana" is the one the caster can act on, and it
+    // is what the pre-cooldown behaviour reported.
+    w.castSpell(TEAM_A, 'plague', Vec2.zero);
+
+    expect(w.castSpell(TEAM_A, 'slow_curse', Vec2.zero)).toEqual({
+      ok: false,
+      reason: 'not_enough_mana',
+    });
   });
 });
 

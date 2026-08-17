@@ -52,21 +52,33 @@ export type JoinQueueMsg = {
 export type LeaveQueueMsg = { type: 'leave_queue' };
 
 /**
- * What the player brings to their next match: the 8-card deck and the 4-mage
- * squad (GDD §7). Sent once after connecting, before joining a queue or a room,
- * because it has to apply to both paths — a room seat is claimed long after any
- * queue message would have been sent.
+ * What the player brings to their next match: the 8-card deck, the 4-mage
+ * squad, and — since the idle pivot — the strategy program that plays the deck
+ * for them (GDD §7). Sent once after connecting, before joining a queue or a
+ * room, because it has to apply to both paths — a room seat is claimed long
+ * after any queue message would have been sent.
  *
- * Either half may be omitted, in which case the server keeps its default.
+ * Any part may be omitted, in which case the server keeps its default.
+ *
+ * `strategy` is deliberately `unknown` rather than `Strategy`: it is a nested
+ * program authored on an untrusted client, so the wire type promises nothing
+ * and `validateStrategy` on the server is what decides whether it is one.
  */
-export type SetLoadoutMsg = { type: 'set_loadout'; deck?: string[]; squad?: string[] };
+export type SetLoadoutMsg = {
+  type: 'set_loadout';
+  deck?: string[];
+  squad?: string[];
+  strategy?: unknown;
+};
 
 /**
- * The only in-match message a player sends since the pivot: spend mana to cast
- * a spell — a buff on your own squad or a curse on the enemy's — at a chosen
- * point (GDD §9, §13). It replaces the old ~60 Hz `InputMsg` — no more move,
- * aim, charge or release, because nobody steers a mage any more, and (since
- * the v1.1 squad pivot) `cardId` names a spell rather than a unit to summon.
+ * Spend mana to cast a spell at a chosen point.
+ *
+ * @deprecated Since the idle pivot nobody casts by hand — a seat is played by
+ * the `Tactician` running the player's program, and the server rejects this
+ * message. It is kept because `MatchTransport` implements it on both sides and
+ * it is the natural hook for a future override mode; delete it only once
+ * something has replaced that seam.
  */
 export type CastMsg = { type: 'cast'; cardId: string; position: Vec2DTO };
 
@@ -221,6 +233,34 @@ export type PuddleSnapshotDTO = {
   position: Vec2DTO;
   radius: number;
   remaining: number;
+  /**
+   * The card that left it, or null when an element did.
+   *
+   * Cosmetic only — the client draws every ground hazard the same without it,
+   * which is how Chuva de Meteoros' crater came out painted as Praga's poison.
+   */
+  spellId: string | null;
+};
+
+/**
+ * The rule that last put a spell down for the receiving player (GDD §7).
+ *
+ * This is the whole of an idle player's in-match feedback. They did not click,
+ * so without being told *which of their own rules* caused what they are
+ * watching, a match is something that happens near them rather than something
+ * they wrote — which is the difference between this game and a screensaver.
+ *
+ * Sent on the per-recipient channel next to `mana`/`hand`, never broadcast: a
+ * player's program is theirs, and leaking the opponent's would turn reading
+ * the wire into a strategy dump.
+ */
+export type FiredRuleDTO = {
+  ruleId: string;
+  /** 0-based position in the program; the HUD says "Regra {index + 1}". */
+  index: number;
+  cardId: string;
+  /** The `TargetSelector` the rule named — where it aimed, in the player's words. */
+  at: string;
 };
 
 export type SnapshotMsg = {
@@ -246,6 +286,12 @@ export type SnapshotMsg = {
   hand: string[];
   /** The card entering the hand next; omitted when the deck cannot say yet. */
   next?: string;
+  /**
+   * The receiving player's last rule to actually cast. Omitted until one has —
+   * an empty program never sets it, which is exactly what an empty program
+   * should look like on screen.
+   */
+  firedRule?: FiredRuleDTO;
 };
 
 export type MatchStartMsg = { type: 'match_start' };

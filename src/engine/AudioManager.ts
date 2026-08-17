@@ -1,5 +1,7 @@
 import type { EventBus } from '../core/EventBus';
 import { Team } from '../game/types';
+import { ENEMY_CAST_GAIN, spellSfxFor } from './spellSfx';
+import { playSound, releaseOnEnd, VoiceBudget } from './synth';
 
 type Unsubscribe = () => void;
 type AudioContextConstructor = new () => AudioContext;
@@ -15,11 +17,27 @@ interface AmbientNodes {
 }
 
 /**
+ * How many cast sounds may be ringing at once. Three sides of the arena's worth
+ * of overlap: the two commanders can each cast every 0.75s and no card rings
+ * for longer than that, so anything past this is a pile-up rather than a match.
+ */
+const MAX_SPELL_VOICES = 8;
+
+/**
  * Synthesizes all game audio with Web Audio: short procedural SFX plus a quiet
  * ambient wind bed. It degrades to no-ops when Web Audio is unavailable.
+ *
+ * The hand-written sounds below predate the idle pivot and answer the player's
+ * own actions. Spells are the opposite case and arrived much later: nobody
+ * clicked, so a cast is news rather than confirmation, and its sound is a row
+ * in {@link SPELL_SFX} played through {@link playSound} rather than a method
+ * here. This class keeps what only it can own — the context, the master gain
+ * mute writes to, the noise buffer, and the ceiling on how many voices a
+ * three-minute match may leave ringing.
  */
 export class AudioManager {
   private readonly unsubscribes: Unsubscribe[] = [];
+  private readonly spellVoices = new VoiceBudget(MAX_SPELL_VOICES);
   private context: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
@@ -33,6 +51,7 @@ export class AudioManager {
       events.on('SnowballThrown', () => this.playWhoosh()),
       events.on('SnowballImpact', ({ hitPlayerId }) => this.playSnowPuff(hitPlayerId !== null)),
       events.on('PlayerHit', ({ damage }) => this.playHitSplat(damage)),
+      events.on('SpellCast', ({ spellId, friendly }) => this.playSpell(spellId, friendly)),
       events.on('PlayerDefeated', () => this.playDefeated()),
       events.on('RoundEnded', ({ winner }) => this.playRoundEnded(winner)),
       events.on('RoundStarted', () => this.startAmbient()),
@@ -60,6 +79,10 @@ export class AudioManager {
     this.disposed = true;
     for (const unsubscribe of this.unsubscribes) unsubscribe();
     this.unsubscribes.length = 0;
+    // Before the context goes: a cast half a second from its own end is still
+    // scheduled, and closing out from under it leaves the tail hanging on the
+    // way back to the menu.
+    this.spellVoices.stopAll(this.context?.currentTime ?? 0);
     this.stopAmbient();
 
     const context = this.context;
@@ -69,6 +92,30 @@ export class AudioManager {
     if (context && context.state !== 'closed') {
       void context.close().catch(() => undefined);
     }
+  }
+
+  /**
+   * A card landing, from {@link SPELL_SFX}.
+   *
+   * The pitch is rolled per firing because a deck is eight cards and a match is
+   * a few hundred casts: without it, the fourth Praga of the minute is audibly
+   * the same file being retriggered, which is what makes synthesised audio
+   * sound cheap. The gain says whose cast it was — the same distinction the
+   * white core flash draws on screen, drawn again for a player whose eyes are
+   * on the other half of the field.
+   */
+  private playSpell(spellId: string, friendly: boolean): void {
+    const context = this.getRunningContext();
+    const buffer = this.noiseBuffer;
+    if (!context || !buffer) return;
+
+    const now = context.currentTime;
+    const voice = playSound(context, this.requireMasterGain(), spellSfxFor(spellId), buffer, {
+      at: now,
+      gain: friendly ? 1 : ENEMY_CAST_GAIN,
+      roll: Math.random(),
+    });
+    this.spellVoices.admit(voice, now);
   }
 
   private playWhoosh(): void {
@@ -93,7 +140,7 @@ export class AudioManager {
 
     source.connect(filter).connect(gain).connect(this.requireMasterGain());
     source.start(now, this.randomNoiseOffset(), duration);
-    this.cleanupSource(source, [filter, gain], now + duration + 0.03);
+    releaseOnEnd(source, [filter, gain], now + duration + 0.03);
   }
 
   private playSnowPuff(hitPlayer: boolean): void {
@@ -117,7 +164,7 @@ export class AudioManager {
 
     source.connect(filter).connect(gain).connect(this.requireMasterGain());
     source.start(now, this.randomNoiseOffset(), duration);
-    this.cleanupSource(source, [filter, gain], now + duration + 0.03);
+    releaseOnEnd(source, [filter, gain], now + duration + 0.03);
   }
 
   private playHitSplat(damage: number): void {
@@ -141,7 +188,7 @@ export class AudioManager {
     oscillator.connect(gain).connect(this.requireMasterGain());
     oscillator.start(now);
     oscillator.stop(now + duration);
-    this.cleanupSource(oscillator, [gain], now + duration + 0.03);
+    releaseOnEnd(oscillator, [gain], now + duration + 0.03);
   }
 
   private playDefeated(): void {
@@ -194,7 +241,7 @@ export class AudioManager {
     oscillator.connect(gain).connect(this.requireMasterGain());
     oscillator.start(startTime);
     oscillator.stop(startTime + duration);
-    this.cleanupSource(oscillator, [gain], startTime + duration + 0.04);
+    releaseOnEnd(oscillator, [gain], startTime + duration + 0.04);
   }
 
   private startAmbient(): void {
@@ -303,21 +350,5 @@ export class AudioManager {
     const buffer = this.noiseBuffer;
     if (!buffer) return 0;
     return Math.random() * Math.max(0, buffer.duration - 0.25);
-  }
-
-  private cleanupSource(source: AudioScheduledSourceNode, nodes: AudioNode[], stopTime: number): void {
-    source.addEventListener(
-      'ended',
-      () => {
-        source.disconnect();
-        for (const node of nodes) node.disconnect();
-      },
-      { once: true },
-    );
-    try {
-      source.stop(stopTime);
-    } catch {
-      // Some sources may already have an explicit stop scheduled.
-    }
   }
 }

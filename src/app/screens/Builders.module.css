@@ -91,9 +91,13 @@
   opacity: 0.42;
 }
 
+/* Teal says "you brought this"; the left edge still says *what* it is. Letting
+   the picked state repaint all four sides took the colour off exactly the cards
+   whose colour matters — the ones in the deck. */
 .cardPicked {
   background: rgba(62, 207, 191, 0.12);
   border-color: var(--teal);
+  border-left-color: var(--element-color, var(--teal));
 }
 
 .cardHead {
@@ -194,6 +198,20 @@
   font-weight: 700;
   text-align: right;
   white-space: nowrap;
+}
+
+/* A deck edit that would cost the player rules they wrote. Copper rather than
+   red: nothing is wrong, something is about to be given up. */
+.orphanNote {
+  background: rgba(201, 133, 62, 0.1);
+  border: 1px solid rgba(201, 133, 62, 0.4);
+  border-radius: 10px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin: 16px 0 0;
+  padding: 10px 12px;
 }
 
 .saveBar {

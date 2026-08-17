@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { AssetManager } from '../engine/AssetManager';
-import { projectileGeometry, runeRingGeometry, type ProjectileShape } from './projectileGeometry';
+import {
+  projectileGeometry,
+  runeRingGeometry,
+  voxelRockGeometry,
+  VOXEL_ROCK_CUBES,
+  type ProjectileShape,
+} from './projectileGeometry';
 
 /**
  * The point of these shapes is that no two elements read the same at match
@@ -108,6 +114,56 @@ describe('projectile geometry', () => {
     expect(second.count).toBe(first.count);
     for (let i = 0; i < first.count; i++) {
       expect(second.getX(i)).toBe(first.getX(i));
+    }
+  });
+});
+
+/**
+ * The meteor is a *voxel* rock — a lump welded out of unit cubes rather than a
+ * roughened polyhedron like the Golem's boulder. It reads as debris breaking
+ * off something rather than as a smooth stone, which is what a thing falling
+ * out of the sky on fire should look like.
+ */
+describe('voxel rock', () => {
+  it('is built out of whole cubes, not a smoothed lump', () => {
+    const geometry = voxelRockGeometry(new AssetManager());
+    const position = geometry.getAttribute('position');
+
+    // A BoxGeometry contributes 24 vertices (four per face, six faces). If the
+    // merge ever silently dropped or welded some, this stops matching.
+    expect(position.count).toBe(VOXEL_ROCK_CUBES * 24);
+  });
+
+  it('has flat axis-aligned faces, which is what makes it read as voxels', () => {
+    const geometry = voxelRockGeometry(new AssetManager());
+    const normal = geometry.getAttribute('normal');
+
+    // Every face of every cube points down an axis, so each normal has exactly
+    // one non-zero component. A roughened solid would fail this on sight.
+    for (let i = 0; i < normal.count; i++) {
+      const axes = [normal.getX(i), normal.getY(i), normal.getZ(i)].filter((v) => Math.abs(v) > 1e-6);
+      expect(axes.length, `normal ${i}`).toBe(1);
+    }
+  });
+
+  it('is the same rock every session', () => {
+    // Same reason `buildRock` is seeded: a meteor whose blocks rearranged
+    // between matches would read as a rendering glitch.
+    const a = voxelRockGeometry(new AssetManager()).getAttribute('position');
+    const b = voxelRockGeometry(new AssetManager()).getAttribute('position');
+    expect(Array.from(a.array)).toEqual(Array.from(b.array));
+  });
+
+  it('is sized like the other projectile bodies, around a unit radius', () => {
+    const geometry = voxelRockGeometry(new AssetManager());
+    geometry.computeBoundingBox();
+    const size = new THREE.Vector3();
+    geometry.boundingBox!.getSize(size);
+    // The renderer scales by a world-unit figure, so a body that came out ten
+    // units across would arrive the size of a building.
+    for (const extent of [size.x, size.y, size.z]) {
+      expect(extent).toBeGreaterThan(1);
+      expect(extent).toBeLessThanOrEqual(2.2);
     }
   });
 });

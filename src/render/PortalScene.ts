@@ -291,22 +291,35 @@ export class PortalScene {
     pos.needsUpdate = true;
   }
 
+  /*
+   * Three-quarter turns rather than the profiles these stood in before.
+   *
+   * The figures used to have no face, so a profile was free — it read as
+   * "waiting beside the portal" and cost nothing. Now the whole silhouette is a
+   * shadowed face with two lit eyes in it, and in profile the near eye is behind
+   * the skull: the title screen was showing a hooded mage with one eye.
+   *
+   * The mage's forward is +X, so turning by -60° swings the face toward the
+   * camera while keeping the body angled at the portal.
+   */
   private spawnMages(): void {
     const left = createMageFigure(0x3d8bfd, { scale: 1.15 });
     left.root.position.set(-1.55, 0, 1.1);
-    left.root.rotation.y = 0.35;
+    left.root.rotation.y = -1.05;
     this.scene.add(left.root);
     this.mages.push(left);
 
     const right = createMageFigure(0xd64545, { scale: 1.15 });
     right.root.position.set(1.55, 0, 1.1);
-    right.root.rotation.y = -0.35;
+    right.root.rotation.y = -2.15;
     this.scene.add(right.root);
     this.mages.push(right);
 
+    // Angled at the pair rather than at the camera: this one is background, and
+    // three faces staring out of the frame is a police lineup.
     const waiting = createMageFigure(0x80b918, { scale: 0.95 });
     waiting.root.position.set(-3.2, 0, 2.4);
-    waiting.root.rotation.y = 0.9;
+    waiting.root.rotation.y = -0.45;
     this.scene.add(waiting.root);
     this.mages.push(waiting);
   }

@@ -37,6 +37,11 @@ export interface EffectRule {
   readonly maxStacks?: number;
   /** Clamp applied after stacking, so a chain of casts cannot reach 100% slow. */
   readonly maxMagnitude: number;
+  /**
+   * Which side wanted this to happen — what the `dispel` rider strips by. See
+   * `EffectPolarity` in `effects.ts`, which throws at load if this is missing.
+   */
+  readonly polarity: 'buff' | 'debuff';
 }
 
 /**
@@ -105,21 +110,53 @@ export interface RoleRule {
   readonly retreatHealthFraction: number;
 }
 
+/**
+ * One thing a spell does to what it caught. `effect` names either a status
+ * kind from `effects.ts` or one of the riders in `spellRiders.ts` — the same
+ * split `OnHitRule` uses for elements, and for the same reason: a card should
+ * be data, so that adding one is a `balance.json` edit and only a genuinely
+ * new *kind* of behaviour costs code.
+ *
+ * `duration` and `radius` fall back to the card's own when omitted.
+ */
+export interface SpellApplyRule {
+  readonly effect: string;
+  readonly magnitude?: number;
+  readonly duration?: number;
+  readonly radius?: number;
+  readonly tickInterval?: number;
+  readonly tickDamage?: number;
+  readonly tickHeal?: number;
+  /** Ground hazards only: whether the damage goes through Escudo Arcano. */
+  readonly bypassShield?: boolean;
+  /**
+   * Seconds between the cast and this application actually happening; absent
+   * or 0 for a card that lands the moment it is cast.
+   *
+   * A field rather than a rider, because anything a card does can be worth
+   * postponing — a hit, a shove, a burn — and a rider would have had to be
+   * told what to run afterwards. The targets are resolved when it fires, not
+   * when it was cast, which is what makes the warning on the ground worth
+   * drawing: a squad that walks out is a squad that is not there any more.
+   *
+   * Half of a contract. The other half is `telegraph` in `spellVfx.ts`, and
+   * `spellVfx.test.ts` asserts the two are equal in both directions — damage
+   * that arrives after the warning stops is damage out of nowhere.
+   */
+  readonly delay?: number;
+}
+
 export interface SpellRule {
   readonly name: string;
+  /** Deck colour (GDD §9). Groups the catalog and constrains deck building. */
+  readonly color: string;
   readonly kind: string;
   readonly cost: number;
   readonly radius: number;
   readonly duration: number;
-  readonly effect: {
-    readonly kind: string;
-    readonly speedFactor?: number;
-    readonly castFactor?: number;
-    readonly slowFactor?: number;
-    readonly amount?: number;
-    readonly tickDamage?: number;
-    readonly tickInterval?: number;
-  };
+  /** Who the applications land on: allies, enemies, both, or the ground. */
+  readonly target: string;
+  readonly apply: readonly SpellApplyRule[];
 }
 
 export interface Balance {
@@ -156,6 +193,9 @@ export interface Balance {
     readonly matchDuration: number;
     readonly suddenDeathDuration: number;
     readonly spellCastFxDuration: number;
+    readonly spellGlobalCooldown: number;
+    /** Health fraction below which `marked` starts paying out. */
+    readonly executeThreshold: number;
     readonly obstacleTopHeight: Readonly<Record<string, number>>;
   };
   readonly structures: {

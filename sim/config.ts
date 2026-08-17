@@ -13,7 +13,7 @@
  * practice mode.
  */
 
-import { BALANCE } from './balance';
+import { BALANCE, type SpellApplyRule } from './balance';
 
 const S = BALANCE.sim;
 const ST = BALANCE.structures;
@@ -149,28 +149,41 @@ export const SUDDEN_DEATH_STRUCTURE_DECAY = ST.suddenDeathStructureDecay;
  * real: only these 4 of the planned 8 spells are designed yet).
  */
 
+/**
+ * The one application of `spell` that carries `effect`.
+ *
+ * A card is a list of applications now (GDD §9), so a named constant has to
+ * say which one it means. Returns an empty rule rather than throwing: these
+ * are convenience handles for tests and tuning, and a card that drops an
+ * effect should fail in `spells.ts` — which validates the whole catalog at
+ * load — not here.
+ */
+function applied(spell: keyof typeof BALANCE.spells, effect: string): SpellApplyRule {
+  return BALANCE.spells[spell].apply.find((a) => a.effect === effect) ?? { effect };
+}
+
 export const BLESSING_COST = BALANCE.spells.blessing.cost;
 export const BLESSING_RADIUS = BALANCE.spells.blessing.radius;
 export const BLESSING_DURATION = BALANCE.spells.blessing.duration;
-export const BLESSING_SPEED_BONUS = BALANCE.spells.blessing.effect.speedFactor ?? 0;
-export const BLESSING_CAST_BONUS = BALANCE.spells.blessing.effect.castFactor ?? 0;
+export const BLESSING_SPEED_BONUS = applied('blessing', 'haste').magnitude ?? 0;
+export const BLESSING_CAST_BONUS = applied('blessing', 'cast_haste').magnitude ?? 0;
 
 export const SLOW_CURSE_COST = BALANCE.spells.slow_curse.cost;
 export const SLOW_CURSE_RADIUS = BALANCE.spells.slow_curse.radius;
 export const SLOW_CURSE_DURATION = BALANCE.spells.slow_curse.duration;
-export const SLOW_CURSE_FACTOR = BALANCE.spells.slow_curse.effect.slowFactor ?? 0;
+export const SLOW_CURSE_FACTOR = applied('slow_curse', 'slow').magnitude ?? 0;
 
 export const SHIELD_COST = BALANCE.spells.arcane_shield.cost;
 export const SHIELD_RADIUS = BALANCE.spells.arcane_shield.radius;
 export const SHIELD_DURATION = BALANCE.spells.arcane_shield.duration;
-export const SHIELD_AMOUNT = BALANCE.spells.arcane_shield.effect.amount ?? 0;
+export const SHIELD_AMOUNT = applied('arcane_shield', 'shield').magnitude ?? 0;
 
 export const PLAGUE_COST = BALANCE.spells.plague.cost;
 export const PLAGUE_RADIUS = BALANCE.spells.plague.radius;
 export const PLAGUE_DURATION = BALANCE.spells.plague.duration;
-export const PLAGUE_TICK_INTERVAL = BALANCE.spells.plague.effect.tickInterval ?? 0;
+export const PLAGUE_TICK_INTERVAL = applied('plague', 'puddle').tickInterval ?? 0;
 /** Per tick, at PLAGUE_TICK_INTERVAL — reads as "10 damage/s" in the GDD. */
-export const PLAGUE_TICK_DAMAGE = BALANCE.spells.plague.effect.tickDamage ?? 0;
+export const PLAGUE_TICK_DAMAGE = applied('plague', 'puddle').tickDamage ?? 0;
 
 /**
  * How long a cast stays in the snapshot purely so clients can play its VFX
@@ -179,6 +192,29 @@ export const PLAGUE_TICK_DAMAGE = BALANCE.spells.plague.effect.tickDamage ?? 0;
  * consecutive snapshots for a client to notice it at all at 20Hz.
  */
 export const SPELL_CAST_FX_DURATION = S.spellCastFxDuration;
+
+/**
+ * Minimum seconds between two casts by the same team (GDD §6).
+ *
+ * Mana is the economy, not the clock: a team sitting on a full bank can spend
+ * it on 2-cost cards five ticks in a row, which is fine when a pair of human
+ * hands is the bottleneck and stops being fine the moment an autonomous
+ * caster runs inside the tick loop. This is the floor that keeps a program and
+ * a person spending at comparable rates.
+ *
+ * Chosen to sit under every Commander cadence (1.1s on hard) so the existing
+ * bots never feel it, and to stretch a full bank of cheap casts from five
+ * ticks to a few seconds.
+ */
+export const SPELL_GLOBAL_COOLDOWN = S.spellGlobalCooldown;
+/**
+ * Health fraction at or below which an execution mark starts paying (GDD §9).
+ *
+ * A balance number rather than a constant in `effects.ts` because it is the
+ * dial that decides whether Marca do Carrasco is a finisher or a second Campo
+ * de Sobrecarga, and that is a question for tuning, not for code.
+ */
+export const EXECUTE_THRESHOLD = S.executeThreshold;
 
 /** Height of each obstacle type's top, mirroring the client's OBSTACLE_HEIGHT. */
 export const OBSTACLE_TOP_HEIGHT: Readonly<Record<'tree' | 'rock' | 'fort' | 'fence' | 'prop', number>> =

@@ -211,6 +211,52 @@ export function projectileGeometry(
   return assets.geometry(`projectile-shape:${shape}`, BUILDERS[shape]);
 }
 
+/**
+ * Unit cubes the voxel meteor is welded from. Hand-placed rather than
+ * generated: a random blob comes out either symmetrical or spindly, and this
+ * silhouette is the whole read at match zoom — a chunk with corners, heavier
+ * on one side, like something that broke off something bigger.
+ */
+const VOXEL_ROCK_OFFSETS: readonly (readonly [number, number, number])[] = [
+  [0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+  [1, 1, 0], [-1, -1, 0], [0, 1, 1], [1, 0, 1], [-1, 0, -1], [0, -1, -1],
+  [0, -1, 1], [1, -1, 0], [-1, 1, 0],
+];
+
+/** How many cubes the meteor is made of; the test counts vertices against it. */
+export const VOXEL_ROCK_CUBES = VOXEL_ROCK_OFFSETS.length;
+
+/**
+ * The meteor body: a lump of unit cubes, welded into one solid.
+ *
+ * Deliberately *not* {@link buildRock}, which roughens a polyhedron into a
+ * smooth-ish stone. A meteor is debris — it wants corners and steps, and the
+ * blocky silhouette survives being small, tumbling and half-hidden behind its
+ * own fire, which is the only way it is ever seen.
+ *
+ * Normalised to roughly the unit radius the other projectile bodies use, so
+ * the renderer's scale figures mean the same thing here as everywhere else.
+ */
+function buildVoxelRock(): THREE.BufferGeometry {
+  const cubes = VOXEL_ROCK_OFFSETS.map(([x, y, z]) => {
+    const cube = new THREE.BoxGeometry(1, 1, 1);
+    cube.translate(x, y, z);
+    return cube;
+  });
+
+  const merged = mergeGeometries(cubes);
+  if (!merged) throw new Error('voxel rock: cube merge failed');
+  // The offsets span -1.5..1.5 in each axis; bring that to about a unit radius.
+  merged.scale(0.62, 0.62, 0.62);
+  merged.computeVertexNormals();
+  return merged;
+}
+
+/** The meteor's body. Cached like every other shape; the pool shares one. */
+export function voxelRockGeometry(assets: AssetManager): THREE.BufferGeometry {
+  return assets.geometry('projectile-shape:voxel-rock', buildVoxelRock);
+}
+
 /** The orbiting rune band; only `runeOrb` asks for one. */
 export function runeRingGeometry(assets: AssetManager): THREE.BufferGeometry {
   return assets.geometry('projectile-shape:rune-ring', buildRuneRing);

@@ -132,15 +132,6 @@
   opacity: 0.55;
 }
 
-/*
- * While a card is armed the panel must not eat the click — the arena underneath
- * is where the spell goes, and the panels cover the lanes the Towers sit in.
- */
-.armed .row,
-.armed .toggle {
-  pointer-events: none;
-}
-
 .rowTop {
   align-items: baseline;
   display: flex;

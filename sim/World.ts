@@ -15,6 +15,7 @@ import {
   CHARGE_TIME,
   CORE_HEALTH,
   CORE_RADIUS,
+  EXECUTE_THRESHOLD,
   HEAL_INTERRUPT_DURATION,
   HEAL_INTERRUPT_KNOCKBACK,
   HIT_STUN,
@@ -35,9 +36,11 @@ import {
   SIEGE_RAMP_END,
   SIEGE_RAMP_START,
   SIEGE_RAMP_SUDDEN_DEATH,
+  SIM_DT,
   SPACING,
   SPAWN_MARGIN,
   SPELL_CAST_FX_DURATION,
+  SPELL_GLOBAL_COOLDOWN,
   STRUCTURE_DAMAGE_MULTIPLIER,
   STRUCTURE_TOP_HEIGHT,
   SUDDEN_DEATH_DURATION,
@@ -55,10 +58,15 @@ import { defaultArena } from './defaultMap';
 import {
   absorbWithShield,
   applyEffect,
+  canAct,
   chargeRateMultiplier,
   clearEffects,
+  damageDealtMultiplier,
+  damageImmune,
   damageTakenMultiplier,
+  hasEffect,
   isEffectKind,
+  magnitudeOf,
   moveSpeedMultiplier,
   removeEffect,
   tickEffects,
@@ -78,11 +86,19 @@ import {
 } from './entities';
 import { PathGrid } from './PathGrid';
 import { type Role } from './roles';
-import { spellFor, type SpellCard, type SpellId } from './spells';
+import { spellFor, type SpellApplication, type SpellCard, type SpellId } from './spells';
+import { spellRiderFor } from './spellRiders';
 import { Vec2 } from './Vec2';
 
 /** Why a `castSpell()` call was rejected — surfaced to the client for UI feedback. */
-export type CastRejection = 'unknown_card' | 'not_enough_mana' | 'out_of_bounds' | 'match_over';
+export type CastRejection =
+  | 'unknown_card'
+  | 'not_enough_mana'
+  | 'out_of_bounds'
+  | 'match_over'
+  | 'on_cooldown'
+  /** Every mage this team has standing is stone; see {@link World.squadPetrified}. */
+  | 'squad_petrified';
 
 export type CastResult = { ok: true } | { ok: false; reason: CastRejection };
 
@@ -130,6 +146,19 @@ export interface SpellCastFx {
   elapsed: number;
 }
 
+/**
+ * One entry of a card's `apply` list that has not happened yet — see
+ * `SpellApplyRule.delay`. The position is kept and the *targets* are not: who
+ * it catches is decided when it fires.
+ */
+interface PendingApplication {
+  readonly team: Team;
+  readonly spell: SpellCard;
+  readonly app: SpellApplication;
+  readonly position: Vec2;
+  remaining: number;
+}
+
 export class World {
   readonly mages = new Map<string, Mage>();
   readonly projectiles = new Map<string, Projectile>();
@@ -165,6 +194,29 @@ export class World {
   private readonly teamCounts = new Map<Team, number>();
   private readonly mana = new Map<Team, number>();
   private readonly manaAccum = new Map<Team, number>();
+  /** Seconds until each team may cast again; see {@link SPELL_GLOBAL_COOLDOWN}. */
+  private readonly castCooldown = new Map<Team, number>();
+  /**
+   * Card applications waiting out their `delay`. Not cosmetic and not a marker:
+   * this is damage that has been paid for and has not landed yet, so it is
+   * simulation state like any other and it is why {@link updatePendingApplications}
+   * runs inside `step` rather than off a timer.
+   */
+  private readonly pendingApplications: PendingApplication[] = [];
+  /** A team's raised mana regeneration, while it lasts; see {@link attuneMana}. */
+  private readonly manaFlow = new Map<Team, { multiplier: number; remaining: number }>();
+  /** Re-entrancy guard for the pain bond; see {@link spreadBondedPain}. */
+  private bondEcho = false;
+  /**
+   * Walls a card put on the map, and a counter of how many times that map has
+   * changed shape. The epoch is what the A* cache is keyed on; see
+   * {@link spawnBarrier} for why a count of structures was not enough.
+   */
+  private readonly barriers: { position: Vec2; radius: number; remaining: number }[] = [];
+  private arenaEpoch = 0;
+  private cachedArenaEpoch = -1;
+  /** Gravity wells still turning; see {@link spawnVortex}. */
+  private readonly vortices: { position: Vec2; radius: number; pull: number; remaining: number }[] = [];
 
   private cachedPathGrid: PathGrid | null = null;
   private cachedPathBlockers = -1;
@@ -174,6 +226,7 @@ export class World {
     for (const team of [TEAM_A, TEAM_B] as Team[]) {
       this.mana.set(team, MANA_START);
       this.manaAccum.set(team, 0);
+      this.castCooldown.set(team, 0);
     }
     this.buildStructures();
   }
@@ -233,9 +286,69 @@ export class World {
     this.mana.set(team, Math.max(0, this.manaOf(team) - amount));
   }
 
-  private updateMana(dt: number): void {
-    const rate = this.suddenDeath ? SUDDEN_DEATH_MANA_MULTIPLIER : 1;
+  /**
+   * Mana from something other than the clock (GDD §7) — Tributo Obscuro, so
+   * far, which buys it with its own squad's health.
+   *
+   * Clamped at {@link MANA_MAX}, and the clamp is the point. Nothing in
+   * `updateMana` ever brings an over-full bar back down: it stops *adding* at
+   * the ceiling and otherwise leaves the number alone. A grant that overshot
+   * would therefore park a team above the ceiling for the rest of the match,
+   * which is not a stronger card, it is a broken economy.
+   */
+  grantMana(team: Team, amount: number): void {
+    if (amount <= 0) return;
+    this.mana.set(team, Math.min(MANA_MAX, this.manaOf(team) + amount));
+  }
+
+  /** Seconds a team must still wait before its next cast; 0 when it may cast now. */
+  castCooldownOf(team: Team): number {
+    return this.castCooldown.get(team) ?? 0;
+  }
+
+  private updateCastCooldown(dt: number): void {
     for (const team of [TEAM_A, TEAM_B] as Team[]) {
+      const left = this.castCooldownOf(team);
+      if (left > 0) this.castCooldown.set(team, decay(left, dt));
+    }
+  }
+
+  /**
+   * Raises a team's mana regeneration for a while (GDD §7) — Fluxo de Mana.
+   *
+   * A team-level timer rather than an effect on the mages, because the thing
+   * being changed belongs to the team and not to any body: mana is not carried
+   * by anybody, and a squad wiped mid-flow would otherwise lose an investment
+   * it had already paid for, for a reason no readout on the field explains.
+   *
+   * The stronger flow wins and the longer one lasts, independently — the same
+   * `refresh_strongest` bargain the effect catalog makes, kept the same here so
+   * two casts of an economy card behave the way two casts of a slow do.
+   */
+  attuneMana(team: Team, multiplier: number, duration: number): void {
+    if (multiplier <= 1 || duration <= 0) return;
+    const running = this.manaFlow.get(team);
+    this.manaFlow.set(team, {
+      multiplier: Math.max(multiplier, running?.multiplier ?? 0),
+      remaining: Math.max(duration, running?.remaining ?? 0),
+    });
+  }
+
+  private manaRateOf(team: Team): number {
+    const flow = this.manaFlow.get(team);
+    return flow && flow.remaining > 0 ? flow.multiplier : 1;
+  }
+
+  private updateMana(dt: number): void {
+    // Sudden death and a card multiply rather than replace each other: one is
+    // the clock the whole match runs on and the other is something a player
+    // paid for, and picking a winner would quietly refund whichever lost.
+    const global = this.suddenDeath ? SUDDEN_DEATH_MANA_MULTIPLIER : 1;
+    for (const team of [TEAM_A, TEAM_B] as Team[]) {
+      const rate = global * this.manaRateOf(team);
+      const flow = this.manaFlow.get(team);
+      if (flow && flow.remaining > 0) flow.remaining = decay(flow.remaining, dt);
+
       if (this.manaOf(team) >= MANA_MAX) {
         this.manaAccum.set(team, 0);
         continue;
@@ -379,14 +492,50 @@ export class World {
 
     const spell = spellFor(spellId);
     if (!spell) return { ok: false, reason: 'unknown_card' };
+    // Ahead of the mana check, unlike everything else: a team whose whole squad
+    // is stone has no one to channel through, and answering "not enough mana"
+    // would send the player looking at the wrong readout entirely. It is also
+    // the one rejection that is *about the opponent* — it names something they
+    // did to you rather than something you got wrong.
+    if (this.squadPetrified(team)) return { ok: false, reason: 'squad_petrified' };
     if (this.manaOf(team) < spell.cost) return { ok: false, reason: 'not_enough_mana' };
     if (this.arena.outOfBounds(position)) return { ok: false, reason: 'out_of_bounds' };
+    // Checked last on purpose: every rejection above says something is wrong
+    // with the *request*, which the caster can act on. This one is only about
+    // timing and resolves on its own, so it is the least useful thing to hear.
+    if (this.castCooldownOf(team) > 0) return { ok: false, reason: 'on_cooldown' };
 
+    this.castCooldown.set(team, SPELL_GLOBAL_COOLDOWN);
     this.spendMana(team, spell.cost);
     this.applySpellEffect(team, spell, position);
     this.recordCastFx(team, spell, position);
     this.recordCast(team, spell.id);
     return { ok: true };
+  }
+
+  /**
+   * Whether every mage this team still has standing is stone (GDD §9).
+   *
+   * The only hard lock on casting in the game. Petrificar is an area card, so
+   * this is reachable exactly when the enemy has bunched up inside one cast —
+   * which is the situation the card asks a program to wait for, and the reason
+   * it is worth four mana against two and a half seconds of protecting what it
+   * caught.
+   *
+   * Guarded on *living* mages, and false for a team with none. A squad wiped to
+   * the last man is not petrified, it is dead: blocking its casts would turn a
+   * lost fight into an unrecoverable one for a reason nothing on screen
+   * explains. The empty case matters beyond taste, too — every test that casts
+   * before summoning anybody would otherwise be vacuously locked out.
+   */
+  squadPetrified(team: Team): boolean {
+    let living = 0;
+    for (const m of this.mages.values()) {
+      if (m.team !== team || !m.alive) continue;
+      living++;
+      if (!hasEffect(m, 'petrify')) return false;
+    }
+    return living > 0;
   }
 
   private recordCast(team: Team, spellId: SpellId): void {
@@ -418,63 +567,246 @@ export class World {
     }
   }
 
+  /**
+   * Runs a card's `apply` list over whatever its `target` caught (GDD §9).
+   *
+   * There is deliberately no per-card branch here. A card is data: each
+   * application either names a status kind, which goes straight to
+   * `applyEffect`, or a rider in `spellRiders.ts` for the behaviours that
+   * touch the world rather than a mage. Adding a card is a `balance.json`
+   * edit, and only a new *kind* of behaviour reaches code.
+   */
   private applySpellEffect(team: Team, spell: SpellCard, position: Vec2): void {
-    switch (spell.effect.kind) {
-      case 'buff_haste': {
-        const { speedFactor, castFactor } = spell.effect;
-        for (const m of this.mages.values()) {
-          if (!m.alive || m.team !== team) continue;
-          if (m.position.distanceTo(position) > spell.radius) continue;
-          applyEffect(m, { kind: 'haste', magnitude: speedFactor, duration: spell.duration });
-          applyEffect(m, { kind: 'cast_haste', magnitude: castFactor, duration: spell.duration });
-        }
-        break;
+    for (const app of spell.apply) {
+      const delay = app.delay ?? 0;
+      if (delay > 0) {
+        this.pendingApplications.push({ team, spell, app, position, remaining: delay });
+        continue;
       }
-      case 'curse_slow': {
-        const { slowFactor } = spell.effect;
-        for (const m of this.mages.values()) {
-          if (!m.alive || m.team === team) continue;
-          if (m.position.distanceTo(position) > spell.radius) continue;
-          applyEffect(m, { kind: 'slow', magnitude: slowFactor, duration: spell.duration });
-        }
-        break;
-      }
-      case 'buff_shield': {
-        const { amount } = spell.effect;
-        for (const m of this.mages.values()) {
-          if (!m.alive || m.team !== team) continue;
-          if (m.position.distanceTo(position) > spell.radius) continue;
-          applyEffect(m, { kind: 'shield', magnitude: amount, duration: spell.duration });
-        }
-        break;
-      }
-      case 'curse_zone':
-        this.spawnCurseZone(position, spell.radius, spell.duration, spell.effect.tickInterval, spell.effect.tickDamage);
-        break;
+      this.applyOneApplication(team, spell, app, position);
     }
   }
 
-  /** Praga (GDD §9): a ground hazard that hurts anyone overlapping it, bypassing shield. */
-  private spawnCurseZone(
+  /**
+   * Runs the applications whose warning has run out (GDD §9).
+   *
+   * Targets are resolved here rather than being remembered from the cast, which
+   * is the whole reason a delayed card is a different card and not a slow one:
+   * the eruption catches whoever is standing on it when it goes off. A queue
+   * that held onto its victims would be an instant card wearing a wind-up, and
+   * the warning drawn on the ground would be telling the player something he
+   * cannot act on.
+   *
+   * Iterated back to front so an entry can be spliced out on the tick it fires.
+   * Order between two entries due on the same tick is cast order, which is what
+   * keeps two eruptions landing together deterministic.
+   */
+  private updatePendingApplications(dt: number): void {
+    for (let i = this.pendingApplications.length - 1; i >= 0; i--) {
+      const pending = this.pendingApplications[i];
+      pending.remaining -= dt;
+      if (pending.remaining > 0) continue;
+
+      this.pendingApplications.splice(i, 1);
+      this.applyOneApplication(pending.team, pending.spell, pending.app, pending.position);
+    }
+  }
+
+  /** One entry of a card's `apply` list, against whoever it catches right now. */
+  private applyOneApplication(team: Team, spell: SpellCard, app: SpellApplication, position: Vec2): void {
+    const targets = this.spellTargets(team, spell, position);
+
+    if (isEffectKind(app.effect)) {
+      for (const m of targets) {
+        applyEffect(m, {
+          kind: app.effect,
+          magnitude: app.magnitude ?? 0,
+          duration: app.duration ?? spell.duration,
+          tickInterval: app.tickInterval,
+          tickDamage: app.tickDamage,
+          tickHeal: app.tickHeal,
+        });
+
+        // A cast stun has to root the body, not merely decorate it.
+        // `updateMage` reads `stunTimer`, so an effect on its own would show
+        // the motes over the head and let the mage walk away — the element
+        // path already mirrors it for exactly this reason (see `applyOnHit`).
+        if (app.effect === 'stun') {
+          const duration = app.duration ?? spell.duration;
+          m.stunTimer = Math.max(m.stunTimer, duration);
+        }
+      }
+      return;
+    }
+    spellRiderFor(app.effect)?.(this, { team, spell, app, position, targets });
+  }
+
+  /**
+   * Vórtice Gravitacional: a patch of ground that pulls, for as long as it
+   * lasts (GDD §9).
+   *
+   * The first card that writes on the *field* instead of on the mages it
+   * caught. Everything else in the catalog resolves against a list of bodies
+   * and is then finished; this leaves something behind that keeps asking the
+   * question, which is what makes it worth pairing with a hazard — a squad can
+   * walk out of a vortex, and cannot walk out of one under a meteor shower.
+   */
+  spawnVortex(position: Vec2, radius: number, duration: number, pull: number): void {
+    if (radius <= 0 || duration <= 0 || pull <= 0) return;
+    this.vortices.push({ position, radius, pull, remaining: duration });
+  }
+
+  /**
+   * Drags every living body inside a well toward its middle.
+   *
+   * Moved through {@link resolveMove} rather than by writing the position, so
+   * the pull slides along a wall instead of dragging mages into one — a field
+   * that could pull a squad inside the scenery would be a card that removes
+   * mages from the match.
+   *
+   * It pulls both teams, and there is no caster to exempt. A field is a place,
+   * not a curse: a program that walks its own squad into its own vortex has
+   * made a mistake the game should let it make, and the alternative is a card
+   * that is safe to leave lying anywhere, which is no decision at all.
+   */
+  private updateVortices(dt: number): void {
+    for (let i = this.vortices.length - 1; i >= 0; i--) {
+      const well = this.vortices[i];
+      well.remaining = decay(well.remaining, dt);
+      if (well.remaining <= 0) {
+        this.vortices.splice(i, 1);
+        continue;
+      }
+
+      for (const id of sortedIds(this.mages.keys())) {
+        const m = this.mages.get(id);
+        if (!m?.alive) continue;
+        const toCentre = well.position.sub(m.position);
+        const distance = toCentre.length();
+        if (distance > well.radius || distance <= 1e-6) continue;
+
+        // Capped by the distance left, so the pull never overshoots the centre
+        // and jitters a body back and forth across it at the tick rate.
+        const step = Math.min(well.pull * dt, distance);
+        m.position = this.resolveMove(m.position, toCentre.normalized().scale(step));
+      }
+    }
+  }
+
+  /**
+   * Puts a mage somewhere else (GDD §9) — Dobra Espacial.
+   *
+   * Resolved through {@link freePositionNear}, the same helper the spacing pass
+   * uses, so a fold aimed at a wall or at the enemy Core puts the body beside
+   * it rather than inside it. Arriving inside a blocker does not read as a
+   * failed cast: it reads as a mage stuck in scenery for the rest of the match.
+   *
+   * The knockback goes, because a shove belongs to the place it happened. The
+   * charge does not: a mage that folded mid-throw still has a throw in its
+   * hands, which is the card's best moment and nothing about the trip undoes it.
+   *
+   * Nothing has to be said to the `Brain` here, and that is worth writing down
+   * because the plan expected the opposite. Its cached route is dropped when
+   * `pathFrom` and the body disagree by more than `PATH_REPLAN_DISTANCE`, which
+   * a fold guarantees — the staleness test that exists for a bot walking away
+   * from its own plan already covers a bot that arrived somewhere else.
+   */
+  foldTo(m: Mage, to: Vec2): void {
+    if (!m.alive) return;
+    m.position = this.freePositionNear(this.arena.clamp(to, MAGE_RADIUS));
+    m.velocity = Vec2.zero;
+    m.knockbackVelocity = Vec2.zero;
+  }
+
+  /**
+   * Cuts short a mage's time off the field (GDD §4) — Chamado à Batalha.
+   *
+   * The floor is load-bearing and is not defensive rounding. `updateMage` only
+   * decays a respawn timer it finds **above zero**, and the branch that puts
+   * the body back is inside that decay. A timer cut to exactly zero is
+   * therefore never touched again: the card meant to shorten a death would make
+   * it permanent, and only for the mages it helped most. One tick is the
+   * smallest value that still passes through the machinery that revives.
+   */
+  hastenRespawn(m: Mage, seconds: number): void {
+    if (m.alive || seconds <= 0 || m.respawnTimer <= 0) return;
+    m.respawnTimer = Math.max(SIM_DT, m.respawnTimer - seconds);
+  }
+
+  /**
+   * Shoves a mage, without hurting it (GDD §9).
+   *
+   * The same additive velocity `dealDamage` applies, and for the same reason it
+   * lives in `World` rather than in the rider that calls it: knockback is a
+   * decaying slide over the stun window, and the heal interrupt hangs off how
+   * hard the shove was rather than off what caused it. A rider writing to
+   * `knockbackVelocity` directly would have been the second place in the
+   * codebase that knows either of those things.
+   *
+   * Hit stun comes with it. A body flying backwards that is still calmly
+   * charging a throw is the tell that this was applied to the wrong field —
+   * and without the stun, `updateMage` never runs the slide at all, so the
+   * velocity would be set and silently ignored.
+   */
+  shove(m: Mage, direction: Vec2, magnitude: number): void {
+    if (magnitude <= 0 || !m.alive) return;
+    const n = direction.normalized();
+    if (n.lengthSq() <= 0) return;
+
+    m.knockbackVelocity = m.knockbackVelocity.add(n.scale(magnitude));
+    m.stunTimer = Math.max(m.stunTimer, HIT_STUN);
+    if (magnitude >= HEAL_INTERRUPT_KNOCKBACK) {
+      m.healInterruptTimer = Math.max(m.healInterruptTimer, HEAL_INTERRUPT_DURATION);
+    }
+  }
+
+  /**
+   * The living mages a card catches. Empty for a `ground` card, which affects
+   * a place rather than people — the hazard it leaves behind is what does the
+   * catching, later.
+   */
+  private spellTargets(team: Team, spell: SpellCard, position: Vec2): Mage[] {
+    if (spell.target === 'ground') return [];
+
+    const out: Mage[] = [];
+    for (const m of this.mages.values()) {
+      if (!m.alive) continue;
+      if (spell.target === 'allies' && m.team !== team) continue;
+      if (spell.target === 'enemies' && m.team === team) continue;
+      if (m.position.distanceTo(position) > spell.radius) continue;
+      out.push(m);
+    }
+    return out;
+  }
+
+  /** A ground hazard left by a spell (GDD §9) — Praga and everything after it. */
+  spawnSpellPuddle(
     position: Vec2,
-    radius: number,
-    duration: number,
-    tickInterval: number,
-    tickDamage: number,
+    opts: {
+      /** The card responsible, for the client's benefit only; see {@link Puddle}. */
+      spellId: string;
+      radius: number;
+      duration: number;
+      tickInterval: number;
+      tickDamage: number;
+      bypassShield: boolean;
+    },
   ): void {
     const id = `puddle-${++this.nextId}`;
     this.puddles.set(id, {
       id,
+      // Not a mage id, so `kill` credits nobody — a zone cannot take a kill.
       ownerId: 'spell',
+      spellId: opts.spellId,
       position,
-      radius,
-      duration,
+      radius: opts.radius,
+      duration: opts.duration,
       elapsed: 0,
-      tickInterval,
-      tickDamage,
+      tickInterval: opts.tickInterval,
+      tickDamage: opts.tickDamage,
       tickTimer: 0,
       alive: true,
-      bypassShield: true,
+      bypassShield: opts.bypassShield,
     });
   }
 
@@ -494,10 +826,19 @@ export class World {
 
     this.elapsed += dt;
     this.updateMana(dt);
+    this.updateCastCooldown(dt);
+    // Before movement, so a card that was warning about this tick catches the
+    // squad where the player last saw them standing rather than a step on.
+    this.updatePendingApplications(dt);
     // Auras are resolved before movement so a mage charges at the rate implied
     // by where the support stood at the top of this tick.
     this.updateSupportAuras();
     for (const m of this.mages.values()) this.updateMage(m, dt);
+    // After the mages have moved themselves and before they are spaced out: a
+    // well competes with walking rather than replacing it, and the spacing pass
+    // is what stops it from stacking a squad on one point.
+    this.updateVortices(dt);
+    this.updateBarriers(dt);
     this.applySupportHealing(dt);
     this.separateMages();
     // Local pushout first; then the planner fallback for bodies still wedged
@@ -533,7 +874,10 @@ export class World {
         // A DoT never re-applies hit-stun: it lands several times a second, and
         // stacking HIT_STUN on every tick would silently root anyone standing
         // in it. The flinch belongs to the hit that applied the effect.
-        this.dealDamage(m, t.damage, { attackerId: t.sourceId, noHitStun: true });
+        if (t.damage > 0) this.dealDamage(m, t.damage, { attackerId: t.sourceId, noHitStun: true });
+        // Overflow is discarded rather than banked: a regen cast on a healthy
+        // mage is a wasted card, which is what makes timing it a decision.
+        if (t.heal > 0) m.health = Math.min(m.maxHealth, m.health + t.heal);
       }
     }
 
@@ -542,6 +886,17 @@ export class World {
         m.respawnTimer = decay(m.respawnTimer, dt);
         if (m.respawnTimer === 0) this.respawn(m);
       }
+      return;
+    }
+
+    // Checked before the stun block, and without the knockback slide: a stunned
+    // mage is a body being shoved, a petrified one is scenery. Nothing moves it
+    // and nothing it was doing survives — the charge is dropped rather than
+    // paused, so stone never resumes mid-throw when it cracks.
+    if (!canAct(m) && hasEffect(m, 'petrify')) {
+      m.knockbackVelocity = Vec2.zero;
+      m.charge = 0;
+      m.state = 'petrified';
       return;
     }
 
@@ -715,7 +1070,8 @@ export class World {
     for (let pass = 0; pass < DEPENETRATION_PASSES; pass++) {
       const push = this.arena
         .pushOutOfObstacles(out, MAGE_RADIUS)
-        .add(this.pushOutOfStructures(out, MAGE_RADIUS));
+        .add(this.pushOutOfStructures(out, MAGE_RADIUS))
+        .add(this.pushOutOfBarriers(out, MAGE_RADIUS));
       if (push.lengthSq() <= 1e-12) break;
       out = this.arena.clamp(out.add(push), MAGE_RADIUS);
     }
@@ -766,6 +1122,9 @@ export class World {
     for (const s of this.structures.values()) {
       if (s.alive && s.position.distanceTo(p) < s.radius + radius) return true;
     }
+    for (const b of this.barriers) {
+      if (b.position.distanceTo(p) < b.radius + radius) return true;
+    }
     return false;
   }
 
@@ -807,7 +1166,11 @@ export class World {
     let blockers = 0;
     for (const s of this.structures.values()) if (s.alive) blockers++;
 
-    if (!this.cachedPathGrid || blockers !== this.cachedPathBlockers) {
+    if (
+      !this.cachedPathGrid ||
+      blockers !== this.cachedPathBlockers ||
+      this.arenaEpoch !== this.cachedArenaEpoch
+    ) {
       // Planned with a margin over the body radius. A cell whose *centre* is
       // just barely clear can still have a sliver of blocker across the line to
       // the next centre, and a mage told to walk that line pushes into the
@@ -816,8 +1179,51 @@ export class World {
         this.blockedAt(p, MAGE_RADIUS + PATH_CLEARANCE),
       );
       this.cachedPathBlockers = blockers;
+      this.cachedArenaEpoch = this.arenaEpoch;
     }
     return this.cachedPathGrid;
+  }
+
+  /**
+   * Fenda de Cristal: a wall that was not on the map, for as long as it holds
+   * (GDD §9).
+   *
+   * The arena has been a constant since the pivot — obstacles are authored on
+   * disk and structures only ever come down — so this is the first thing a
+   * player can do that changes where anybody is *able* to walk.
+   *
+   * {@link arenaEpoch} is the whole reason this card is Tier 3 and not a
+   * `balance.json` edit. The A* grid was cached on the count of living
+   * structures, which was a complete key while a fallen Tower was the only
+   * thing that could open or close a route. A barrier does not touch that
+   * count, so without the epoch every bot on the field keeps walking a grid
+   * planned before the crystal existed — and the symptom is not a crash or a
+   * mage in a wall. It is a wall that does nothing at all, which is
+   * indistinguishable from a card nobody implemented.
+   */
+  spawnBarrier(position: Vec2, radius: number, duration: number): void {
+    if (radius <= 0 || duration <= 0) return;
+    this.barriers.push({ position, radius, remaining: duration });
+    this.arenaEpoch++;
+  }
+
+  private updateBarriers(dt: number): void {
+    for (let i = this.barriers.length - 1; i >= 0; i--) {
+      const b = this.barriers[i];
+      b.remaining = decay(b.remaining, dt);
+      if (b.remaining > 0) continue;
+      this.barriers.splice(i, 1);
+      // A route that was shut is open again, and the grid has to be told the
+      // same way it was told the crystal arrived.
+      this.arenaEpoch++;
+    }
+  }
+
+  /** {@link Arena.pushOutOfObstacles} for the barriers standing right now. */
+  private pushOutOfBarriers(p: Vec2, radius: number): Vec2 {
+    let push = Vec2.zero;
+    for (const b of this.barriers) push = push.add(pushOutOfCircle(b.position, b.radius, p, radius));
+    return push;
   }
 
   /**
@@ -1214,6 +1620,8 @@ export class World {
     this.puddles.set(id, {
       id,
       ownerId,
+      // An element, not a card: the client's green default is right for it.
+      spellId: null,
       position: pos,
       radius: rule.radius ?? 0,
       duration: rule.duration ?? 0,
@@ -1263,12 +1671,38 @@ export class World {
    * own whether that earns a kill.
    */
   dealDamage(m: Mage, amount: number, opts: DamageOptions = {}): void {
-    if (!m.alive || m.immunityTimer > 0) return;
+    // Stone is not a legal target, so this returns before the shield is touched
+    // and before anything can be credited a kill — see `damageImmune`, which is
+    // a separate question from a multiplier of zero for exactly that reason.
+    if (!m.alive || m.immunityTimer > 0 || damageImmune(m)) return;
 
     // Arcane marks a target so the rest of the squad hits harder (GDD §8.7) —
     // applied before the shield, so vulnerability burns through Escudo Arcano
     // faster too.
-    let remaining = amount * damageTakenMultiplier(m);
+    //
+    // The attacker's own multiplier joins it here, resolved at the moment the
+    // damage lands rather than when it was set in motion. That is the same rule
+    // vulnerability already follows, and it keeps one clock for both sides of
+    // the exchange. `attackerId` is not always a mage — a Tower bolt carries the
+    // structure's id and a Praga zone the literal 'spell' — and neither is in
+    // `mages`, so both come back unmultiplied.
+    const attacker = opts.attackerId ? this.mages.get(opts.attackerId) : undefined;
+    const dealt = attacker ? damageDealtMultiplier(attacker) : 1;
+    // An execution mark is the one multiplier that asks about the *state* of the
+    // target rather than about an effect on it, so it cannot live in
+    // `damageTakenMultiplier` with the others — that function is handed a
+    // carrier and has no health to read. Measured before this hit lands: a mark
+    // that counted the damage it is currently applying would fire on the blow
+    // that brings the target under the line rather than on the one after, which
+    // is a finisher that finishes what was not yet dying.
+    const mark = magnitudeOf(m, 'marked');
+    const executing = mark > 0 && m.health <= m.maxHealth * EXECUTE_THRESHOLD;
+
+    let remaining = amount * dealt * damageTakenMultiplier(m) * (executing ? 1 + mark : 1);
+    // Ahead of the shield, because what is handed to the rest of the squad was
+    // never this body's to absorb: the share should meet *their* shields, not
+    // be eaten by one Escudo Arcano on the mage who happened to be aimed at.
+    remaining = this.shareBondedDamage(m, remaining, opts);
     if (!opts.bypassShield) remaining = absorbWithShield(m, remaining);
     m.health -= remaining;
 
@@ -1292,6 +1726,94 @@ export class World {
     if (!opts.noHitStun) m.stunTimer = Math.max(m.stunTimer, HIT_STUN);
 
     if (m.health <= 0) this.kill(m, opts.attackerId ?? null);
+    this.spreadBondedPain(m, remaining, opts);
+  }
+
+  /**
+   * Vínculo de Solidariedade: `magnitude` of a hit is lifted off the body it
+   * landed on and split evenly among the rest of the bond (GDD §9). Returns
+   * what the struck mage is left holding.
+   *
+   * Nothing is lost on the way round, and that is the design rather than an
+   * accident of the arithmetic. A bond that quietly shed damage in transit
+   * would be a mitigation card wearing a bond's clothes, and every number in
+   * the game would have to be re-read against it. What the card buys is not
+   * less damage — it is that no single body falls off the field, and a death
+   * costs six seconds of presence where a wound costs none.
+   *
+   * With nobody else left in the bond the share has nowhere to go, so the mage
+   * keeps all of it: a solidarity of one is the last survivor of a squad, and
+   * quietly deleting the other half of the hit would make it the toughest mage
+   * in the game at exactly the wrong moment.
+   */
+  private shareBondedDamage(m: Mage, amount: number, opts: DamageOptions): number {
+    if (this.bondEcho || amount <= 0) return amount;
+    const share = magnitudeOf(m, 'bonded');
+    if (share <= 0) return amount;
+
+    const others: Mage[] = [];
+    for (const id of sortedIds(this.mages.keys())) {
+      const other = this.mages.get(id);
+      if (!other || other === m || !other.alive || other.team !== m.team) continue;
+      if (hasEffect(other, 'bonded')) others.push(other);
+    }
+    if (others.length === 0) return amount;
+
+    const each = (amount * share) / others.length;
+    this.bondEcho = true;
+    try {
+      // Credited to whoever swung, and without the flinch: the blow landed on
+      // one body, and stunning three more for it would take a whole squad off
+      // the field for a hit they were not in the way of.
+      for (const other of others) {
+        this.dealDamage(other, each, { attackerId: opts.attackerId ?? null, noHitStun: true });
+      }
+    } finally {
+      this.bondEcho = false;
+    }
+    return amount * (1 - share);
+  }
+
+  /**
+   * Vínculo da Dor: a share of what one bound mage took arrives on the others
+   * (GDD §9).
+   *
+   * Spread from `remaining` — what actually landed after the multipliers and
+   * after the shield ate its part — rather than from the damage that was aimed.
+   * A bond that copied the raw number would pay out in full through a shield
+   * that stopped the hit, which is a card doing its damage twice.
+   *
+   * `bondEcho` is the guard, and it is not defensive. Mirrored damage is
+   * damage: without it the mirror walks straight back into `dealDamage`, finds
+   * the same web, and bounces between two bodies inside a single call — for as
+   * long as float arithmetic keeps shrinking it, and forever at a share of 1.
+   * One hop is also the right *rule*, not merely the terminating one: the bond
+   * shares what the fight did, not what the bond did.
+   */
+  private spreadBondedPain(source: Mage, dealt: number, opts: DamageOptions): void {
+    if (this.bondEcho || dealt <= 0) return;
+    const share = magnitudeOf(source, 'linked');
+    if (share <= 0) return;
+
+    this.bondEcho = true;
+    try {
+      for (const id of sortedIds(this.mages.keys())) {
+        const other = this.mages.get(id);
+        if (!other || other === source || !other.alive) continue;
+        if (!hasEffect(other, 'linked')) continue;
+        // Credited to whoever swung: a bond is a way of hitting four mages with
+        // one throw, and the kill it eventually earns belongs to the thrower.
+        this.dealDamage(other, dealt * share, {
+          attackerId: opts.attackerId ?? null,
+          // The flinch belongs to the body that was actually struck. Stunning a
+          // whole web every time one of them is grazed would take four mages
+          // off the field for a hit that landed on one.
+          noHitStun: true,
+        });
+      }
+    } finally {
+      this.bondEcho = false;
+    }
   }
 
   /**

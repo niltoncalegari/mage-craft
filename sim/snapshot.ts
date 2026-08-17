@@ -16,7 +16,7 @@ import type { EffectKind } from './effects';
 import { TEAM_A, TEAM_B } from './entities';
 import type { ElementId } from './elements';
 import type { RosterId } from './cards';
-import type { SnapshotMsg } from './protocol';
+import type { FiredRuleDTO, SnapshotMsg } from './protocol';
 import { fromVec2 } from './protocol';
 import { Vec2 } from './Vec2';
 import type { World } from './World';
@@ -110,6 +110,8 @@ export interface PuddleSnapshotState {
   position: Vec2;
   radius: number;
   remaining: number;
+  /** The card that left it, or null when an element did; see {@link Puddle}. */
+  spellId: string | null;
 }
 
 /** Reads the whole world into a transport-free snapshot. */
@@ -162,6 +164,7 @@ export function buildSnapshot(world: World, tick: number): Snapshot {
       position: pu.position,
       radius: pu.radius,
       remaining: pu.duration - pu.elapsed,
+      spellId: pu.spellId,
     })),
     spells: [...world.spellCasts.values()].map((fx) => ({
       id: fx.id,
@@ -178,6 +181,12 @@ export interface SnapshotView {
   mana: number;
   hand: string[];
   next?: string | null;
+  /**
+   * The rule that last cast for this receiver, or null when none has. Rides the
+   * per-receiver channel for the same reason mana and hand do: a program is its
+   * author's, and the opponent must not read it off the wire.
+   */
+  firedRule?: FiredRuleDTO | null;
 }
 
 /** Shapes a snapshot into the wire message for one receiver. */
@@ -236,6 +245,7 @@ export function toSnapshotMsg(snap: Snapshot, view: SnapshotView): SnapshotMsg {
       position: fromVec2(pu.position),
       radius: pu.radius,
       remaining: pu.remaining,
+      spellId: pu.spellId,
     })),
     spells: snap.spells.map((fx) => ({
       id: fx.id,
@@ -247,5 +257,6 @@ export function toSnapshotMsg(snap: Snapshot, view: SnapshotView): SnapshotMsg {
     mana: view.mana,
     hand: view.hand,
     ...(view.next ? { next: view.next } : {}),
+    ...(view.firedRule ? { firedRule: view.firedRule } : {}),
   };
 }
