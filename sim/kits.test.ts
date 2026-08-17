@@ -127,6 +127,21 @@ describe('ability policy — the Brain has something to read', () => {
   });
 
   /**
+   * A `minTargets` above 1 is a promise that the selector can point at a crowd,
+   * and only the two cluster selectors can — everything else resolves to one
+   * body, one structure or one point. Asking two of a selector that can only
+   * ever answer one is a skill that never fires on a `normal` mage, which the
+   * balance sweep of §5 would read as "weak" and nerf further.
+   */
+  it('only asks for a crowd where a crowd can be pointed at', () => {
+    for (const id of ALL_SPELLS) {
+      const policy = abilityPolicyFor(id)!;
+      if (policy.at === 'enemy_cluster' || policy.at === 'ally_cluster') continue;
+      expect(policy.minTargets, `${id} wants ${policy.minTargets} at ${policy.at}`).toBe(1);
+    }
+  });
+
+  /**
    * The siege debt (GDD §11): the Brain does not yet know to leave a Tower it
    * has latched onto, so a kit that aims at structures would have the balance
    * sweep blaming the skill for the movement AI. Structure selectors come back

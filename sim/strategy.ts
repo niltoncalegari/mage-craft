@@ -23,7 +23,7 @@
  * cannot fire is **skipped rather than waited on** — see `evaluateStrategy`.
  */
 
-import { isEffectKind, type EffectKind } from './effects';
+import { isEffectKind } from './effects';
 import { isSpellId, spellFor, type CardId } from './spells';
 import type { Posture } from './bot/Squad';
 import type { Vec2 } from './Vec2';
@@ -69,6 +69,7 @@ export type {
   NumericConditionKind,
   Condition,
   TargetSelector,
+  StrategyFacts,
 } from './abilityPolicy';
 
 import {
@@ -77,9 +78,11 @@ import {
   ALL_TARGET_SELECTORS,
   COMPARATORS,
   NUMERIC_RANGE,
+  holds,
   type Comparator,
   type Condition,
   type NumericConditionKind,
+  type StrategyFacts,
   type TargetSelector,
 } from './abilityPolicy';
 
@@ -98,38 +101,7 @@ export interface Strategy {
   readonly rules: readonly StrategyRule[];
 }
 
-/* ---- The situation --------------------------------------------------------- */
-
-/**
- * Everything the evaluator can see, from one team's point of view, for one
- * tick. Built once per evaluation by `buildFacts` — never per rule, which is
- * what keeps twelve rules from costing twelve passes over the squad.
- */
-export interface StrategyFacts {
-  readonly mana: number;
-  readonly elapsed: number;
-  readonly suddenDeath: boolean;
-  /** Null when the squad has no plan; posture rules then never fire. */
-  readonly posture: Posture | null;
-  readonly allyCount: number;
-  readonly enemyCount: number;
-  /** 1 when nobody is alive, so "someone is hurt" reads false rather than true. */
-  readonly allyLowestHealthFraction: number;
-  readonly enemyLowestHealthFraction: number;
-  readonly ourCoreFraction: number;
-  readonly enemyCoreFraction: number;
-  readonly ourTowersAlive: number;
-  readonly enemyTowersAlive: number;
-  /** Size of the biggest group inside `CLUSTER_RADIUS`; 0 when none are alive. */
-  readonly allyClusterSize: number;
-  readonly enemyClusterSize: number;
-  /** True only once an enemy is genuinely past the midline into our ground. */
-  readonly hasIntruder: boolean;
-  readonly allyEffects: ReadonlySet<EffectKind>;
-  readonly enemyEffects: ReadonlySet<EffectKind>;
-  /** Pre-resolved, so firing a rule is a lookup rather than another world scan. */
-  readonly targets: Readonly<Record<TargetSelector, Vec2 | null>>;
-}
+/* ---- Gate and decision ----------------------------------------------------- */
 
 /** What the hand and the bank allow right now, independent of the situation. */
 export interface StrategyGate {
@@ -189,84 +161,6 @@ export function evaluateStrategy(
     return { ruleId: rule.id, ruleIndex: i, cardId: rule.card, at: rule.at, position };
   }
   return null;
-}
-
-function holds(condition: Condition, facts: StrategyFacts): boolean {
-  switch (condition.kind) {
-    case 'always':
-      return true;
-    case 'sudden_death':
-      return facts.suddenDeath === condition.value;
-    case 'intruder':
-      return facts.hasIntruder;
-    case 'posture':
-      // A world with no squad plan has no opinion about posture, so a rule
-      // guarded on one must not fire in it.
-      return facts.posture !== null && facts.posture === condition.value;
-    case 'ally_has_effect':
-      return facts.allyEffects.has(condition.effect);
-    case 'enemy_has_effect':
-      return facts.enemyEffects.has(condition.effect);
-    case 'not':
-      return !holds(condition.of, facts);
-    case 'all':
-      return condition.of.every((c) => holds(c, facts));
-    case 'any':
-      return condition.of.some((c) => holds(c, facts));
-    default:
-      return compare(numericFact(condition.kind, facts), condition.op, condition.value);
-  }
-}
-
-function numericFact(kind: NumericConditionKind, f: StrategyFacts): number {
-  switch (kind) {
-    case 'mana':
-      return f.mana;
-    case 'elapsed':
-      return f.elapsed;
-    case 'ally_count':
-      return f.allyCount;
-    case 'enemy_count':
-      return f.enemyCount;
-    case 'ally_health':
-      return f.allyLowestHealthFraction;
-    case 'enemy_health':
-      return f.enemyLowestHealthFraction;
-    case 'ally_cluster':
-      return f.allyClusterSize;
-    case 'enemy_cluster':
-      return f.enemyClusterSize;
-    case 'our_core':
-      return f.ourCoreFraction;
-    case 'enemy_core':
-      return f.enemyCoreFraction;
-    case 'our_towers':
-      return f.ourTowersAlive;
-    case 'enemy_towers':
-      return f.enemyTowersAlive;
-    // Belongs to a body, and a program is evaluated once per team, so there is
-    // no self to ask about. `validateCondition` refuses it on the way in; this
-    // arm exists so the switch stays total over the shared union, and answers
-    // "unhurt" so a hand-edited program that slips one through reads inert
-    // rather than permanently true.
-    case 'self_health':
-      return 1;
-  }
-}
-
-function compare(actual: number, op: Comparator, value: number): boolean {
-  switch (op) {
-    case 'lt':
-      return actual < value;
-    case 'lte':
-      return actual <= value;
-    case 'gt':
-      return actual > value;
-    case 'gte':
-      return actual >= value;
-    case 'eq':
-      return actual === value;
-  }
 }
 
 /* ---- Validation ------------------------------------------------------------ */

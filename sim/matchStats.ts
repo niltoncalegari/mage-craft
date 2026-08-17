@@ -20,6 +20,8 @@ export interface MageStat {
   role: string;
   kills: number;
   deaths: number;
+  /** Abilities this body spent out of its own kit (plano v1.3 §7.1). */
+  casts: number;
 }
 
 export interface CastStat {
@@ -71,6 +73,7 @@ export function summarize(world: World): MatchSummary {
         role: m.role,
         kills: m.kills,
         deaths: m.deaths,
+        casts: world.castsOf(m.id),
       })),
     };
   }

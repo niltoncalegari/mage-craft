@@ -191,6 +191,18 @@ export class World {
    */
   readonly castsBySpell = new Map<Team, Map<SpellId, number>>();
 
+  /**
+   * The same successful casts, credited to the body that spent them.
+   *
+   * Kept alongside the team tally rather than replacing it. The team tally is
+   * what `MatchLog.cards` has been storing since before the pivot and what the
+   * player's lifetime card stats aggregate over, so its shape is not ours to
+   * change. This answers the question v1.3 actually made askable — which of the
+   * four mages earned its place — and only a cast that came out of a kit can
+   * appear here: `castSpell` casts for a whole side and has nobody to credit.
+   */
+  readonly castsByMage = new Map<string, Map<SpellId, number>>();
+
   /** Seconds of match time elapsed (GDD §4). */
   elapsed = 0;
   /** Set once normal time ends level on structures; doubles mana regen. */
@@ -554,7 +566,7 @@ export class World {
     m.abilityGcd = ABILITY_GCD;
     this.applySpellEffect(m.team, spell, position);
     this.recordCastFx(m.team, spell, position);
-    this.recordCast(m.team, spell.id);
+    this.recordCast(m.team, spell.id, m.id);
     return { ok: true };
   }
 
@@ -675,13 +687,29 @@ export class World {
     return living > 0;
   }
 
-  private recordCast(team: Team, spellId: SpellId): void {
+  /** `mageId` is absent only for `castSpell`, which casts for a whole side. */
+  private recordCast(team: Team, spellId: SpellId, mageId?: string): void {
     let byTeam = this.castsBySpell.get(team);
     if (!byTeam) {
       byTeam = new Map();
       this.castsBySpell.set(team, byTeam);
     }
     byTeam.set(spellId, (byTeam.get(spellId) ?? 0) + 1);
+
+    if (mageId === undefined) return;
+    let byMage = this.castsByMage.get(mageId);
+    if (!byMage) {
+      byMage = new Map();
+      this.castsByMage.set(mageId, byMage);
+    }
+    byMage.set(spellId, (byMage.get(spellId) ?? 0) + 1);
+  }
+
+  /** How many abilities this body has spent all match. */
+  castsOf(mageId: string): number {
+    let n = 0;
+    for (const count of this.castsByMage.get(mageId)?.values() ?? []) n += count;
+    return n;
   }
 
   /** Leaves a short-lived, gameplay-free trace of the cast for clients (GDD §17). */

@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { Arena, type Obstacle } from '../Arena';
 import { defaultSquad } from '../cards';
 import { CORE_RADIUS, MAGE_RADIUS, SIM_DT } from '../config';
-import { TEAM_A, TEAM_B, type MageInput, type Projectile, type Structure } from '../entities';
+import {
+  TEAM_A,
+  TEAM_B,
+  type MageInput,
+  type Projectile,
+  type Structure,
+  type Team,
+} from '../entities';
 import { Rng } from '../rng';
 import { ROLE_BEHAVIOR } from '../roles';
 import { Vec2 } from '../Vec2';
@@ -854,5 +861,119 @@ describe('Brain — roles inside the plan', () => {
         expect(s.input.charging, `${s.id} charged while escorting`).toBe(false);
       }
     }
+  });
+});
+
+/**
+ * The kit pass (plano v1.3 §3.4, §7.1). Since the idle pivot nobody plays a
+ * card, and since v1.3 there is no team bar to play one from — so the only
+ * thing that puts a spell on the field is the Brain walking its own squad and
+ * asking each body whether this is the moment.
+ */
+describe('Brain — spending the squad’s kits', () => {
+  /** Two full squads on the default map, every mage bot-driven. */
+  function contest(): { w: World; brain: Brain; bots: Map<string, Difficulty> } {
+    const w = new World();
+    w.initSquad(TEAM_A, defaultSquad());
+    w.initSquad(TEAM_B, defaultSquad());
+    const bots = new Map<string, Difficulty>();
+    for (const m of w.mages.values()) bots.set(m.id, 'normal');
+    return { w, brain: new Brain(rng()), bots };
+  }
+
+  function run(w: World, brain: Brain, bots: Map<string, Difficulty>, seconds: number): void {
+    for (let i = 0; i < Math.round(seconds / SIM_DT); i++) {
+      brain.step(w, bots, SIM_DT);
+      w.step(SIM_DT);
+    }
+  }
+
+  function castsOf(w: World, team: Team): number {
+    let n = 0;
+    for (const count of w.castsBySpell.get(team)?.values() ?? []) n += count;
+    return n;
+  }
+
+  it('puts spells on the field with nobody playing a card', () => {
+    const { w, brain, bots } = contest();
+
+    run(w, brain, bots, 20);
+
+    expect(castsOf(w, TEAM_A)).toBeGreaterThan(0);
+    expect(castsOf(w, TEAM_B)).toBeGreaterThan(0);
+  });
+
+  it('only ever spends a spell some mage on that side actually carries', () => {
+    const { w, brain, bots } = contest();
+
+    run(w, brain, bots, 20);
+
+    for (const team of [TEAM_A, TEAM_B] as const) {
+      const carried = new Set<string>();
+      for (const m of w.mages.values()) {
+        if (m.team === team) for (const a of m.abilities) carried.add(a);
+      }
+      for (const spellId of w.castsBySpell.get(team)?.keys() ?? []) {
+        expect(carried.has(spellId), `${team} cast ${spellId}, which nobody carries`).toBe(true);
+      }
+    }
+  });
+
+  /**
+   * The baseline the plan calls "vazio" (§4): a squad told to hold everything
+   * is the closest thing v1.3 has to a player who authored nothing, and it has
+   * to be visibly worse off than the default rather than merely slower.
+   */
+  it('spends far less on a side ordered to hold than on one left at normal', () => {
+    const held = contest();
+    for (const m of held.w.mages.values()) if (m.team === TEAM_A) m.stance = 'hold';
+    run(held.w, held.brain, held.bots, 20);
+
+    const normal = contest();
+    run(normal.w, normal.brain, normal.bots, 20);
+
+    expect(castsOf(held.w, TEAM_A)).toBeLessThan(castsOf(normal.w, TEAM_A));
+  });
+
+  /**
+   * The rule of gold the Tactician was built around, inherited: the server
+   * hands one `Rng` to Brain, so an ability pass that drew from it would make
+   * *which mages you brought* change how every mage on the field walks — and
+   * the balance harness would be measuring the shuffle instead of the squad.
+   */
+  it('leaves the mages byte-identical whether or not it had kits to consider', () => {
+    const walk = (withKits: boolean): { trace: string; casts: number } => {
+      // No enemies, full Core, nobody hurt: `hold` can never clear its guard,
+      // so both runs cast nothing and only the *asking* differs.
+      const w = new World();
+      w.initSquad(TEAM_A, defaultSquad());
+      const bots = new Map<string, Difficulty>();
+      for (const m of w.mages.values()) {
+        bots.set(m.id, 'normal');
+        m.stance = 'hold';
+        if (!withKits) (m as { abilities: readonly string[] }).abilities = [];
+      }
+
+      const brain = new Brain(rng());
+      for (let i = 0; i < 600; i++) {
+        brain.step(w, bots, SIM_DT);
+        w.step(SIM_DT);
+      }
+
+      return {
+        trace: [...w.mages.values()]
+          .map((m) => `${m.id}:${m.position.x},${m.position.y}`)
+          .join('|'),
+        casts: castsOf(w, TEAM_A),
+      };
+    };
+
+    const kitted = walk(true);
+    const bare = walk(false);
+
+    // Stated rather than assumed: a run that quietly started casting would make
+    // the comparison below meaningless.
+    expect(kitted.casts).toBe(0);
+    expect(kitted.trace).toBe(bare.trace);
   });
 });

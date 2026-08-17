@@ -25,6 +25,7 @@ import { MANA_MAX, SQUAD_SIZE } from './config';
 import { BALANCE } from './balance';
 import { ALL_SPELLS, type SpellId } from './spells';
 import type { Posture } from './bot/Squad';
+import type { Vec2 } from './Vec2';
 
 /* ---- Vocabulary ------------------------------------------------------------ */
 
@@ -171,6 +172,136 @@ export interface AbilityPolicy {
    * difference between the two stances.
    */
   readonly minTargets: number;
+}
+
+/* ---- The situation --------------------------------------------------------- */
+
+/**
+ * Everything a reader can see, from one team's point of view, for one tick.
+ * Built once per evaluation by `buildFacts` — never once per rule or per
+ * ability, which is what keeps a squad's four kits from costing four passes
+ * over the field.
+ */
+export interface StrategyFacts {
+  readonly mana: number;
+  readonly elapsed: number;
+  readonly suddenDeath: boolean;
+  /** Null when the squad has no plan; posture conditions then never hold. */
+  readonly posture: Posture | null;
+  readonly allyCount: number;
+  readonly enemyCount: number;
+  /** 1 when nobody is alive, so "someone is hurt" reads false rather than true. */
+  readonly allyLowestHealthFraction: number;
+  readonly enemyLowestHealthFraction: number;
+  readonly ourCoreFraction: number;
+  readonly enemyCoreFraction: number;
+  readonly ourTowersAlive: number;
+  readonly enemyTowersAlive: number;
+  /** Size of the biggest group inside `CLUSTER_RADIUS`; 0 when none are alive. */
+  readonly allyClusterSize: number;
+  readonly enemyClusterSize: number;
+  /** True only once an enemy is genuinely past the midline into our ground. */
+  readonly hasIntruder: boolean;
+  readonly allyEffects: ReadonlySet<EffectKind>;
+  readonly enemyEffects: ReadonlySet<EffectKind>;
+  /** Pre-resolved, so firing is a lookup rather than another world scan. */
+  readonly targets: Readonly<Record<TargetSelector, Vec2 | null>>;
+}
+
+/**
+ * The overlay that turns team facts into *this mage's* facts.
+ *
+ * It holds one field and that is not an oversight: `self_health` is the only
+ * thing in the vocabulary that a body knows and a side does not. Everything
+ * else a mage might ask — who is clustered, who is hurt, who has crossed the
+ * midline — is already true for the whole squad, so computing it per mage would
+ * be four identical scans of the same field.
+ */
+export interface MageFacts {
+  readonly healthFraction: number;
+}
+
+/* ---- Evaluation ------------------------------------------------------------ */
+
+/**
+ * Whether a condition is true of the given situation.
+ *
+ * `self` is optional because the player's program is evaluated once per team
+ * and has no body to ask about. Its absence is not an error: `self_health`
+ * answers "unhurt" without it, so a condition that slips through validation
+ * reads inert rather than permanently true.
+ */
+export function holds(condition: Condition, facts: StrategyFacts, self?: MageFacts): boolean {
+  switch (condition.kind) {
+    case 'always':
+      return true;
+    case 'sudden_death':
+      return facts.suddenDeath === condition.value;
+    case 'intruder':
+      return facts.hasIntruder;
+    case 'posture':
+      // A world with no squad plan has no opinion about posture, so a condition
+      // guarded on one must not hold in it.
+      return facts.posture !== null && facts.posture === condition.value;
+    case 'ally_has_effect':
+      return facts.allyEffects.has(condition.effect);
+    case 'enemy_has_effect':
+      return facts.enemyEffects.has(condition.effect);
+    case 'not':
+      return !holds(condition.of, facts, self);
+    case 'all':
+      return condition.of.every((c) => holds(c, facts, self));
+    case 'any':
+      return condition.of.some((c) => holds(c, facts, self));
+    default:
+      return compare(numericFact(condition.kind, facts, self), condition.op, condition.value);
+  }
+}
+
+function numericFact(kind: NumericConditionKind, f: StrategyFacts, self?: MageFacts): number {
+  switch (kind) {
+    case 'mana':
+      return f.mana;
+    case 'elapsed':
+      return f.elapsed;
+    case 'ally_count':
+      return f.allyCount;
+    case 'enemy_count':
+      return f.enemyCount;
+    case 'ally_health':
+      return f.allyLowestHealthFraction;
+    case 'enemy_health':
+      return f.enemyLowestHealthFraction;
+    case 'ally_cluster':
+      return f.allyClusterSize;
+    case 'enemy_cluster':
+      return f.enemyClusterSize;
+    case 'our_core':
+      return f.ourCoreFraction;
+    case 'enemy_core':
+      return f.enemyCoreFraction;
+    case 'our_towers':
+      return f.ourTowersAlive;
+    case 'enemy_towers':
+      return f.enemyTowersAlive;
+    case 'self_health':
+      return self?.healthFraction ?? 1;
+  }
+}
+
+function compare(actual: number, op: Comparator, value: number): boolean {
+  switch (op) {
+    case 'lt':
+      return actual < value;
+    case 'lte':
+      return actual <= value;
+    case 'gt':
+      return actual > value;
+    case 'gte':
+      return actual >= value;
+    case 'eq':
+      return actual === value;
+  }
 }
 
 /* ---- Validation ------------------------------------------------------------ */
