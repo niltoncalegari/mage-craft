@@ -9,6 +9,12 @@ import type { World } from '../game/World';
 import { clamp } from '../utils/math';
 import { toThree } from './coords';
 import { elementTint } from './elementPalette';
+import {
+  buildSpiralStaffHead,
+  buildVoidFace,
+  hatBrimGeometry,
+  hatConeGeometry,
+} from './mageParts';
 
 /** Brief hold on the fallen pose before the corpse starts dissolving. */
 const DEATH_FADE_HOLD = 0.35;
@@ -53,6 +59,48 @@ const STUN_MOTE_HEIGHT = 1.55;
  * hat's own origin would slide the brim off the head instead.
  */
 const HAT_PIVOT_Y = 1.1;
+
+/**
+ * The void head: radius, and where it sits under the brim.
+ *
+ * Sunk low into the collar, which is both the reference silhouette and the only
+ * way the eyes are visible at all: the brim is a disc 0.37 across sitting at
+ * {@link HAT_PIVOT_Y}, and from the match camera's 52° elevation it shades
+ * everything within its own radius. The lower the face rides, the further
+ * forward the sightline to the eyes exits before it reaches brim height. At the
+ * old head height the brim covered the eyes even with the mage walking straight
+ * at the camera.
+ */
+const HEAD_RADIUS = 0.25;
+const HEAD_Y = 0.88;
+/** Height of the staff crystal above the staff's own origin. */
+const GEM_Y = 0.86;
+/**
+ * How far the brim reaches. Every centimetre here is shade over the mage's own
+ * face at the match camera's angle, and the eyes under it are the facing cue —
+ * so this is as wide as the hat can be and still let the mage be read.
+ */
+const BRIM_RADIUS = 0.37;
+/** Radius of the hat cone where it meets the brim, and where the band grips it. */
+const HAT_BASE_RADIUS = 0.3;
+const HAT_BAND_Y = 0.045;
+/**
+ * The face. Not pure black — a surface with zero albedo takes no light at all
+ * and reads as a hole punched in the frame rather than as a hooded face.
+ */
+const FACE_COLOR = 0x0b0b12;
+/**
+ * The eyes, and the one thing on the mage that is *not* element-coloured.
+ *
+ * Every mage's eyes are the same gold on purpose: the element already owns the
+ * hat and the staff crystal, and the eyes have a different job — they are the
+ * only bright mark on the head, so they are what the player reads facing from
+ * (the beard used to do that, badly, from above). Tinting them per element
+ * would make the cue itself change appearance mage to mage.
+ */
+const EYE_COLOR = 0xffea00;
+const EYE_GLOW = 0xffd500;
+const EYE_INTENSITY = 2.2;
 
 /**
  * Height of Marca do Carrasco's drop above the mage's origin.
@@ -130,6 +178,11 @@ interface PlayerView {
   readonly hatGroup: THREE.Group;
   /** The robe, whose hem trails the hat's sway at a fraction of the angle. */
   readonly robe: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+  /**
+   * The eyes' material, held so petrify can put them out. Shared by the pair on
+   * purpose — nothing ever lights one eye and not the other.
+   */
+  readonly eyeMaterial: THREE.MeshStandardMaterial;
   /** Element-tinted crystal on the staff. Swells and brightens with throw charge. */
   readonly gem: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
   /** Additive shell around the gem; its opacity *is* the charge readout. */
@@ -255,10 +308,15 @@ export class PlayerRenderer implements GameRenderer {
 
     const bodyMat = this.fadeMaterial(teamColor);
     const accentMat = this.fadeMaterial(this.darken(teamColor));
-    const skinMat = this.fadeMaterial(0xffd6a5);
+    // Double-sided because the collar is an open tube; the other parts sharing
+    // this material are closed solids, which do not care either way.
+    accentMat.side = THREE.DoubleSide;
+    const faceMat = this.fadeMaterial(FACE_COLOR, { roughness: 1 });
+    const eyeMat = this.fadeMaterial(EYE_COLOR, { emissive: EYE_GLOW });
+    eyeMat.emissiveIntensity = EYE_INTENSITY;
     const bootMat = this.fadeMaterial(0x27313d);
+    const leatherMat = this.fadeMaterial(0x7a5230);
     const woodMat = this.fadeMaterial(0x6b4f2a);
-    const beardMat = this.fadeMaterial(0xe8e4dc);
     // From `glow`, not `core`. The core is the hot centre of a projectile and
     // several elements have a white one — a lightning hat came out pale pink
     // and read as "no element" rather than as lightning. The glow is where each
@@ -269,13 +327,17 @@ export class PlayerRenderer implements GameRenderer {
     const bandMat = this.fadeMaterial(this.darken(teamColor));
     const buckleMat = this.fadeMaterial(0xe5e5e5, { metalness: 0.9, roughness: 0.2 });
     const gemMat = this.fadeMaterial(tint.core, { emissive: tint.glow, roughness: 0.35 });
+    // The eyes are in here with everything else, so a dissolving corpse takes
+    // its glow with it — two lights left burning over the spot where a mage fell
+    // read as a live enemy standing there.
     const fadeMaterials = [
       bodyMat,
       accentMat,
-      skinMat,
+      faceMat,
+      eyeMat,
       bootMat,
+      leatherMat,
       woodMat,
-      beardMat,
       hatMat,
       bandMat,
       buckleMat,
@@ -420,6 +482,9 @@ export class PlayerRenderer implements GameRenderer {
     );
     robe.position.y = 0.42;
     figure.add(robe);
+    // Parented to the robe so the belt and the rolled hem ride its sway instead
+    // of hanging in the air while the cloth swings out from under them.
+    this.addRobeTrim(robe, look, accentMat);
 
     const belly = this.shadowMesh(
       this.assets.geometry('player-belly', () => new THREE.SphereGeometry(0.37, 14, 12)),
@@ -429,43 +494,36 @@ export class PlayerRenderer implements GameRenderer {
     belly.position.y = 0.3;
     figure.add(belly);
 
-    // Replaces the scarf: a collar closes the robe at the neck and keeps the
-    // accent band that used to break up the body at that height.
+    // The flared collar: an open tube standing up around the jaw, which is what
+    // actually puts the face in shadow. The old flat ring only broke up the body
+    // at that height; this one is half the silhouette.
     const collar = this.shadowMesh(
-      this.assets.geometry('player-collar', () => new THREE.CylinderGeometry(0.3, 0.3, 0.07, 14)),
+      this.assets.geometry(
+        'player-collar',
+        () => new THREE.CylinderGeometry(0.33, 0.26, 0.2, 16, 1, true),
+      ),
       accentMat,
     );
-    collar.position.y = 0.76;
+    // Its rim stops below the eyes: raised any higher, the collar takes over the
+    // brim's job of hiding them.
+    collar.position.y = 0.74;
     figure.add(collar);
 
-    const head = this.shadowMesh(
-      this.assets.geometry('player-head', () => new THREE.SphereGeometry(0.25, 14, 12)),
-      skinMat,
-    );
-    head.position.y = 0.95;
-    figure.add(head);
-
-    // Takes over the job the carrot nose used to do: with a bare sphere for a
-    // head there is nothing to say which way a mage is facing, and facing is
-    // what the aim direction reads from. A beard points forward and down, and
-    // its pale color survives whatever the hat and robe are tinted.
-    const beard = this.shadowMesh(
-      this.assets.geometry('player-beard', () => new THREE.ConeGeometry(0.19, 0.46, 8)),
-      beardMat,
-    );
-    // Juts forward rather than hanging straight down, so the tip clears the hat
-    // brim when the arena camera looks down on it.
-    beard.position.set(0.24, 0.66, 0);
-    beard.rotation.z = Math.PI + 0.6;
-    figure.add(beard);
+    // No skin and no beard: under the brim there is a shadow with two lights in
+    // it. The eyes carry the facing the beard used to (and carry it better —
+    // from the match camera's height a beard was a lump on top of a lump), and
+    // they are the same pair the title screen shows.
+    const face = buildVoidFace(HEAD_RADIUS, faceMat, eyeMat);
+    face.group.position.y = HEAD_Y;
+    figure.add(face.group);
 
     const hatGroup = this.buildHat(look, hatMat, bandMat, buckleMat);
     figure.add(hatGroup);
 
     // Pushed out from the old ±0.35: the flared robe is wider than the straight
     // tunic was and swallowed the arms entirely at the previous offset.
-    const leftArm = this.buildArm(bodyMat, -0.42);
-    const rightArm = this.buildArm(bodyMat, 0.42);
+    const leftArm = this.buildArm(bodyMat, leatherMat, -0.42);
+    const rightArm = this.buildArm(bodyMat, leatherMat, 0.42);
     figure.add(leftArm, rightArm);
 
     // The staff hangs off the arm rather than the body, so every existing arm
@@ -495,6 +553,7 @@ export class PlayerRenderer implements GameRenderer {
       rightArm,
       hatGroup,
       robe,
+      eyeMaterial: eyeMat,
       gem,
       gemHalo,
       orb,
@@ -531,38 +590,48 @@ export class PlayerRenderer implements GameRenderer {
     hatGroup.position.y = HAT_PIVOT_Y;
 
     const brim = this.shadowMesh(
-      // 0.40, not the 0.50 the study used: seen from the match camera's 52°
-      // tilt a wide brim is an umbrella that hides the entire head, beard and
-      // facing included.
-      this.assets.geometry('player-hat-brim', () => new THREE.CylinderGeometry(0.4, 0.4, 0.02, 24)),
+      // Narrow on purpose (see BRIM_RADIUS): seen from the match camera's 52°
+      // elevation a wide brim is an umbrella that hides the entire head — eyes
+      // and facing included.
+      this.assets.geometry('player-hat-brim', () => hatBrimGeometry(BRIM_RADIUS, 0.025)),
       accentMat,
     );
     brim.position.y = 0.01;
     hatGroup.add(brim);
 
-    const cone = this.shadowMesh(this.hatConeGeometry(look.hatHeight), accentMat);
+    // Cached per distinct hat height: the bend runs once for the whole match,
+    // never per mage and never per frame.
+    const cone = this.shadowMesh(
+      this.assets.geometry(`player-hat-cone-${look.hatHeight}`, () =>
+        hatConeGeometry(look.hatHeight, HAT_BASE_RADIUS),
+      ),
+      accentMat,
+    );
     cone.position.y = look.hatHeight / 2;
     hatGroup.add(cone);
 
     // Open-ended so it reads as a band wrapped around the cone rather than a
-    // second solid cone sitting on the brim.
+    // second solid cone sitting on the brim. Its radius follows the cone's own
+    // taper at the band's height — a fixed radius gripped the tall damage hat
+    // and floated off the short tank one.
+    const bandRadius = HAT_BASE_RADIUS * (1 - HAT_BAND_Y / look.hatHeight) + 0.005;
     const band = this.shadowMesh(
       this.assets.geometry(
-        'player-hat-band',
-        () => new THREE.CylinderGeometry(0.305, 0.305, 0.06, 20, 1, true),
+        `player-hat-band-${look.hatHeight}`,
+        () => new THREE.CylinderGeometry(bandRadius, bandRadius, 0.06, 20, 1, true),
       ),
       bandMat,
     );
-    band.position.y = 0.045;
+    band.position.y = HAT_BAND_Y;
     hatGroup.add(band);
 
     const buckle = this.shadowMesh(
       this.assets.geometry('player-hat-buckle', () => new THREE.BoxGeometry(0.075, 0.075, 0.02)),
       buckleMat,
     );
-    // +X is the mage's forward — where the old carrot nose pointed — so the
-    // buckle faces the camera whenever the mage is coming at you.
-    buckle.position.set(0.305, 0.045, 0);
+    // +X is the mage's forward — where the eyes look — so the buckle faces the
+    // camera whenever the mage is coming at you.
+    buckle.position.set(bandRadius, HAT_BAND_Y, 0);
     buckle.rotation.y = Math.PI / 2;
     hatGroup.add(buckle);
 
@@ -570,31 +639,34 @@ export class PlayerRenderer implements GameRenderer {
   }
 
   /**
-   * The cone with the curled tip. The bend is the vertex pass from the
-   * `sim/test.html` study, with two changes: it runs over six height segments
-   * so the point actually *curves* instead of shearing in a straight line, and
-   * it leans along -X — the study bent toward +X, which here is the direction
-   * the mage faces, folding the point down over its own eyes.
-   *
-   * Deliberately inside the geometry cache: the deformation runs once per
-   * distinct hat height for the whole match, never per mage and never per frame.
+   * The belt and the rolled hem, both parented to the robe so they inherit its
+   * sway. Their radii are read off the robe's own taper at each height, so a
+   * tank's wider hem does not leave its trim hanging inside the cloth.
    */
-  private hatConeGeometry(height: number): THREE.BufferGeometry {
-    return this.assets.geometry(`player-hat-cone-${height}`, () => {
-      const geo = new THREE.CylinderGeometry(0.012, 0.3, height, 16, 6);
-      const pos = geo.attributes.position;
-      for (let i = 0; i < pos.count; i++) {
-        const y = pos.getY(i);
-        if (y <= 0) continue;
-        // Quadratic in normalized height: the base stays planted on the head
-        // and the curl accelerates toward the tip.
-        const factor = ((y + height / 2) / height) ** 2;
-        pos.setX(i, pos.getX(i) - factor * height * 0.5);
-        pos.setZ(i, pos.getZ(i) + factor * height * 0.16);
-      }
-      geo.computeVertexNormals();
-      return geo;
-    });
+  private addRobeTrim(robe: THREE.Object3D, look: RoleLook, mat: THREE.Material): void {
+    // The robe is a cone from `look.hem` at the bottom to 0.3 at the top, 0.66
+    // tall and centred on its own origin.
+    const radiusAt = (localY: number): number => {
+      const t = (localY + 0.33) / 0.66;
+      return look.hem + (0.3 - look.hem) * t;
+    };
+
+    for (const [localY, tube] of [
+      [-0.325, 0.035],
+      [-0.02, 0.03],
+    ] as const) {
+      const radius = radiusAt(localY);
+      const trim = this.shadowMesh(
+        this.assets.geometry(
+          `player-robe-trim-${radius.toFixed(3)}-${tube}`,
+          () => new THREE.TorusGeometry(radius, tube, 8, 20),
+        ),
+        mat,
+      );
+      trim.rotation.x = Math.PI / 2;
+      trim.position.y = localY;
+      robe.add(trim);
+    }
   }
 
   /**
@@ -629,12 +701,19 @@ export class PlayerRenderer implements GameRenderer {
     pole.position.y = 0.34;
     staff.add(pole);
 
+    // The carved curl the crystal sits in. Built around an empty centre because
+    // the gem swells with throw charge — the wood frames that space, it does not
+    // occupy it.
+    const head = buildSpiralStaffHead(0.12, woodMat);
+    head.position.y = GEM_Y;
+    staff.add(head);
+
     const gemGeo = this.assets.geometry(
       'player-staff-gem',
       () => new THREE.IcosahedronGeometry(0.075, 0),
     );
     const gem = new THREE.Mesh(gemGeo, gemMat);
-    gem.position.y = 0.86;
+    gem.position.y = GEM_Y;
     gem.castShadow = true;
     staff.add(gem);
 
@@ -652,7 +731,7 @@ export class PlayerRenderer implements GameRenderer {
         blending: THREE.AdditiveBlending,
       }),
     );
-    gemHalo.position.y = 0.86;
+    gemHalo.position.y = GEM_Y;
     staff.add(gemHalo);
 
     return { gem, gemHalo };
@@ -759,16 +838,30 @@ export class PlayerRenderer implements GameRenderer {
     return mesh;
   }
 
+  /**
+   * A sleeve with the glove at the end of it. The glove hangs off the arm rather
+   * than the body so every existing pose — the walk swing, the throw windup —
+   * moves the hand with the sleeve, and the staff stays in the fist.
+   */
   private buildArm(
-    mat: THREE.Material,
+    sleeveMat: THREE.Material,
+    gloveMat: THREE.Material,
     z: number,
   ): THREE.Mesh<THREE.BufferGeometry, THREE.Material> {
     const arm = this.shadowMesh(
-      this.assets.geometry('player-arm', () => new THREE.CylinderGeometry(0.055, 0.07, 0.42, 8)),
-      mat,
+      this.assets.geometry('player-arm', () => new THREE.CapsuleGeometry(0.055, 0.3, 4, 8)),
+      sleeveMat,
     );
     arm.position.set(0.02, 0.52, z);
     arm.rotation.z = z < 0 ? -0.22 : 0.22;
+
+    const glove = this.shadowMesh(
+      this.assets.geometry('player-glove', () => new THREE.SphereGeometry(0.082, 10, 8)),
+      gloveMat,
+    );
+    glove.position.y = -0.2;
+    arm.add(glove);
+
     return arm;
   }
 
@@ -777,14 +870,16 @@ export class PlayerRenderer implements GameRenderer {
     z: number,
   ): THREE.Mesh<THREE.BufferGeometry, THREE.Material> {
     const boot = this.shadowMesh(
-      this.assets.geometry('player-boot', () => new THREE.SphereGeometry(0.12, 8, 8)),
+      this.assets.geometry('player-boot', () => new THREE.CapsuleGeometry(0.075, 0.13, 4, 8)),
       mat,
     );
-    boot.scale.set(1.25, 0.55, 0.9);
+    // Capsule laid on its side so the axis runs along +X, the mage's forward:
+    // the toe is then a curve pointing where it walks rather than a flat end.
+    boot.rotation.z = Math.PI / 2;
     // Forward of the old x=0.1 so the toes peek out from under the robe hem.
     // Left where they were, the flared robe hid them and the mage read as a
     // cone sliding across the ground.
-    boot.position.set(0.34, 0.07, z);
+    boot.position.set(0.3, 0.075, z);
     return boot;
   }
 
@@ -954,8 +1049,14 @@ export class PlayerRenderer implements GameRenderer {
     if (!defeated && hasFx(player, 'petrify')) {
       view.tint = 1;
       this.setFigureTint(view, STONE_COLOR, 1);
+      // And the lights go out. Greying the albedo is not enough on its own: the
+      // eyes are emissive, so a stone mage would keep staring out of a grey
+      // face — the same tell the hat spring is stopped for below.
+      view.eyeMaterial.emissiveIntensity = 0;
       return;
     }
+
+    view.eyeMaterial.emissiveIntensity = EYE_INTENSITY;
 
     let target = 0;
     let color = FROST_COLOR;

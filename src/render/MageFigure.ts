@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildSpiralStaffHead, buildVoidFace, hatBrimGeometry, hatConeGeometry } from './mageParts';
 
 export interface MageFigureParts {
   readonly root: THREE.Group;
@@ -9,17 +10,34 @@ export interface MageFigureParts {
   /**
    * Named rather than reached through `staff.children[1]`, which is how the
    * idle used to find it — adding any child to the staff silently animated the
-   * wrong mesh.
+   * wrong mesh, and the staff now carries its carved head as well.
    */
   readonly gem: THREE.Mesh;
+  /**
+   * The two lights in the hood. Exposed so a caller can dim or tint them; the
+   * idle leaves them alone.
+   */
+  readonly eyes: readonly THREE.Mesh[];
 }
 
-/** Resting height of the staff crystal; the idle bobs around it. */
+/** Radius of the void head, which everything above the collar is sized from. */
+const HEAD_RADIUS = 0.22;
+/** Where the head sits, and with it the hat and the collar's opening. */
+const HEAD_Y = 1.28;
+/** Height of the staff crystal; the idle bobs around it. */
 const GEM_REST_Y = 1.75;
 
 /**
  * Lightweight procedural mage for menu / portal scenes (not tied to World).
- * Tuned toward a staff-wielding silhouette rather than the in-match fighter.
+ *
+ * Deliberately the same build as the arena fighter ({@link PlayerRenderer}) down
+ * to the shared parts in {@link mageParts}: a shadowed face with two lit eyes
+ * under a floppy brim, a flared collar, and a carved staff. The mage on the
+ * title screen is the one that walks into the match, so the two cannot drift.
+ *
+ * What differs is only what the menu can afford: a taller hat and a longer staff
+ * than the arena camera tolerates, because here the figure is the hero shot
+ * rather than one of eight in a scrum.
  */
 export function createMageFigure(color: number, options?: { scale?: number }): MageFigureParts {
   const scale = options?.scale ?? 1;
@@ -27,8 +45,18 @@ export function createMageFigure(color: number, options?: { scale?: number }): M
   const figure = new THREE.Group();
 
   const bodyMat = mat(color);
+  // The collar is an open tube, so the cloth material has to render both faces.
+  // The robe and shoulders sharing it are closed solids, which do not care.
+  bodyMat.side = THREE.DoubleSide;
   const accentMat = mat(darken(color, 0.35));
-  const skinMat = mat(0xffd6a5);
+  // Not pure black: a face with zero albedo takes no light at all and turns
+  // into a hole in the frame rather than a shadow with a shape.
+  const faceMat = mat(0x0b0b12);
+  faceMat.roughness = 1;
+  const eyeMat = mat(0xffea00);
+  eyeMat.emissive = new THREE.Color(0xffd500);
+  eyeMat.emissiveIntensity = 2.4;
+  const leatherMat = mat(0x8d5524);
   const bootMat = mat(0x1c2430);
   const staffMat = mat(0x6b4f2a);
   const gemMat = mat(lighten(color, 0.25));
@@ -37,66 +65,83 @@ export function createMageFigure(color: number, options?: { scale?: number }): M
   buckleMat.metalness = 0.9;
   buckleMat.roughness = 0.2;
 
-  const robe = mesh(new THREE.CylinderGeometry(0.28, 0.42, 0.95, 12), bodyMat);
-  robe.position.y = 0.55;
+  const robe = mesh(new THREE.CylinderGeometry(0.3, 0.55, 0.78, 14), bodyMat);
+  robe.position.y = 0.47;
   figure.add(robe);
 
-  const chest = mesh(new THREE.SphereGeometry(0.32, 12, 10), bodyMat);
-  chest.scale.y = 0.85;
-  chest.position.y = 0.95;
-  figure.add(chest);
+  // The hem, weighted with a rolled edge. Gives the robe a bottom the eye can
+  // find — a bare cylinder cut reads as the figure sinking into the floor.
+  const hem = mesh(new THREE.TorusGeometry(0.55, 0.05, 8, 24), accentMat);
+  hem.rotation.x = Math.PI / 2;
+  hem.position.y = 0.1;
+  figure.add(hem);
 
-  const head = mesh(new THREE.SphereGeometry(0.22, 12, 10), skinMat);
-  head.position.y = 1.35;
-  figure.add(head);
+  const belt = mesh(new THREE.TorusGeometry(0.42, 0.038, 8, 24), accentMat);
+  belt.rotation.x = Math.PI / 2;
+  belt.position.y = 0.44;
+  figure.add(belt);
 
-  // Same hat the in-match mage wears (see PlayerRenderer.buildHat), scaled to
-  // this taller figure — menu and arena used to show two different wizards.
+  const shoulders = mesh(new THREE.SphereGeometry(0.3, 12, 10), bodyMat);
+  shoulders.scale.y = 0.8;
+  shoulders.position.y = 0.88;
+  figure.add(shoulders);
+
+  // The flared collar, open at both ends so it reads as cloth standing up around
+  // the face rather than as a funnel bolted to the shoulders. This is what puts
+  // the head in shadow, and the shadow is the whole silhouette.
+  const collar = mesh(new THREE.CylinderGeometry(0.4, 0.27, 0.26, 20, 1, true), bodyMat);
+  collar.position.y = 1.03;
+  figure.add(collar);
+
+  const face = buildVoidFace(HEAD_RADIUS, faceMat, eyeMat);
+  face.group.position.y = HEAD_Y;
+  figure.add(face.group);
+
   const hatGroup = new THREE.Group();
-  hatGroup.position.y = 1.48;
+  hatGroup.position.y = HEAD_Y + 0.14;
   figure.add(hatGroup);
 
-  const hatBrim = mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.03, 20), accentMat);
-  hatBrim.position.y = 0.015;
+  const hatBrim = mesh(hatBrimGeometry(0.46, 0.03), accentMat);
   hatGroup.add(hatBrim);
 
-  const hatCone = mesh(bentCone(0.6), accentMat);
-  hatCone.position.y = 0.3;
+  const hatHeight = 0.86;
+  const hatCone = mesh(hatConeGeometry(hatHeight, 0.28), accentMat);
+  hatCone.position.y = hatHeight / 2;
   hatGroup.add(hatCone);
 
-  const hatBand = mesh(new THREE.CylinderGeometry(0.275, 0.275, 0.055, 20, 1, true), bandMat);
-  hatBand.position.y = 0.05;
+  // Radius follows the cone's own taper at the band's height, so the band grips
+  // the felt instead of floating around it.
+  const bandY = 0.06;
+  const bandRadius = 0.28 * (1 - bandY / hatHeight) + 0.005;
+  const hatBand = mesh(
+    new THREE.CylinderGeometry(bandRadius, bandRadius, 0.055, 20, 1, true),
+    bandMat,
+  );
+  hatBand.position.y = bandY;
   hatGroup.add(hatBand);
 
   const hatBuckle = mesh(new THREE.BoxGeometry(0.07, 0.07, 0.02), buckleMat);
-  hatBuckle.position.set(0.275, 0.05, 0);
+  hatBuckle.position.set(bandRadius, bandY, 0);
   hatBuckle.rotation.y = Math.PI / 2;
   hatGroup.add(hatBuckle);
 
-  const leftArm = mesh(new THREE.CylinderGeometry(0.05, 0.065, 0.45, 8), bodyMat);
-  leftArm.position.set(0.05, 0.95, -0.34);
-  leftArm.rotation.z = -0.35;
-  figure.add(leftArm);
+  const leftArm = buildArm(bodyMat, leatherMat, -0.36, -0.35);
+  const rightArm = buildArm(bodyMat, leatherMat, 0.36, 0.2);
+  figure.add(leftArm, rightArm);
 
-  const rightArm = mesh(new THREE.CylinderGeometry(0.05, 0.065, 0.45, 8), bodyMat);
-  rightArm.position.set(0.05, 0.95, 0.34);
-  rightArm.rotation.z = 0.2;
-  figure.add(rightArm);
-
-  const leftBoot = mesh(new THREE.SphereGeometry(0.11, 8, 8), bootMat);
-  leftBoot.scale.set(1.2, 0.55, 0.9);
-  leftBoot.position.set(0.08, 0.08, -0.14);
-  figure.add(leftBoot);
-
-  const rightBoot = mesh(new THREE.SphereGeometry(0.11, 8, 8), bootMat);
-  rightBoot.scale.set(1.2, 0.55, 0.9);
-  rightBoot.position.set(0.08, 0.08, 0.14);
-  figure.add(rightBoot);
+  // Rounded and pointing forward (+X): capsules on their side, so the toe is a
+  // curve rather than the flat end of a box.
+  const leftBoot = buildBoot(bootMat, -0.15);
+  const rightBoot = buildBoot(bootMat, 0.15);
+  figure.add(leftBoot, rightBoot);
 
   const staff = new THREE.Group();
   const pole = mesh(new THREE.CylinderGeometry(0.035, 0.04, 1.7, 8), staffMat);
   pole.position.y = 0.85;
   staff.add(pole);
+  const staffHead = buildSpiralStaffHead(0.17, staffMat);
+  staffHead.position.y = GEM_REST_Y;
+  staff.add(staffHead);
   const gem = mesh(new THREE.IcosahedronGeometry(0.12, 0), gemMat);
   gem.position.y = GEM_REST_Y;
   staff.add(gem);
@@ -106,26 +151,33 @@ export function createMageFigure(color: number, options?: { scale?: number }): M
 
   root.add(figure);
   root.scale.setScalar(scale);
-  return { root, figure, leftArm, rightArm, staff, gem };
+  return { root, figure, leftArm, rightArm, staff, gem, eyes: face.eyes };
 }
 
-/**
- * Cone with a curled tip — the vertex pass from the `sim/test.html` study, and
- * the same bend {@link PlayerRenderer.hatConeGeometry} applies in the arena.
- * Six height segments so the point curves rather than shearing straight.
- */
-function bentCone(height: number): THREE.BufferGeometry {
-  const geo = new THREE.CylinderGeometry(0.012, 0.26, height, 16, 6);
-  const pos = geo.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    const y = pos.getY(i);
-    if (y <= 0) continue;
-    const factor = ((y + height / 2) / height) ** 2;
-    pos.setX(i, pos.getX(i) - factor * height * 0.5);
-    pos.setZ(i, pos.getZ(i) + factor * height * 0.16);
-  }
-  geo.computeVertexNormals();
-  return geo;
+/** Sleeve plus the glove at the end of it, which swings with the arm for free. */
+function buildArm(
+  sleeveMat: THREE.Material,
+  gloveMat: THREE.Material,
+  z: number,
+  tilt: number,
+): THREE.Mesh {
+  const arm = mesh(new THREE.CapsuleGeometry(0.06, 0.28, 4, 8), sleeveMat);
+  arm.position.set(0.05, 0.95, z);
+  arm.rotation.z = tilt;
+
+  const glove = mesh(new THREE.SphereGeometry(0.095, 10, 8), gloveMat);
+  glove.position.y = -0.22;
+  arm.add(glove);
+
+  return arm;
+}
+
+function buildBoot(bootMat: THREE.Material, z: number): THREE.Mesh {
+  const boot = mesh(new THREE.CapsuleGeometry(0.1, 0.16, 4, 8), bootMat);
+  // Axis to +X: the mage's forward, so the toes point where it walks.
+  boot.rotation.z = Math.PI / 2;
+  boot.position.set(0.06, 0.1, z);
+  return boot;
 }
 
 /** Gentle breathing idle for portal / character-select staging. */
@@ -137,11 +189,8 @@ export function animateMageIdle(parts: MageFigureParts, time: number, phaseOffse
   parts.leftArm.rotation.x = Math.sin(t * 1.6) * 0.08;
   parts.rightArm.rotation.x = Math.sin(t * 1.6 + 1.2) * 0.1;
   parts.staff.rotation.z = -0.15 + Math.sin(t * 1.8) * 0.04;
-  const gem = parts.staff.children[1];
-  if (gem) {
-    gem.rotation.y = t * 1.4;
-    gem.position.y = 1.75 + Math.sin(t * 3) * 0.02;
-  }
+  parts.gem.rotation.y = t * 1.4;
+  parts.gem.position.y = GEM_REST_Y + Math.sin(t * 3) * 0.02;
 }
 
 function mesh(geo: THREE.BufferGeometry, material: THREE.Material): THREE.Mesh {
