@@ -583,6 +583,16 @@
       "target": "ground",
       "apply": [{ "effect": "vortex", "magnitude": 2.2 }]
     },
+    "crystal_rift": {
+      "name": "Fenda de Cristal",
+      "color": "green",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 2,
+      "duration": 5,
+      "target": "ground",
+      "apply": [{ "effect": "barrier" }]
+    },
     "meteor_shower": {
       "name": "Chuva de Meteoros",
       "color": "red",

@@ -847,3 +847,83 @@ describe('a gravity well', () => {
     expect(m.position.distanceTo(new Vec2(0, 0))).toBeCloseTo(settled, 5);
   });
 });
+
+/**
+ * Fenda de Cristal: the first thing that changes the *map*.
+ *
+ * The arena has been a constant since the pivot — obstacles are authored on
+ * disk, structures only ever come down, and nothing a player does has ever put
+ * something new in the way. This card does, for five seconds, which makes it
+ * the only card that can cut a lane, hold a Core off, or wall a squad away from
+ * the fight it was walking to.
+ */
+describe('a crystal rift', () => {
+  const AT = new Vec2(0, 0);
+
+  it('stands in the way while it lasts, and then does not', () => {
+    const w = new World();
+    expect(w.blockedAt(AT)).toBe(false);
+
+    w.castSpell(TEAM_A, 'crystal_rift', AT);
+    expect(w.blockedAt(AT)).toBe(true);
+
+    for (let t = 0; t < 6; t += 1 / 60) w.step(1 / 60);
+    expect(w.blockedAt(AT)).toBe(false);
+  });
+
+  /**
+   * The trap the plan named, and the reason this card is Tier 3 rather than a
+   * `balance.json` edit. `pathGrid()` was cached on the *count of living
+   * structures*, because until now that was the only thing that could ever open
+   * or close a route. A barrier that does not touch that count leaves every bot
+   * walking a grid planned before it existed — and the symptom is not a crash
+   * or a mage in a wall. It is a wall that simply does nothing, which looks
+   * exactly like a card that was never implemented.
+   */
+  it('is a wall the planner has actually heard of', () => {
+    const w = new World();
+    const from = new Vec2(-7, 0);
+    const to = new Vec2(7, 0);
+    // Warm the cache on the open map, the way a match does long before anyone
+    // casts anything.
+    const before = w.pathGrid().findPath(from, to);
+    expect(before).not.toBeNull();
+
+    w.castSpell(TEAM_A, 'crystal_rift', AT);
+    const detour = w.pathGrid().findPath(from, to);
+
+    expect(detour).not.toBeNull();
+    expect(detour).not.toEqual(before);
+    // The assertion that actually catches a stale grid: a route planned before
+    // the crystal existed walks straight through it.
+    for (const point of detour!) expect(w.blockedAt(point)).toBe(false);
+  });
+
+  it('opens the route again when it goes', () => {
+    const w = new World();
+    const from = new Vec2(-7, 0);
+    const to = new Vec2(7, 0);
+    const open = w.pathGrid().findPath(from, to);
+
+    w.castSpell(TEAM_A, 'crystal_rift', AT);
+    expect(w.pathGrid().findPath(from, to)).not.toEqual(open);
+
+    for (let t = 0; t < 6; t += 1 / 60) w.step(1 / 60);
+    expect(w.pathGrid().findPath(from, to)).toEqual(open);
+  });
+
+  /**
+   * Cast on top of somebody, which a program aiming at a cluster will do
+   * constantly. A body left inside the crystal is a mage removed from the match
+   * — it cannot walk out of a blocker it is already in.
+   */
+  it('does not bury the bodies it rises under', () => {
+    const w = new World();
+    const caught = w.summon(TEAM_B, 'pyromancer', AT);
+
+    w.castSpell(TEAM_A, 'crystal_rift', AT);
+    for (let t = 0; t < 0.5; t += 1 / 60) w.step(1 / 60);
+
+    expect(w.blockedAt(caught.position)).toBe(false);
+  });
+});

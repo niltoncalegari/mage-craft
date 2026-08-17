@@ -243,6 +243,18 @@ const vortex: SpellRider = (w, { spell, app, position }) => {
   );
 };
 
+/**
+ * Fenda de Cristal: a wall where there was none.
+ *
+ * Ground-targeted, and the only rider whose effect is on the map rather than on
+ * anybody at all — nothing it does can be read off a mage. What it costs the
+ * enemy is the seconds they spend walking round it, which is the one currency
+ * in this game nobody has been able to charge for.
+ */
+const barrier: SpellRider = (w, { spell, app, position }) => {
+  w.spawnBarrier(position, app.radius ?? spell.radius, app.duration ?? spell.duration);
+};
+
 const RIDERS: Readonly<Record<string, SpellRider>> = {
   puddle,
   strike,
@@ -253,6 +265,7 @@ const RIDERS: Readonly<Record<string, SpellRider>> = {
   attune,
   fold,
   vortex,
+  barrier,
 };
 
 export function isSpellRider(name: string): boolean {

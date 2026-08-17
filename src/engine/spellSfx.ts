@@ -161,6 +161,23 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * Glass growing. A bright bandpass opening upward — the opposite sweep to
+   * Raízes Entrelaçadas, which snaps shut — over a high tone that climbs and
+   * then simply stays, because what this card leaves behind does not settle or
+   * decay: it stands there.
+   *
+   * The fourth green and the one that must not be mistaken for the roots. That
+   * one is timber and closes; this is crystal and opens.
+   */
+  crystal_rift: {
+    detune: 0.03,
+    layers: [
+      { kind: 'noise', filter: 'bandpass', from: 700, to: 4200, at: 0, duration: 0.3, gain: 0.04, q: 2 },
+      { kind: 'tone', wave: 'triangle', freq: 587.33, toFreq: 880, at: 0.05, duration: 0.34, gain: 0.045 },
+      { kind: 'chord', wave: 'sine', freqs: [1174.66, 1567.98], at: 0.22, duration: 0.28, gain: 0.025 },
+    ],
+  },
+  /*
    * The third green, and the two it has to be told apart from both *fall*:
    * Praga's square drops 180→92, the swamp's triangle drops 160→58. So this one
    * climbs. Nothing else in the catalog does that except Campo de Sobrecarga,

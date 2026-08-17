@@ -447,6 +447,28 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     direction: 1,
   },
   /*
+   * The other green card with a body that outlives its cast, and the only card
+   * in the catalog whose effect is a *thing standing there*. It reuses the
+   * `roots` machinery for exactly that reason: voxels shoving up out of the
+   * soil, holding for the card's duration, withdrawing when it ends — which is
+   * a description of both cards, and here it is not a stand-in for an invisible
+   * status but a picture of the actual wall.
+   *
+   * Pale blue-green and much brighter than the roots, because these two are the
+   * green pair a player has to tell apart instantly: one is ground you can walk
+   * out of slowly, the other is ground you cannot walk through at all.
+   */
+  crystal_rift: {
+    shape: 'roots',
+    ring: 0x9df0ff,
+    zone: 0x123a3d,
+    motes: [0xd6ffff, 0x6fe3d2, 0x2a7f76],
+    moteCount: 22,
+    direction: 1,
+    // The card's own duration in balance.json. Held to it by spellVfx.test.ts.
+    persist: 5,
+  },
+  /*
    * The card that earned the fifth shape, and it went through a torus first.
    *
    * The torus was the tidy answer — "an area was switched on" is true of a

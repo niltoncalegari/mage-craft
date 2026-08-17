@@ -207,6 +207,14 @@ export class World {
   private readonly manaFlow = new Map<Team, { multiplier: number; remaining: number }>();
   /** Re-entrancy guard for the pain bond; see {@link spreadBondedPain}. */
   private bondEcho = false;
+  /**
+   * Walls a card put on the map, and a counter of how many times that map has
+   * changed shape. The epoch is what the A* cache is keyed on; see
+   * {@link spawnBarrier} for why a count of structures was not enough.
+   */
+  private readonly barriers: { position: Vec2; radius: number; remaining: number }[] = [];
+  private arenaEpoch = 0;
+  private cachedArenaEpoch = -1;
   /** Gravity wells still turning; see {@link spawnVortex}. */
   private readonly vortices: { position: Vec2; radius: number; pull: number; remaining: number }[] = [];
 
@@ -830,6 +838,7 @@ export class World {
     // well competes with walking rather than replacing it, and the spacing pass
     // is what stops it from stacking a squad on one point.
     this.updateVortices(dt);
+    this.updateBarriers(dt);
     this.applySupportHealing(dt);
     this.separateMages();
     // Local pushout first; then the planner fallback for bodies still wedged
@@ -1061,7 +1070,8 @@ export class World {
     for (let pass = 0; pass < DEPENETRATION_PASSES; pass++) {
       const push = this.arena
         .pushOutOfObstacles(out, MAGE_RADIUS)
-        .add(this.pushOutOfStructures(out, MAGE_RADIUS));
+        .add(this.pushOutOfStructures(out, MAGE_RADIUS))
+        .add(this.pushOutOfBarriers(out, MAGE_RADIUS));
       if (push.lengthSq() <= 1e-12) break;
       out = this.arena.clamp(out.add(push), MAGE_RADIUS);
     }
@@ -1112,6 +1122,9 @@ export class World {
     for (const s of this.structures.values()) {
       if (s.alive && s.position.distanceTo(p) < s.radius + radius) return true;
     }
+    for (const b of this.barriers) {
+      if (b.position.distanceTo(p) < b.radius + radius) return true;
+    }
     return false;
   }
 
@@ -1153,7 +1166,11 @@ export class World {
     let blockers = 0;
     for (const s of this.structures.values()) if (s.alive) blockers++;
 
-    if (!this.cachedPathGrid || blockers !== this.cachedPathBlockers) {
+    if (
+      !this.cachedPathGrid ||
+      blockers !== this.cachedPathBlockers ||
+      this.arenaEpoch !== this.cachedArenaEpoch
+    ) {
       // Planned with a margin over the body radius. A cell whose *centre* is
       // just barely clear can still have a sliver of blocker across the line to
       // the next centre, and a mage told to walk that line pushes into the
@@ -1162,8 +1179,51 @@ export class World {
         this.blockedAt(p, MAGE_RADIUS + PATH_CLEARANCE),
       );
       this.cachedPathBlockers = blockers;
+      this.cachedArenaEpoch = this.arenaEpoch;
     }
     return this.cachedPathGrid;
+  }
+
+  /**
+   * Fenda de Cristal: a wall that was not on the map, for as long as it holds
+   * (GDD §9).
+   *
+   * The arena has been a constant since the pivot — obstacles are authored on
+   * disk and structures only ever come down — so this is the first thing a
+   * player can do that changes where anybody is *able* to walk.
+   *
+   * {@link arenaEpoch} is the whole reason this card is Tier 3 and not a
+   * `balance.json` edit. The A* grid was cached on the count of living
+   * structures, which was a complete key while a fallen Tower was the only
+   * thing that could open or close a route. A barrier does not touch that
+   * count, so without the epoch every bot on the field keeps walking a grid
+   * planned before the crystal existed — and the symptom is not a crash or a
+   * mage in a wall. It is a wall that does nothing at all, which is
+   * indistinguishable from a card nobody implemented.
+   */
+  spawnBarrier(position: Vec2, radius: number, duration: number): void {
+    if (radius <= 0 || duration <= 0) return;
+    this.barriers.push({ position, radius, remaining: duration });
+    this.arenaEpoch++;
+  }
+
+  private updateBarriers(dt: number): void {
+    for (let i = this.barriers.length - 1; i >= 0; i--) {
+      const b = this.barriers[i];
+      b.remaining = decay(b.remaining, dt);
+      if (b.remaining > 0) continue;
+      this.barriers.splice(i, 1);
+      // A route that was shut is open again, and the grid has to be told the
+      // same way it was told the crystal arrived.
+      this.arenaEpoch++;
+    }
+  }
+
+  /** {@link Arena.pushOutOfObstacles} for the barriers standing right now. */
+  private pushOutOfBarriers(p: Vec2, radius: number): Vec2 {
+    let push = Vec2.zero;
+    for (const b of this.barriers) push = push.add(pushOutOfCircle(b.position, b.radius, p, radius));
+    return push;
   }
 
   /**

@@ -41,6 +41,7 @@ export type SpellId =
   | 'bond_of_solidarity'
   | 'spatial_fold'
   | 'gravity_well'
+  | 'crystal_rift'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -95,6 +96,7 @@ export const ALL_SPELLS: readonly SpellId[] = [
   'plague',
   'sticky_swamp',
   'entangling_roots',
+  'crystal_rift',
   'rejuvenating_breeze',
   'blessing',
   'arcane_shield',
