@@ -560,12 +560,20 @@ Feita em `sim/agency.test.ts` e na varredura de `scripts/ai-report.mts`, sobre
 `defaultDeck()` e o esquadrão padrão, alternando os lados a cada seed porque o mapa
 não é simétrico. **120 partidas, 5 programas, todos contra todos.**
 
-> 🚧 **Estes números foram medidos sobre o catálogo de 7 cartas**, no fim da Fase
-> 12. O Tier 2 (§9) entrou depois e mudou o material do jogo, então eles descrevem
-> uma versão anterior. **A conclusão estrutural não depende do catálogo** — a linha
-> de base de zero conjurações é uma propriedade do modelo, não do balance — mas as
-> **percentagens** precisam de nova medição, e é `npx tsx scripts/ai-report.mts`
-> que a produz. Ver o aviso equivalente na §14.
+> ⚠️ **Limite do experimento, e ele é mais estreito do que parece.** A varredura
+> monta os dois lados com `defaultDeck()`, que tem **quatro cartas distintas**
+> (Bênção, Escudo Arcano, Praga, Pântano), e os programas de referência nomeiam
+> exatamente essas quatro por id. Logo **nenhuma outra carta do catálogo pode
+> aparecer em nenhuma partida da varredura** — hoje são 18 cartas e 14 delas são
+> inalcançáveis por esta medição, incluindo o Campo de Sobrecarga.
+>
+> Isso não invalida os números abaixo, mas define do que eles falam: são um
+> resultado sobre **este baralho de quatro cartas**, não sobre o jogo inteiro.
+> Em particular, **rodar `ai-report` depois de acrescentar cartas não testa as
+> cartas novas** — elas não entram no baralho. Medir o efeito do Tier 2/3 exige um
+> baralho e programas construídos sobre elas; enquanto isso não existir, um "50% de
+> novo" quer dizer "a medição não viu as cartas novas", e não "as cartas novas não
+> ajudaram".
 
 | Programa | O que é | V-D-E | % das decididas | Conjurações |
 | --- | --- | --- | --- | --- |
@@ -588,14 +596,29 @@ zero conjurações por construção. Nenhuma partida empatou.
 > certa*. Isso é o mesmo sintoma que a §14 registrava para dificuldade de bot,
 > reaparecendo no eixo novo: **indiferenciado, não invertido.**
 >
-> Isso não invalida o pivot — a agência contra o AFK fechou com folga — mas diz
-> onde o próximo trabalho tem que ir: **as cartas do Tier 1 são genéricas demais
-> para que a situação importe.** Sete cartas em que quase toda é "buff de área" ou
-> "maldição de área" não recompensam ler o campo. As cartas que fariam a guarda
-> valer são justamente as condicionais e as caras do Tier 2/3 (§9) — Petrificar,
-> Marca do Carrasco, Clarão Nulo, e sobretudo o **Campo de Sobrecarga**, a única
-> que já pune quem não escreve guarda. É trabalho de **design de carta**, não de
-> vocabulário de regra, e não é dial de HP de estrutura.
+> Isso não invalida o pivot — a agência contra o AFK fechou com folga. Mas é
+> preciso ser exato sobre **do que** este 50% é evidência, porque a primeira versão
+> desta seção não foi e afirmou demais.
+>
+> O que está medido: com **estas quatro cartas** (Bênção, Escudo, Praga, Pântano),
+> escrever guardas não ganha mais partidas do que não escrever. Todas as quatro são
+> "buff de área" ou "maldição de área" aplicadas sobre o próprio aglomerado, e para
+> cartas assim quase todo momento é um momento aceitável — não há o que a guarda
+> possa acertar melhor.
+>
+> O que **não** está medido, e a primeira redação tratou como se estivesse: se as
+> cartas condicionais mudam isso. A hipótese continua sendo que sim — Petrificar,
+> Marca do Carrasco, Clarão Nulo e sobretudo o **Campo de Sobrecarga**, que acerta
+> os dois lados e portanto pune quem não escreve guarda, são cartas em que *quando*
+> deveria importar. Mas o Campo de Sobrecarga **existe desde o Tier 1 e nunca
+> esteve no baralho da medição**, então nem a versão fraca dessa hipótese foi
+> testada. Chamar as cartas de "genéricas demais" era uma explicação para um
+> resultado que o experimento não tinha isolado.
+>
+> A direção do trabalho não muda — é **design de carta**, não vocabulário de regra,
+> e não é dial de HP de estrutura. O que muda é o que vem antes: **primeiro um
+> baralho e programas de referência que contenham as cartas condicionais**, senão
+> a medição seguinte responde a mesma coisa que esta.
 
 > ⚠️ **2. Um programa com uma regra é quase um programa vazio — e isso não é
 > óbvio de lugar nenhum.** `ingênua` conjurou **45 vezes em 48 partidas** (≈1 por
@@ -790,9 +813,15 @@ A varredura de `scripts/ai-report.mts` agora roda **programa contra programa**, 
 é o que a partida de verdade virou, e não mais bot contra bot. Sobre **120 partidas**
 (5 programas, todos contra todos, 12 seeds, lados alternados):
 
-> 🚧 **Medido sobre o catálogo de 7 cartas, antes do Tier 2.** O achado nº 1 abaixo
-> — "timing não separa nada" — é justamente o que o Tier 2 deveria mover, então
-> reconfirmá-lo (ou derrubá-lo) é o teste de aceite daquela fase, não um extra.
+> ⚠️ **Medido sobre `defaultDeck()` — quatro cartas — e não sobre o catálogo.**
+> Acrescentar cartas ao jogo **não muda estes números**, porque as cartas novas não
+> entram no baralho da varredura (§10). Já foi confirmado na prática: com o Tier 2
+> fechado, a varredura devolveu resultado idêntico, **até nas contagens de
+> conjuração**. Isso mede o harness, não as cartas.
+>
+> Consequência para quem for usar isto como teste de aceite: **construa primeiro um
+> baralho e programas de referência sobre as cartas novas.** Sem isso, `ai-report`
+> responde sempre a mesma pergunta.
 
 | Métrica | v1.1 | v1.2 |
 | --- | --- | --- |
@@ -809,7 +838,7 @@ A varredura de `scripts/ai-report.mts` agora roda **programa contra programa**, 
 
 **O que a v1.2 abriu no lugar**, e é o próximo trabalho de balance:
 
-1. ⚠️ **Timing não separa nada.** `responsiva` × `plana` = **50%** (§10). O eixo em que a dificuldade foi colocada na v1.1 — "escolher a carta certa para a situação" — continua indiferenciado, agora medido no jogador em vez do bot. **Isto é o item nº 1 do balance da v1.2.**
+1. ⚠️ **Timing não separa nada — nas quatro cartas em que foi medido.** `responsiva` × `plana` = **50%** (§10). O eixo em que a dificuldade foi colocada na v1.1 — "escolher a carta certa para a situação" — continua indiferenciado, agora medido no jogador em vez do bot. **Isto é o item nº 1 do balance da v1.2**, e o primeiro passo dele não é desenhar carta: é **dar ao experimento um baralho que contenha as cartas condicionais**, para saber se o problema é o material ou o modelo.
 2. ⚠️ **A variedade de cartas domina tudo.** É a única variável com efeito grande hoje (25% → 92%). Um jogo em que a decisão dominante é "nomeie mais cartas" é raso, mesmo que não empate.
 3. **Nenhuma carta foi medida individualmente.** Nada de win rate por carta ainda.
 
