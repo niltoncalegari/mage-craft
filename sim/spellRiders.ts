@@ -139,7 +139,40 @@ const tribute: SpellRider = (w, { team, app, targets }) => {
   w.grantMana(team, (app.magnitude ?? 0) * targets.length);
 };
 
-const RIDERS: Readonly<Record<string, SpellRider>> = { puddle, strike, dispel, knockback, tribute };
+/**
+ * Chamado à Batalha: the dead lying inside the disc get up `magnitude` seconds
+ * sooner.
+ *
+ * The only rider addressed to mages who are not on the field, and so the only
+ * one that cannot use `targets` — `spellTargets` filters the dead out, which is
+ * right for every other card and exactly wrong for this one. It reads the world
+ * directly and matches on where the body fell.
+ *
+ * That the corpse's position is what qualifies it is the design, not a
+ * shortcut. Six seconds a body down is the largest swing in the game no card
+ * could argue with (GDD §4), and a card that shortened it from anywhere would
+ * be correct the instant anybody died — no read, no timing, no place. Cast over
+ * the spot your squad was wiped, it is a comeback; cast anywhere else, it is a
+ * haste spell.
+ */
+const rally: SpellRider = (w, { team, spell, app, position }) => {
+  const seconds = app.magnitude ?? 0;
+  const radius = app.radius ?? spell.radius;
+  for (const m of w.mages.values()) {
+    if (m.alive || m.team !== team) continue;
+    if (m.position.distanceTo(position) > radius) continue;
+    w.hastenRespawn(m, seconds);
+  }
+};
+
+const RIDERS: Readonly<Record<string, SpellRider>> = {
+  puddle,
+  strike,
+  dispel,
+  knockback,
+  tribute,
+  rally,
+};
 
 export function isSpellRider(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(RIDERS, name);

@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { MANA_MAX } from './config';
 import { applyEffect, hasEffect, magnitudeOf } from './effects';
-import { TEAM_A, TEAM_B } from './entities';
+import { TEAM_A, TEAM_B, type Mage, type Team } from './entities';
 import { isSpellRider } from './spellRiders';
 import { Vec2 } from './Vec2';
 import { World } from './World';
@@ -23,7 +23,66 @@ describe('spell riders', () => {
     expect(isSpellRider('dispel')).toBe(true);
     expect(isSpellRider('knockback')).toBe(true);
     expect(isSpellRider('tribute')).toBe(true);
+    expect(isSpellRider('rally')).toBe(true);
     expect(isSpellRider('teleport')).toBe(false);
+  });
+
+  /**
+   * Chamado à Batalha, and the only card in the catalog that is addressed to
+   * mages who are not on the field.
+   *
+   * Death costs presence, not the mage (GDD §4), so the six seconds a squad
+   * spends one body down is the largest swing in the game that no card could
+   * previously argue with. This one argues with it — at the place they fell,
+   * which is what keeps it a positional card rather than a button that is
+   * always correct the moment anybody dies.
+   */
+  describe('rally', () => {
+    function killAt(w: World, team: Team, at: Vec2): Mage {
+      const m = w.summon(team, 'pyromancer', at);
+      w.dealDamage(m, m.maxHealth * 2, {});
+      return m;
+    }
+
+    it('brings back the bodies lying where it was cast, and not the ones elsewhere', () => {
+      const w = new World();
+      const near = killAt(w, TEAM_A, new Vec2(0, 0));
+      const far = killAt(w, TEAM_A, new Vec2(0, 14));
+
+      w.castSpell(TEAM_A, 'call_to_battle', new Vec2(0, 0));
+
+      expect(near.respawnTimer).toBeLessThan(far.respawnTimer);
+    });
+
+    /**
+     * The trap, and it is not the obvious one. `updateMage` only decays a
+     * respawn timer it finds **above zero** — a timer cut to exactly 0 is never
+     * decayed, so it never reaches the branch that puts the mage back on the
+     * field. A card meant to shorten a death would have made it permanent, and
+     * only for the mages it helped the most.
+     */
+    it('never cuts a death so short that it stops ending', () => {
+      const w = new World();
+      const fallen = killAt(w, TEAM_A, new Vec2(0, 0));
+      // Wait until what is left is less than the card takes off.
+      for (let t = 0; t < 4; t += 1 / 60) w.step(1 / 60);
+      expect(fallen.respawnTimer).toBeGreaterThan(0);
+
+      w.castSpell(TEAM_A, 'call_to_battle', new Vec2(0, 0));
+      for (let t = 0; t < 0.5; t += 1 / 60) w.step(1 / 60);
+
+      expect(fallen.alive).toBe(true);
+    });
+
+    it('leaves the enemy dead where they are', () => {
+      const w = new World();
+      const theirs = killAt(w, TEAM_B, new Vec2(0, 0));
+      const before = theirs.respawnTimer;
+
+      w.castSpell(TEAM_A, 'call_to_battle', new Vec2(0, 0));
+
+      expect(theirs.respawnTimer).toBe(before);
+    });
   });
 
   /**

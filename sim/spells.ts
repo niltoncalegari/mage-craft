@@ -35,6 +35,7 @@ export type SpellId =
   | 'null_flash'
   | 'volcanic_eruption'
   | 'dark_tribute'
+  | 'call_to_battle'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -90,6 +91,7 @@ export const ALL_SPELLS: readonly SpellId[] = [
   'blessing',
   'arcane_shield',
   'consecrated_ground',
+  'call_to_battle',
   'slow_curse',
   'dark_tribute',
 ];

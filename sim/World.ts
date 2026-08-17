@@ -36,6 +36,7 @@ import {
   SIEGE_RAMP_END,
   SIEGE_RAMP_START,
   SIEGE_RAMP_SUDDEN_DEATH,
+  SIM_DT,
   SPACING,
   SPAWN_MARGIN,
   SPELL_CAST_FX_DURATION,
@@ -591,6 +592,21 @@ export class World {
       return;
     }
     spellRiderFor(app.effect)?.(this, { team, spell, app, position, targets });
+  }
+
+  /**
+   * Cuts short a mage's time off the field (GDD §4) — Chamado à Batalha.
+   *
+   * The floor is load-bearing and is not defensive rounding. `updateMage` only
+   * decays a respawn timer it finds **above zero**, and the branch that puts
+   * the body back is inside that decay. A timer cut to exactly zero is
+   * therefore never touched again: the card meant to shorten a death would make
+   * it permanent, and only for the mages it helped most. One tick is the
+   * smallest value that still passes through the machinery that revives.
+   */
+  hastenRespawn(m: Mage, seconds: number): void {
+    if (m.alive || seconds <= 0 || m.respawnTimer <= 0) return;
+    m.respawnTimer = Math.max(SIM_DT, m.respawnTimer - seconds);
   }
 
   /**

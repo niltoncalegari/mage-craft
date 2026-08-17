@@ -203,6 +203,26 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     direction: 1,
   },
   /*
+   * White's fourth, and the loudest thing white owns. The other three are
+   * quiet by design — a triad, a dome snapping shut, a slow swell — because
+   * what they do is protect. This one is an order being given over the spot
+   * where a squad was wiped, and it is the only white card that should read as
+   * a *demand*.
+   *
+   * A torus rather than a burst, and lifting, which puts it in Solo
+   * Consagrado's family: both switch a patch of field on rather than throwing
+   * something at it. The radius is five where that one is four, because this is
+   * the card looking for bodies, and the widest disc in white is how it says so.
+   */
+  call_to_battle: {
+    shape: 'torus',
+    ring: 0xfff1c9,
+    zone: 0xb08728,
+    motes: [0xffffff, 0xffe08a, 0xd9a441],
+    moteCount: 26,
+    direction: 1,
+  },
+  /*
    * Blue's first card, in a colour the field has never shown — Maldição da
    * Lentidão is drawn blue but belongs to the black deck, so this is the first
    * time the palette and the deck agree.

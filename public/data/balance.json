@@ -518,6 +518,19 @@
         { "effect": "tribute", "magnitude": 1 }
       ]
     },
+    "call_to_battle": {
+      "name": "Chamado à Batalha",
+      "color": "white",
+      "kind": "buff",
+      "cost": 4,
+      "radius": 5,
+      "duration": 4,
+      "target": "allies",
+      "apply": [
+        { "effect": "haste", "magnitude": 0.35 },
+        { "effect": "rally", "magnitude": 3 }
+      ]
+    },
     "meteor_shower": {
       "name": "Chuva de Meteoros",
       "color": "red",

@@ -252,6 +252,25 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * The fourth white, and the only one that is not addressed to the squad
+   * standing there — it is addressed to the ones who are down. So it is the
+   * only card in the catalog built on a *rising* interval played twice: a
+   * fourth, struck and struck again a beat later, which is the shape of a call
+   * rather than of a chord.
+   *
+   * Bright and hard where Solo Consagrado is hollow and slow, because these two
+   * are the white pair most likely to be confused now: both are wide discs cast
+   * over your own people.
+   */
+  call_to_battle: {
+    detune: 0.02,
+    layers: [
+      { kind: 'chord', wave: 'square', freqs: [392, 523.25], at: 0, duration: 0.16, gain: 0.045 },
+      { kind: 'chord', wave: 'square', freqs: [523.25, 698.46], at: 0.18, duration: 0.22, gain: 0.045 },
+      { kind: 'noise', filter: 'highpass', from: 1800, to: 3200, at: 0, duration: 0.1, gain: 0.03 },
+    ],
+  },
+  /*
    * The third white, against two that are both fast. Bênção is a triad struck
    * at once and Escudo Arcano is a tick and a snap; this is the only card in
    * the catalog with no attack to speak of — a swell that arrives over half a
