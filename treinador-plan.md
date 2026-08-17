@@ -126,6 +126,13 @@ regra de construção; podem continuar como tint no VFX.
 | Clérigo | Suporte | Bênção de Ímpeto, Solo Consagrado, Brisa Rejuvenescedora | Sustentar |
 | Bardo Arcano | Suporte | Vínculo da Dor, Paranoia | (*2 skills*) sabotagem; a aura de conjuração já é o passivo |
 
+> ⚠️ **Duas skills do catálogo são economia de mana:** Fluxo de Mana e Tributo
+> Obscuro. Se a pergunta 7 ficar no default (sem mana de time), elas **não
+> entram no kit como estão**. Ou a §3.3 volta atrás (mana continua), ou estas
+> duas ganham rider novo (carga do mago / GCD do time) **antes** da Fase 1, ou
+> saem da tabela e duas outras ocupam o lugar. Não deixar isso para a Fase 3 —
+> a varredura não consegue medir uma skill cujo efeito morreu com o recurso.
+
 Isso é um **primeiro corte** para não começar o pivot com um catálogo vazio.
 Antes da Fase 1, uma passagem humana pode trocar par (mago, skill) sem mudar
 o modelo. O que o modelo exige:
@@ -154,6 +161,12 @@ Default da pergunta 7:
 Mana de time fica **desligada** neste default. Se a Fase 3 mostrar dump de
 skills (todo mundo estoura o kit no primeiro aglomerado), religar mana como
 teto compartilhado é um dial — não o desenho de abertura.
+
+**Morte súbita hoje dobra mana** (`SUDDEN_DEATH_MANA_MULTIPLIER`). Sem mana,
+o relógio da prorrogação precisa de outro dial — candidato: multiplicador
+de cooldown (skills voltam mais rápido) e/ou o `SIEGE_RAMP_SUDDEN_DEATH`
+que já existe no dano a estrutura. Escolher na Fase 0, implementar na Fase
+1. Não deixar a morte súbita “igual, só que sem o acelerador”.
 
 ### 3.4 Gatilho: o `Brain`, com postura (default da pergunta 6)
 
@@ -394,7 +407,111 @@ a resposta tem que estar **no mago**.
 | `MageSnapshotDTO` | Ganhar carga por skill do kit (ids estáveis) |
 
 Servidor (`server/src/**`) e `api/` (schema de loadout) acompanham na mesma
-fase que o fio — senão practice e online divergem.
+fase que o fio — senão practice e online divergem. O detalhe não é “os
+diretórios”: é a lista da §7.2. `LocalSession` é o espelho do `Session`; um
+sem o outro é practice ≠ online.
+
+### 7.1 Buracos de desenho que a primeira versão deste plano deixou implícitos
+
+Não são arquivos. São decisões que, se não fecharem na Fase 0, a Fase 1
+implementa o modelo velho com outro nome.
+
+| Buraco | Onde vive hoje | O que a v1.3 precisa decidir |
+| --- | --- | --- |
+| **Assinatura de conjuração** | `World.castSpell(team, spellId, pos)` gasta mana de time e GCD global | Vira `castAbility(mageId, spellId, pos)` (ou equivalente): dono vivo, kit, alcance, GCD do mago, cooldown da skill. `CastRejection` perde `not_enough_mana`; ganha `not_owner` / `mage_dead` / `out_of_range` / `ability_on_cooldown`. Todo teste que chama `castSpell` hoje acompanha. |
+| **Estado no mago** | `Mage` não tem carga. `MageInput` é só move/aim/throw | O mago ganha cooldown por skill do kit. O `Brain` pede o cast **no mesmo tick** em que anda — some o `Caster` por time (`Session.casters` / `decks`). |
+| **Dois loops idênticos** | `server/src/Session.ts` e `src/net/LocalSession.ts` | Os dois perdem deck/caster no **mesmo** PR. Practice atrasado é o pivot pela metade. |
+| **Skills de mana** | `mana_flow`, `dark_tribute` em `spellRiders.ts` | Ver aviso da §3.2. Rider novo, fora do kit, ou mana permanece. |
+| **Morte súbita** | `SUDDEN_DEATH_MANA_MULTIPLIER` | Ver §3.3. Dial substituto na Fase 0. |
+| **Progressão (GDD §12)** | “jogar desbloqueia cartas” — spec, ainda pouco código | Vira desbloquear **mago** (ou slot de kit se a pergunta 8 abrir). |
+| **Compat de fio** | Sem versionamento de mensagem | `hand`/`mana`/`strategy` no fio é **quebra**. Deploy cliente+servidor juntos. Mongo `User.loadouts` e `MatchLog.cards`; `localStorage` v2 → v3. |
+| **Carrossel de QA** | `SpellRangeSession` + `SpellRangeScreen` | Passa a ciclar kit por mago, não `ALL_SPELLS` soltos. |
+
+`JoinQueueMsg.deck` (já `@deprecated`) e o `deck` que o `Matchmaker` ainda
+guarda saem no mesmo corte do `set_loadout`.
+
+### 7.2 Inventário por zona
+
+Checklist. Fase 1–2 tira do **caminho quente**; apagar arquivo é Fase 5.
+
+**Sim — caminho quente (Fase 0–1)**
+
+| Path | Papel |
+| --- | --- |
+| `public/data/balance.json` + `sim/balance.ts` | `roster.*.abilities`; `spells.*.cooldown/when/at`; `sim.suddenDeath*` |
+| `sim/cards.ts` | Roster expõe o kit (mesmo padrão do resto do catálogo) |
+| `sim/entities.ts` | Carga no `Mage`; intent de skill no tick |
+| `sim/World.ts` | `castAbility`; mana/GCD global saem ou ficam mortos; `spellCasts` já serve VFX |
+| `sim/bot/Brain.ts` | Escolhe e pede o cast. Dívida de Torre (§11 do GDD) trava skill de siege |
+| `sim/strategyFacts.ts` | **Não apagar na Fase 1.** Vocabulário do `when`/`at`. Some o editor, ficam os fatos |
+| `sim/config.ts` | `MANA_*`, `SPELL_GLOBAL_COOLDOWN` — morrem ou viram no-op documentado |
+| `sim/snapshot.ts` | Tira `mana`; põe cargas no mago; `firedAbility` |
+
+**Sim — sai do boot depois (Fase 5)**
+
+`sim/Deck.ts` · `Deck.test.ts` · `sim/strategy.ts` · `strategy.test.ts` ·
+`strategyPresets.ts` · `strategyPresets.test.ts` · `sim/bot/Tactician.ts` ·
+`Tactician.test.ts` · `sim/bot/Commander.ts` (o arquivo inteiro é carta) ·
+`scripts/ai-report.mts` (reescrever; o `agency.test.ts` também, não apagar)
+
+**Sim — testes que compilam contra `castSpell(team, …)`** (Fase 1, senão o
+primeiro PR quebra CI)
+
+`sim/siege.test.ts` · `World.test.ts` · `spellRiders.test.ts` · `kills.test.ts` ·
+`paranoia.test.ts` · `puddleSource.test.ts` · `matchStats.test.ts` ·
+`balance.test.ts` (`colorLimitIsPlayable`, regras de baralho) · `spells.test.ts`
+
+**Servidor (Fase 2, o mesmo PR que o fio)**
+
+| Path | Papel |
+| --- | --- |
+| `server/src/Session.ts` | Some `decks` / `casters` / `playerDecks` / `playerStrategies` |
+| `server/src/App.ts` | `set_loadout`, `resolveDeck`/`resolveStrategy`, snapshot POV |
+| `server/src/App.test.ts` | Hoje afirma mão, ciclo sem clique, programa vs vazio — reescrever |
+| `server/src/Matchmaker.ts` (+ teste) | Fila ainda carrega `deck` |
+| `sim/protocol.ts` | `SetLoadoutMsg`, `JoinQueueMsg.deck`, `SnapshotMsg` |
+
+**Cliente (Fase 2 + 4)**
+
+| Path | Papel |
+| --- | --- |
+| `src/net/LocalSession.ts` (+ teste) | Espelho do `Session` |
+| `src/net/SnapshotSync.ts` (+ teste) | `MatchState.mana/hand/firedRule` |
+| `src/net/NetworkClient.ts` · `src/app/App.tsx` | `set_loadout` no connect |
+| `src/app/loadout.ts` (+ teste) | v2 → v3; `saveDeck` / `saveStrategy` saem |
+| `src/app/screens/HomeScreen.tsx` | Abas Deck/Strategy saem |
+| `src/app/screens/SquadBuilder.tsx` | Kit + postura |
+| `DeckBuilder.tsx` · `StrategyBuilder.tsx` · `strategy/**` | Fase 5 |
+| `src/ui/MatchHUD.tsx` | Mão, next, barra de mana |
+| `src/ui/SquadPanel.tsx` | Carga por skill |
+| `src/ui/strategyText.ts` · `deckColors.ts` | Fase 5, ou encolher para labels de política |
+| `src/dev/SpellRangeSession.ts` · `SpellRangeScreen.tsx` | Carrossel por mago |
+| `src/app/matchHistory.ts` · `HistoryPanel.tsx` | Casts por carta → por mago/skill |
+| `src/engine/spellSfx.ts` · `src/render/spellVfx.ts` | Sobrevivem (chave `SpellId`) |
+
+**API (Fase 2)**
+
+`api/src/models/User.ts` (`loadouts[].deck/strategy`) ·
+`api/src/models/MatchLog.ts` (`cards[]`) · `api/src/routes/loadout.ts` (+ teste) ·
+`api/src/aggregations/stats.ts` · `src/net/ApiClient.ts` ·
+`docs/accounts-ranking-dashboard.md`
+
+**Docs (Fase 5, não bloqueia o primeiro PR)**
+
+`GDD.md` (§1, §2, **§6 mana**, §7, §9, §10, **§12**, §13, §14, §17) ·
+`README.md` (ainda descreve WASD) · `AGENTS.md` · este plano vira histórico.
+
+`e2e/dashboard.spec.ts` — conferir se fala em deck; se não, não bloqueia.
+
+### 7.3 O que *não* é refactor deste pivot
+
+`Brain` de movimento/cover (exceto o gancho de skill e a dívida de Torre se
+uma skill de estrutura entrar) · `Arena` · elementos/`onHit` · VFX/SFX por
+`SpellId` · a fila de matchmaking em si · ranking ELO · auth · render de
+mago/estrutura.
+
+`sim/**` é zona compartilhada. Este pivot **não** cabe só no cliente: o
+primeiro PR de sim (Fase 0–1) tem que ser coordenado.
 
 ---
 
@@ -405,30 +522,39 @@ Não misturar. Cada fase termina com teste, não com “a UI já parece o produt
 ### Fase 0 — Contrato (este doc + dado)
 
 - Travas da §1 revisadas (6/7/8).
-- Tabela da §3.2 confirmada ou substituída *no papel*.
+- Tabela da §3.2 confirmada ou substituída *no papel*, **incluindo** o destino
+  de Fluxo de Mana e Tributo Obscuro.
+- Dial da morte súbita sem mana (§3.3).
 - `balance.json`: cada `RosterId` aponta para `abilities: SpellId[]` (2 ou 3)
   e cada spell ganha `cooldown` + `when` + `at`. Ainda ninguém dispara.
 
 **Pronto quando:** um teste de catálogo afirma: kits disjuntos, todo mago ≥ 2,
-todo `SpellId` tem dono, `when`/`at` são valores do vocabulário já existente.
+todo `SpellId` tem dono (ou está explicitamente fora por ser economia de
+mana), `when`/`at` são valores do vocabulário já existente.
 
 ### Fase 1 — Sim: o mago gasta o próprio kit
 
-- `World.castSpell` passa a exigir o mago vivo dono daquela skill (ou uma
-  função nova com a mesma applier).
-- `Brain` escolhe entre skills prontas; GCD por mago.
+- `World.castAbility(mageId, spellId, pos)` (ou `castSpell` reassinado).
+- Estado de cooldown no `Mage`; `Brain` pede o cast; GCD por mago.
 - Morte / respawn corta o kit.
-- Sem UI nova ainda. Headless.
+- Morte súbita usa o dial novo, não o multiplicador de mana.
+- Testes da §7.2 que chamam `castSpell(team, …)` acompanham neste PR.
+- Sem UI nova. Headless. `Session` / `LocalSession` ainda podem estar no
+  modelo velho **só se** este PR não for deployado sozinho — o caminho seguro
+  é Fase 1+2 no mesmo corte de `sim/**`.
 
 **Pronto quando:** testes de sim — mago morto não lança; mago A não lança a
 skill de B; dois magos do mesmo time podem lançar no mesmo segundo; o gatilho
-é determinístico (mesmo seed, mesmo log de casts).
+é determinístico (mesmo seed, mesmo log de casts); CI verde na suíte de
+riders/siege/World.
 
-### Fase 2 — Loadout e fio
+### Fase 2 — Loadout, fio, practice e persistência
 
-- Loadout v3: `squad` + `stances`. Drop de `deck`/`strategy`.
-- `set_loadout` / API / matchmaker.
-- Snapshot: cargas no mago, `firedAbility`, sem mão.
+- Loadout v3: `squad` + `stances`. Drop de `deck`/`strategy` (localStorage,
+  `User`, `set_loadout`, `JoinQueue`, `Matchmaker`).
+- `Session` **e** `LocalSession` perdem `Caster`/`Deck` no mesmo PR.
+- Snapshot: cargas no mago, `firedAbility`, sem mão/mana.
+- `MatchLog.cards` → uso por mago/skill; `App.test.ts` reescrito.
 
 **Pronto quando:** practice e uma sala online disparam o mesmo kit a partir do
 mesmo loadout. `validateDeck` / `validateStrategy` saem do caminho quente.
@@ -461,9 +587,12 @@ olhando o HUD, *qual mago* fez o quê, sem abrir o JSON.
 
 ### Fase 5 — Enterrar o leftover
 
-- Remover `DeckBuilder`, `StrategyBuilder`, `Tactician` do boot.
-- GDD.md v1.3: reescrever §1, §2, §7, §9, §10, §13, §17. Este plano vira
-  histórico, no mesmo espírito de `design.md`.
+- Remover `DeckBuilder`, `StrategyBuilder`, `Tactician`, `Commander`, `Deck`
+  do boot.
+- `SpellRange` cicla kit por mago.
+- `GDD.md` v1.3: reescrever §1, §2, **§6**, §7, §9, §10, **§12**, §13, §14,
+  §17. `README.md`. Este plano vira histórico, no mesmo espírito de
+  `design.md`.
 
 ---
 
@@ -490,7 +619,9 @@ olhando o HUD, *qual mago* fez o quê, sem abrir o JSON.
 | Screensaver | Sem rastro de regra, a partida não atribui. | Carga no mago + `firedAbility` + pós-partida. Fase 4 não é polimento. |
 | `Brain` vira o jogador | “Melhor momento” não é editável. | Postura; política no JSON; zero RNG no gatilho. |
 | Magos encravados em Torre | Dívida já escrita no GDD §11. Skill de siege (Chamado, Meteoros) pode piorar. | Não abrir skill de estrutura na Fase 1 sem o `Brain` já saber largar Torre. |
-| Pivot pela metade | Practice no modelo novo, online no velho. | Fase 2 fecha fio + API + matchmaker juntos. `sim/**` é zona compartilhada. |
+| Pivot pela metade | Practice no modelo novo, online no velho. | Fase 1+2 no mesmo corte de `sim/**`; `Session` e `LocalSession` no mesmo PR. |
+| Skills de mana órfãs | Fluxo de Mana / Tributo Obscuro morrem se a mana sair | Fechar na Fase 0 (§3.2). |
+| Morte súbita sem acelerador | Hoje o overlay é dobra de mana | Dial substituto na Fase 0 (§3.3). |
 | Medir o modelo velho | `ai-report` hoje joga carta por time (`Commander`/`Tactician`) | Kit só entra no sweep depois da Fase 1. |
 | Nerf cego | Skill a 0 casts parece fraca | Volta A antes da B (§5.2). |
 
@@ -506,6 +637,7 @@ Quando a Fase 5 fechar, o GDD herda:
 - Verbo primário: Montar (treinador), não Programar.
 - As três montagens viram uma (esquadrão + postura).
 - Catálogo §9: magos *com* kit, não magos *e* cartas.
+- §6 (mana / morte súbita) e §12 (desbloqueio) reescritas — não podem continuar falando em carta.
 - §10 / §14 reescritas no eixo da §4 (agência) e da §5 (varredura por mago/skill).
 - Non-goal novo: baralho, mão, ciclo, programa de 12 regras.
 
