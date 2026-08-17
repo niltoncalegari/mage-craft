@@ -362,6 +362,27 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     direction: -1,
   },
   /*
+   * Black's fourth, and the only card in the catalog that leaves the field
+   * looking exactly as it did. Nothing takes damage, nothing moves, nothing is
+   * shielded — four mages simply stop agreeing with each other, and the whole
+   * of it is carried by the ring turning over each of their heads afterwards
+   * (`effectVfx.ts`).
+   *
+   * Which is what the beat has to allow for: it should mark the disc and get
+   * out of the way rather than promise an event that did not happen. A flash,
+   * like Clarão Nulo — the other card whose effect is a subtraction — but in
+   * black's bruised violet rather than a cold white, and the dimmest zone in
+   * the table under it.
+   */
+  paranoia: {
+    shape: 'flash',
+    ring: 0xb07de0,
+    zone: 0x1a0d29,
+    motes: [0xd9b8ff, 0x8a5cc4, 0x4a2a70],
+    moteCount: 18,
+    direction: -1,
+  },
+  /*
    * The card that would most like to be the `link` shape, and cannot be: the
    * honest drawing is a thread between two bodies, and `SpellCast` carries a
    * centre and a radius rather than two ends. Rather than invent a payload for

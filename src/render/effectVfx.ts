@@ -259,6 +259,34 @@ export const EFFECT_VFX: readonly EffectEmission[] = [
   },
   {
     /*
+     * The one effect whose tell has to be legible from *outside* the body it is
+     * on. Every other row here says something about its carrier — burning,
+     * braced, bound. This one says something about who the carrier is about to
+     * shoot, and the player reading it is trying to work out why his squad
+     * stopped killing anything.
+     *
+     * So it is overhead, where `stun` and the executioner's drop already live,
+     * and it *circles*: motes on a wide ring at head height with a sideways
+     * drift, going round rather than up or down. Nothing else in the table
+     * orbits, and at match camera distance a mage with something turning over
+     * its head is the fastest way to say "this one is not with them".
+     */
+    kind: 'confused',
+    interval: 0.18,
+    perStack: false,
+    colors: [0xb07de0, 0x6a3f9e],
+    radius: 0.46,
+    spread: 0.05,
+    height: 1.35,
+    heightSpread: 0.12,
+    drift: 0.55,
+    rise: 0.05,
+    size: 0.05,
+    life: 0.45,
+    gravityScale: 0.02,
+  },
+  {
+    /*
      * The only outward emission in the table. Everything else here rises off a
      * mage or falls around one; Frenesi Sanguinário is the one status that is
      * about what its carrier is going to do to *somebody else*, and motes

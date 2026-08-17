@@ -163,6 +163,7 @@ export const EFFECT_LABEL: Readonly<Record<EffectKind, string>> = {
   petrify: 'petrificação',
   linked: 'vínculo',
   bonded: 'solidariedade',
+  confused: 'paranoia',
 };
 
 export const EFFECT_CHOICES: readonly EffectKind[] = EFFECT_ORDER;

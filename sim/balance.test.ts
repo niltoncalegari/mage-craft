@@ -30,6 +30,7 @@ const KNOWN_EFFECTS = new Set([
   'petrify',
   'linked',
   'bonded',
+  'confused',
   'interrupt',
   'shield_break',
   'puddle',

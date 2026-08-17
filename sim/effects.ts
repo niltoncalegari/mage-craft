@@ -78,7 +78,13 @@ export type EffectKind =
    * Bound to the rest of the squad the other way round: `magnitude` of every
    * hit this body takes is lifted off it and handed to the others.
    */
-  | 'bonded';
+  | 'bonded'
+  /**
+   * Cannot agree with its own squad about who the enemy is: the mage ignores
+   * the focus target and shoots whatever is nearest to it. `magnitude` is
+   * unused — you are either sure or you are not.
+   */
+  | 'confused';
 
 /**
  * Iteration and wire order. Fixed so the effect list is canonical: a mage
@@ -100,6 +106,7 @@ export const EFFECT_ORDER: readonly EffectKind[] = [
   'marked',
   'linked',
   'bonded',
+  'confused',
   'shield',
 ];
 

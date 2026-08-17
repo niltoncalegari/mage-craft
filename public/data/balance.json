@@ -185,6 +185,7 @@
     "burn": { "stacking": "stack_intensity", "maxStacks": 3, "maxMagnitude": 1, "polarity": "debuff" },
     "linked": { "stacking": "refresh_strongest", "maxMagnitude": 0.6, "polarity": "debuff" },
     "bonded": { "stacking": "refresh_strongest", "maxMagnitude": 0.75, "polarity": "buff" },
+    "confused": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
     "shield": { "stacking": "pool", "maxMagnitude": 9999, "polarity": "buff" }
   },
 
@@ -592,6 +593,16 @@
       "duration": 5,
       "target": "ground",
       "apply": [{ "effect": "barrier" }]
+    },
+    "paranoia": {
+      "name": "Paranoia",
+      "color": "black",
+      "kind": "curse",
+      "cost": 3,
+      "radius": 3.5,
+      "duration": 4,
+      "target": "enemies",
+      "apply": [{ "effect": "confused" }]
     },
     "meteor_shower": {
       "name": "Chuva de Meteoros",

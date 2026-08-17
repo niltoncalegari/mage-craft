@@ -42,6 +42,7 @@ export type SpellId =
   | 'spatial_fold'
   | 'gravity_well'
   | 'crystal_rift'
+  | 'paranoia'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -106,6 +107,7 @@ export const ALL_SPELLS: readonly SpellId[] = [
   'slow_curse',
   'dark_tribute',
   'bond_of_pain',
+  'paranoia',
 ];
 
 function build(): Readonly<Record<SpellId, SpellCard>> {

@@ -375,6 +375,23 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * Two voices that will not settle on a pitch: the same tone detuned against
+   * itself a few cents apart, wobbling, over a whisper of high noise. It is the
+   * only sound here built on a *beat frequency* — the sound of two things
+   * failing to agree, which is the card in one sentence.
+   *
+   * Quiet, and it has to be. Nothing happened on the field: nobody was hurt,
+   * nobody moved. A loud cast would promise an event the player then goes
+   * looking for and does not find.
+   */
+  paranoia: {
+    detune: 0.05,
+    layers: [
+      { kind: 'chord', wave: 'triangle', freqs: [233.08, 238], at: 0, duration: 0.45, gain: 0.04 },
+      { kind: 'noise', filter: 'highpass', from: 3000, to: 1800, at: 0.02, duration: 0.4, gain: 0.02 },
+    ],
+  },
+  /*
    * A web being drawn tight. Two square tones a tritone apart, sliding toward
    * each other without arriving — the one interval in the file more unpleasant
    * than Tributo Obscuro's minor second, and it has to be, because these are
