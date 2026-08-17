@@ -183,6 +183,7 @@
     "stun": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
     "root": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
     "burn": { "stacking": "stack_intensity", "maxStacks": 3, "maxMagnitude": 1, "polarity": "debuff" },
+    "linked": { "stacking": "refresh_strongest", "maxMagnitude": 0.6, "polarity": "debuff" },
     "shield": { "stacking": "pool", "maxMagnitude": 9999, "polarity": "buff" }
   },
 
@@ -540,6 +541,16 @@
       "duration": 6,
       "target": "allies",
       "apply": [{ "effect": "attune", "magnitude": 2.5 }]
+    },
+    "bond_of_pain": {
+      "name": "Vínculo da Dor",
+      "color": "black",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 3,
+      "duration": 6,
+      "target": "enemies",
+      "apply": [{ "effect": "linked", "magnitude": 0.3 }]
     },
     "meteor_shower": {
       "name": "Chuva de Meteoros",

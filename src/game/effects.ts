@@ -24,7 +24,8 @@ export type FxKind =
   | 'fortify'
   | 'empower'
   | 'marked'
-  | 'petrify';
+  | 'petrify'
+  | 'linked';
 
 export interface MageFx {
   readonly kind: string;

@@ -207,6 +207,34 @@ export const EFFECT_VFX: readonly EffectEmission[] = [
   },
   {
     /*
+     * A bond has no body of its own to draw. The honest picture would be a line
+     * between the bound mages, which is the `link` shape the catalog has been
+     * putting off since the VFX pass because the `SpellCast` event carries a
+     * centre and a radius and not two ends.
+     *
+     * This is the half that does not need one: a thin thread of dark red
+     * spooling *off* each bound mage at waist height and falling away, so a
+     * player scanning a scrum sees which bodies are wired together by seeing
+     * which of them are unravelling. It reads as connection by repetition
+     * rather than by geometry — the same colour on four mages at once is the
+     * only thing in the emission table that ever appears in a set.
+     */
+    kind: 'linked',
+    interval: 0.3,
+    perStack: false,
+    colors: [0x8b0d1f, 0xd62839],
+    radius: 0.36,
+    spread: 0.04,
+    height: 0.75,
+    heightSpread: 0.15,
+    drift: 0.35,
+    rise: -0.3,
+    size: 0.05,
+    life: 0.55,
+    gravityScale: 0.25,
+  },
+  {
+    /*
      * The only outward emission in the table. Everything else here rises off a
      * mage or falls around one; Frenesi Sanguinário is the one status that is
      * about what its carrier is going to do to *somebody else*, and motes

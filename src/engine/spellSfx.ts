@@ -305,6 +305,25 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * A web being drawn tight. Two square tones a tritone apart, sliding toward
+   * each other without arriving — the one interval in the file more unpleasant
+   * than Tributo Obscuro's minor second, and it has to be, because these are
+   * the two black cards and they must not be confused.
+   *
+   * The tribute is a *cost*: struck, held, over. This one keeps moving for a
+   * third of a second after it lands, which is the right sentence for a card
+   * whose damage has not happened yet and will arrive later, from somewhere
+   * else, whenever the enemy next swings.
+   */
+  bond_of_pain: {
+    detune: 0.035,
+    layers: [
+      { kind: 'tone', wave: 'square', freq: 220, toFreq: 262, at: 0, duration: 0.38, gain: 0.045 },
+      { kind: 'tone', wave: 'square', freq: 311, toFreq: 268, at: 0, duration: 0.38, gain: 0.04 },
+      { kind: 'noise', filter: 'bandpass', from: 1800, to: 500, at: 0, duration: 0.12, gain: 0.035, q: 3 },
+    ],
+  },
+  /*
    * The other black card, and the one that has to sound like a *cost*. Every
    * buff in the catalog is consonant or bright; this one helps the player who
    * cast it and still has to be unpleasant, because what it did was hurt his

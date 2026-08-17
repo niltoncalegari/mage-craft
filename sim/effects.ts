@@ -68,7 +68,12 @@ export type EffectKind =
    * card that applies it: three seconds of silence bought by three seconds of
    * invulnerability.
    */
-  | 'petrify';
+  | 'petrify'
+  /**
+   * Bound to everything else carrying this: a share of every hit one of them
+   * takes arrives on all the others. `magnitude` is that share.
+   */
+  | 'linked';
 
 /**
  * Iteration and wire order. Fixed so the effect list is canonical: a mage
@@ -88,6 +93,7 @@ export const EFFECT_ORDER: readonly EffectKind[] = [
   'fortify',
   'empower',
   'marked',
+  'linked',
   'shield',
 ];
 

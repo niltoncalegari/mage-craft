@@ -574,3 +574,69 @@ describe('World — anti-stuck', () => {
     expect(w.pathGrid().isBlocked(tower.position)).toBe(false);
   });
 });
+
+/**
+ * Vínculo da Dor, and the first thing in the game that makes damage arrive
+ * somewhere it was not aimed.
+ *
+ * Every card until now answered "what happens to who I caught". This one
+ * answers "what happens to who I caught *later*, because of something else
+ * entirely" — the enemy's own focus fire is what pays it out, which makes it
+ * the only card whose value is spent by the opponent rather than by the caster.
+ */
+describe('a pain bond', () => {
+  it('spreads a share of every hit to the others in the web', () => {
+    const w = new World();
+    const hit = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+    const bound = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 1));
+    const loose = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 14));
+
+    w.castSpell(TEAM_A, 'bond_of_pain', new Vec2(0, 0.5));
+    w.dealDamage(hit, 20, {});
+
+    expect(hit.health).toBeLessThan(hit.maxHealth);
+    expect(bound.health).toBeLessThan(bound.maxHealth);
+    expect(loose.health).toBe(loose.maxHealth);
+  });
+
+  it('never spreads more than it took', () => {
+    const w = new World();
+    const hit = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+    const bound = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 1));
+
+    w.castSpell(TEAM_A, 'bond_of_pain', new Vec2(0, 0.5));
+    w.dealDamage(hit, 20, {});
+
+    expect(hit.maxHealth - bound.health).toBeLessThan(hit.maxHealth - hit.health);
+  });
+
+  /**
+   * The failure this card is one line away from: the mirrored damage is damage,
+   * so it walks back into the same function and mirrors again. Two bound mages
+   * would trade a shrinking hit forever inside a single call, and with a share
+   * of 1 they would not shrink at all.
+   */
+  it('does not echo between the bodies it binds', () => {
+    const w = new World();
+    const a = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+    const b = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 1));
+
+    w.castSpell(TEAM_A, 'bond_of_pain', new Vec2(0, 0.5));
+    w.dealDamage(a, 10, {});
+
+    expect(a.alive).toBe(true);
+    expect(b.alive).toBe(true);
+    expect(b.health).toBeGreaterThan(b.maxHealth - 10);
+  });
+
+  it('binds only what the cast caught, not the whole squad', () => {
+    const w = new World();
+    const theirs = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+    const ours = w.summon(TEAM_A, 'pyromancer', new Vec2(0, 0.5));
+
+    w.castSpell(TEAM_A, 'bond_of_pain', new Vec2(0, 0.25));
+    w.dealDamage(theirs, 20, {});
+
+    expect(ours.health).toBe(ours.maxHealth);
+  });
+});

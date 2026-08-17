@@ -354,6 +354,14 @@ describe('effects — housekeeping', () => {
  * for fourteen kinds, without a per-card branch anywhere.
  */
 describe('effects — polarity', () => {
+  it('sorts the bonds by who wanted them', () => {
+    // Vínculo da Dor is cast on the enemy and Vínculo de Solidariedade on your
+    // own squad, so the same shape of effect lands on opposite sides of the
+    // dispel — which is the point of asking "who wanted this?" rather than
+    // "is the carrier better off?".
+    expect(polarityOf('linked')).toBe('debuff');
+  });
+
   it('sorts the plain cases the way anybody would', () => {
     expect(polarityOf('shield')).toBe('buff');
     expect(polarityOf('haste')).toBe('buff');

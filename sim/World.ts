@@ -205,6 +205,8 @@ export class World {
   private readonly pendingApplications: PendingApplication[] = [];
   /** A team's raised mana regeneration, while it lasts; see {@link attuneMana}. */
   private readonly manaFlow = new Map<Team, { multiplier: number; remaining: number }>();
+  /** Re-entrancy guard for the pain bond; see {@link spreadBondedPain}. */
+  private bondEcho = false;
 
   private cachedPathGrid: PathGrid | null = null;
   private cachedPathBlockers = -1;
@@ -1577,6 +1579,49 @@ export class World {
     if (!opts.noHitStun) m.stunTimer = Math.max(m.stunTimer, HIT_STUN);
 
     if (m.health <= 0) this.kill(m, opts.attackerId ?? null);
+    this.spreadBondedPain(m, remaining, opts);
+  }
+
+  /**
+   * Vínculo da Dor: a share of what one bound mage took arrives on the others
+   * (GDD §9).
+   *
+   * Spread from `remaining` — what actually landed after the multipliers and
+   * after the shield ate its part — rather than from the damage that was aimed.
+   * A bond that copied the raw number would pay out in full through a shield
+   * that stopped the hit, which is a card doing its damage twice.
+   *
+   * `bondEcho` is the guard, and it is not defensive. Mirrored damage is
+   * damage: without it the mirror walks straight back into `dealDamage`, finds
+   * the same web, and bounces between two bodies inside a single call — for as
+   * long as float arithmetic keeps shrinking it, and forever at a share of 1.
+   * One hop is also the right *rule*, not merely the terminating one: the bond
+   * shares what the fight did, not what the bond did.
+   */
+  private spreadBondedPain(source: Mage, dealt: number, opts: DamageOptions): void {
+    if (this.bondEcho || dealt <= 0) return;
+    const share = magnitudeOf(source, 'linked');
+    if (share <= 0) return;
+
+    this.bondEcho = true;
+    try {
+      for (const id of sortedIds(this.mages.keys())) {
+        const other = this.mages.get(id);
+        if (!other || other === source || !other.alive) continue;
+        if (!hasEffect(other, 'linked')) continue;
+        // Credited to whoever swung: a bond is a way of hitting four mages with
+        // one throw, and the kill it eventually earns belongs to the thrower.
+        this.dealDamage(other, dealt * share, {
+          attackerId: opts.attackerId ?? null,
+          // The flinch belongs to the body that was actually struck. Stunning a
+          // whole web every time one of them is grazed would take four mages
+          // off the field for a hit that landed on one.
+          noHitStun: true,
+        });
+      }
+    } finally {
+      this.bondEcho = false;
+    }
   }
 
   /**

@@ -161,6 +161,7 @@ export const EFFECT_LABEL: Readonly<Record<EffectKind, string>> = {
   empower: 'fúria',
   marked: 'marcado',
   petrify: 'petrificação',
+  linked: 'vínculo',
 };
 
 export const EFFECT_CHOICES: readonly EffectKind[] = EFFECT_ORDER;

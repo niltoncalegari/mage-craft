@@ -304,6 +304,27 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     direction: -1,
   },
   /*
+   * The card that would most like to be the `link` shape, and cannot be: the
+   * honest drawing is a thread between two bodies, and `SpellCast` carries a
+   * centre and a radius rather than two ends. Rather than invent a payload for
+   * one card, the connection is carried on the mages themselves — a red thread
+   * unspooling off every bound body (`effectVfx.ts`), which is the only thing
+   * in that table that ever shows up on four bodies at once.
+   *
+   * So the cast beat only has to say *where the web was thrown*: a tight burst,
+   * pressed down, in a red dark enough to be told apart from Frenesi
+   * Sanguinário — the other card that paints a squad red, and means the
+   * opposite by it.
+   */
+  bond_of_pain: {
+    shape: 'burst',
+    ring: 0xd62839,
+    zone: 0x2a0308,
+    motes: [0xd62839, 0x8b0d1f, 0x3d0a12],
+    moteCount: 20,
+    direction: -1,
+  },
+  /*
    * Black's second card, against a first (Maldição da Lentidão) that is drawn
    * blue for historical reasons — so this is the first time the deck's colour
    * reaches the field. Nearly black, with a bruised violet on it.

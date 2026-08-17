@@ -28,6 +28,7 @@ const KNOWN_EFFECTS = new Set([
   'empower',
   'marked',
   'petrify',
+  'linked',
   'interrupt',
   'shield_break',
   'puddle',

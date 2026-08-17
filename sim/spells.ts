@@ -37,6 +37,7 @@ export type SpellId =
   | 'dark_tribute'
   | 'call_to_battle'
   | 'mana_flow'
+  | 'bond_of_pain'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -96,6 +97,7 @@ export const ALL_SPELLS: readonly SpellId[] = [
   'call_to_battle',
   'slow_curse',
   'dark_tribute',
+  'bond_of_pain',
 ];
 
 function build(): Readonly<Record<SpellId, SpellCard>> {
