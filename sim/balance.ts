@@ -94,6 +94,14 @@ export interface RosterRule {
   readonly health: number;
   readonly moveSpeed: number;
   readonly element: string;
+  /**
+   * The spells this mage is allowed to spend (plano v1.3 §3.1) — its kit.
+   *
+   * The catalog is partitioned, not shared: `kits.test.ts` refuses a spell that
+   * two mages carry, and refuses one that nobody does. That is what makes
+   * swapping a mage change the vocabulary of the match rather than a stat.
+   */
+  readonly abilities: readonly string[];
   readonly healPerSecond?: number;
   readonly healRange?: number;
   readonly auraChargeBonus?: number;
@@ -156,6 +164,20 @@ export interface SpellRule {
   readonly duration: number;
   /** Who the applications land on: allies, enemies, both, or the ground. */
   readonly target: string;
+  /**
+   * When the mage carrying this spell decides to spend it, and where (plano
+   * v1.3 §3.4). Parsed and validated by `abilityPolicy.ts`, which is also where
+   * the vocabulary `when` and `at` are written in lives.
+   *
+   * `when` is `unknown` here on purpose: this module is the leaf every other
+   * one reads from, so it must not import the condition union it would need to
+   * type it properly. The check happens once, eagerly, at the other end.
+   */
+  readonly cooldown: number;
+  readonly range: number;
+  readonly at: string;
+  readonly minTargets: number;
+  readonly when: unknown;
   readonly apply: readonly SpellApplyRule[];
 }
 
@@ -194,6 +216,10 @@ export interface Balance {
     readonly suddenDeathDuration: number;
     readonly spellCastFxDuration: number;
     readonly spellGlobalCooldown: number;
+    /** Seconds one mage must wait between two of its own abilities (§3.3). */
+    readonly abilityGcd: number;
+    /** How much faster kits recharge during sudden death (§3.3). */
+    readonly suddenDeathCooldownMultiplier: number;
     /** Health fraction below which `marked` starts paying out. */
     readonly executeThreshold: number;
     readonly obstacleTopHeight: Readonly<Record<string, number>>;

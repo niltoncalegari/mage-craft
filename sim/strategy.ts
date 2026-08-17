@@ -24,7 +24,6 @@
  */
 
 import { isEffectKind, type EffectKind } from './effects';
-import { MANA_MAX, SQUAD_SIZE } from './config';
 import { isSpellId, spellFor, type CardId } from './spells';
 import type { Posture } from './bot/Squad';
 import type { Vec2 } from './Vec2';
@@ -49,97 +48,40 @@ const MAX_NAME_LENGTH = 24;
 
 /* ---- The program ----------------------------------------------------------- */
 
-export type Comparator = 'lt' | 'lte' | 'gt' | 'gte' | 'eq';
-
-const COMPARATORS: readonly Comparator[] = ['lt', 'lte', 'gt', 'gte', 'eq'];
-
 /**
- * A numeric condition and the fact it reads. Kept as one shape rather than one
- * per fact so the editor renders a single "pick a fact, pick a comparator, type
- * a number" row for all of them.
- */
-export type NumericConditionKind =
-  | 'mana'
-  | 'elapsed'
-  | 'ally_count'
-  | 'enemy_count'
-  | 'ally_health'
-  | 'enemy_health'
-  | 'ally_cluster'
-  | 'enemy_cluster'
-  | 'our_core'
-  | 'enemy_core'
-  | 'our_towers'
-  | 'enemy_towers';
-
-/**
- * Inclusive bounds the authored value must fall in, per fact.
+ * The vocabulary now lives in `abilityPolicy.ts` and is re-exported here.
  *
- * Exported because the editor's number field has to offer exactly this range.
- * Restating the bounds in the UI would give two places to change and, in the
- * meantime, a stepper that happily reaches values the validator refuses.
+ * It moved because it outlives this module: the v1.3 pivot deletes the rule
+ * list but keeps "when the enemy is bunched up, at the enemy cluster", which a
+ * mage deciding for itself needs just as much. Re-exporting rather than
+ * re-declaring means the editor and the mages cannot drift apart while both
+ * exist, and that removing the editor is a deletion rather than a rewrite.
  */
-export const NUMERIC_RANGE: Readonly<Record<NumericConditionKind, readonly [number, number]>> = {
-  mana: [0, MANA_MAX],
-  elapsed: [0, 600],
-  ally_count: [0, SQUAD_SIZE],
-  enemy_count: [0, SQUAD_SIZE],
-  ally_health: [0, 1],
-  enemy_health: [0, 1],
-  ally_cluster: [0, SQUAD_SIZE],
-  enemy_cluster: [0, SQUAD_SIZE],
-  our_core: [0, 1],
-  enemy_core: [0, 1],
-  our_towers: [0, 2],
-  enemy_towers: [0, 2],
-};
+export {
+  COMPARATORS,
+  NUMERIC_RANGE,
+  ALL_NUMERIC_CONDITIONS,
+  ALL_TARGET_SELECTORS,
+  ALL_POSTURES,
+} from './abilityPolicy';
+export type {
+  Comparator,
+  NumericConditionKind,
+  Condition,
+  TargetSelector,
+} from './abilityPolicy';
 
-export const ALL_NUMERIC_CONDITIONS = Object.keys(NUMERIC_RANGE) as readonly NumericConditionKind[];
-
-export type Condition =
-  | { readonly kind: 'always' }
-  | { readonly kind: NumericConditionKind; readonly op: Comparator; readonly value: number }
-  | { readonly kind: 'sudden_death'; readonly value: boolean }
-  | { readonly kind: 'posture'; readonly value: Posture }
-  | { readonly kind: 'intruder' }
-  | { readonly kind: 'ally_has_effect' | 'enemy_has_effect'; readonly effect: EffectKind }
-  | { readonly kind: 'not'; readonly of: Condition }
-  | { readonly kind: 'all' | 'any'; readonly of: readonly Condition[] };
-
-/**
- * Where a spell lands. Every selector resolves to one point or to nothing;
- * "nothing" skips the rule rather than falling back, because a spell that
- * quietly lands somewhere the player never named is worse than one that
- * does not go off.
- */
-export type TargetSelector =
-  | 'enemy_cluster'
-  | 'ally_cluster'
-  | 'deepest_intruder'
-  | 'weakest_ally'
-  | 'strongest_enemy'
-  | 'ally_frontline'
-  | 'enemy_frontline'
-  | 'our_core'
-  | 'enemy_core'
-  | 'our_objective'
-  | 'squad_rally';
-
-export const ALL_TARGET_SELECTORS: readonly TargetSelector[] = [
-  'enemy_cluster',
-  'ally_cluster',
-  'deepest_intruder',
-  'weakest_ally',
-  'strongest_enemy',
-  'ally_frontline',
-  'enemy_frontline',
-  'our_core',
-  'enemy_core',
-  'our_objective',
-  'squad_rally',
-];
-
-export const ALL_POSTURES: readonly Posture[] = ['push', 'defend', 'regroup'];
+import {
+  ABILITY_ONLY_CONDITIONS,
+  ALL_POSTURES,
+  ALL_TARGET_SELECTORS,
+  COMPARATORS,
+  NUMERIC_RANGE,
+  type Comparator,
+  type Condition,
+  type NumericConditionKind,
+  type TargetSelector,
+} from './abilityPolicy';
 
 export interface StrategyRule {
   /** Stable across edits. It is what the HUD names when the rule fires. */
@@ -302,6 +244,13 @@ function numericFact(kind: NumericConditionKind, f: StrategyFacts): number {
       return f.ourTowersAlive;
     case 'enemy_towers':
       return f.enemyTowersAlive;
+    // Belongs to a body, and a program is evaluated once per team, so there is
+    // no self to ask about. `validateCondition` refuses it on the way in; this
+    // arm exists so the switch stays total over the shared union, and answers
+    // "unhurt" so a hand-edited program that slips one through reads inert
+    // rather than permanently true.
+    case 'self_health':
+      return 1;
   }
 }
 
@@ -433,6 +382,11 @@ function validateCondition(value: unknown, inGroup: boolean): StrategyValidation
     default: {
       const range = NUMERIC_RANGE[c.kind as NumericConditionKind];
       if (!range) return fail(`unknown condition ${JSON.stringify(c.kind)}`);
+      // Shared vocabulary, two readers: the facts a mage reads about itself
+      // have no meaning to a team-scoped program (see `abilityPolicy.ts`).
+      if (ABILITY_ONLY_CONDITIONS.includes(c.kind as NumericConditionKind)) {
+        return fail(`${c.kind} is an ability condition, not a program one`);
+      }
       if (!COMPARATORS.includes(c.op as Comparator)) {
         return fail(`unknown comparator ${JSON.stringify(c.op)}`);
       }

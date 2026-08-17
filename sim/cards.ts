@@ -11,6 +11,7 @@
 import { BALANCE } from './balance';
 import { ROLE_BEHAVIOR, type Role } from './roles';
 import type { ElementId } from './elements';
+import type { SpellId } from './spells';
 
 export type RosterId =
   | 'stone_golem'
@@ -36,6 +37,15 @@ export interface RosterEntry {
    * multiplying whoever stands next to them, per GDD §8.
    */
   readonly element: ElementId;
+  /**
+   * The spells this mage may spend, in a stable order (plano v1.3 §3.1).
+   *
+   * The kit is what the player is really choosing when they field this mage:
+   * the catalog is partitioned across the nine of them, so a squad is a hand of
+   * abilities that happens to be carried by bodies. A mage that dies takes its
+   * two or three off the board until it respawns.
+   */
+  readonly abilities: readonly SpellId[];
   /** Support only: heals the most-hurt ally in range, HP per second. */
   readonly healPerSecond?: number;
   readonly healRange?: number;
@@ -54,6 +64,7 @@ const CATALOG: Readonly<Record<RosterId, RosterEntry>> = Object.fromEntries(
       health: r.health,
       moveSpeed: r.moveSpeed,
       element: r.element as ElementId,
+      abilities: r.abilities as readonly SpellId[],
       ...(r.healPerSecond !== undefined ? { healPerSecond: r.healPerSecond } : {}),
       ...(r.healRange !== undefined ? { healRange: r.healRange } : {}),
       ...(r.auraChargeBonus !== undefined ? { auraChargeBonus: r.auraChargeBonus } : {}),

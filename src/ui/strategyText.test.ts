@@ -12,7 +12,8 @@
 import { describe, expect, it } from 'vitest';
 import { EFFECT_ORDER } from '../../sim/effects';
 import { ALL_DECK_COLORS } from '../../sim/spells';
-import { ALL_NUMERIC_CONDITIONS, ALL_POSTURES, ALL_TARGET_SELECTORS, NUMERIC_RANGE } from '../../sim/strategy';
+import { ALL_POSTURES, ALL_TARGET_SELECTORS, NUMERIC_RANGE } from '../../sim/strategy';
+import { PROGRAM_NUMERIC_CONDITIONS } from '../../sim/abilityPolicy';
 import { DECK_COLOR_INK, DECK_COLOR_LABEL, cardInk } from './deckColors';
 import {
   ALL_COMPARATORS,
@@ -44,8 +45,17 @@ describe('strategy vocabulary', () => {
     for (const kind of FACT_ORDER) expectSpoken(FACT_LABEL[kind], kind);
   });
 
+  /**
+   * Scoped to the *program's* half of the vocabulary rather than to all of it.
+   *
+   * Since the v1.3 kits landed, `sim/abilityPolicy.ts` owns one union read by
+   * two callers, and each is missing a fact from it: a mage cannot read team
+   * `mana`, and this editor — evaluated once per team — has no self to ask
+   * `self_health` about. Sweeping the superset here would demand a picker row
+   * for a fact `validateStrategy` refuses on the way back in.
+   */
   it('offers every numeric fact, with a field spec', () => {
-    for (const kind of ALL_NUMERIC_CONDITIONS) {
+    for (const kind of PROGRAM_NUMERIC_CONDITIONS) {
       expect(FACT_ORDER, `${kind} is missing from the picker`).toContain(kind);
       const field = NUMERIC_FIELD[kind];
       expect(field.step, `${kind} has a stepper that never moves`).toBeGreaterThan(0);

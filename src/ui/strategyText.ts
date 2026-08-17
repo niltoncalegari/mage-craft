@@ -115,6 +115,9 @@ export const FACT_LABEL: Readonly<Record<FactKind, string>> = {
   enemy_count: 'inimigos vivos',
   ally_health: 'vida do aliado mais ferido',
   enemy_health: 'vida do inimigo mais ferido',
+  // Only a mage reading its own kit can ask this; `FACT_ORDER` deliberately
+  // leaves it out of the program editor's list (see `abilityPolicy.ts`).
+  self_health: 'vida do próprio mago',
   ally_cluster: 'aglomerado aliado',
   enemy_cluster: 'aglomerado inimigo',
   our_core: 'vida do nosso núcleo',
@@ -200,6 +203,7 @@ export const NUMERIC_FIELD: Readonly<Record<NumericConditionKind, NumericFieldSp
   enemy_count: { scale: 1, step: 1, unit: '', start: 2 },
   ally_health: { scale: 100, step: 5, unit: '%', start: 0.6 },
   enemy_health: { scale: 100, step: 5, unit: '%', start: 0.5 },
+  self_health: { scale: 100, step: 5, unit: '%', start: 0.4 },
   ally_cluster: { scale: 1, step: 1, unit: '', start: 2 },
   enemy_cluster: { scale: 1, step: 1, unit: '', start: 2 },
   our_core: { scale: 100, step: 5, unit: '%', start: 0.5 },
