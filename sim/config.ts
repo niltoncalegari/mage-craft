@@ -207,6 +207,27 @@ export const SPELL_CAST_FX_DURATION = S.spellCastFxDuration;
  * ticks to a few seconds.
  */
 export const SPELL_GLOBAL_COOLDOWN = S.spellGlobalCooldown;
+
+/**
+ * Seconds one mage must wait between two of its *own* abilities (plano v1.3
+ * §3.3).
+ *
+ * Deliberately per body, where {@link SPELL_GLOBAL_COOLDOWN} was per team. A
+ * team-wide beat made four mages a queue sharing one turn; a per-mage one lets
+ * a squad answer a collapse together and still stops any single mage from
+ * emptying its whole kit into one frame.
+ */
+export const ABILITY_GCD = S.abilityGcd;
+
+/**
+ * How much faster kits recharge once normal time runs out (§3.3).
+ *
+ * The replacement for {@link SUDDEN_DEATH_MANA_MULTIPLIER}, which accelerated
+ * overtime by doubling the resource nobody spends any more. Same lever, moved
+ * onto the resource that took its place — without it the overtime overlay is
+ * the plan's "igual, só que sem o acelerador".
+ */
+export const SUDDEN_DEATH_COOLDOWN_MULTIPLIER = S.suddenDeathCooldownMultiplier;
 /**
  * Health fraction at or below which an execution mark starts paying (GDD §9).
  *

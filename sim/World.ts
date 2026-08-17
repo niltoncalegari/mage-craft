@@ -41,6 +41,8 @@ import {
   SPAWN_MARGIN,
   SPELL_CAST_FX_DURATION,
   SPELL_GLOBAL_COOLDOWN,
+  ABILITY_GCD,
+  SUDDEN_DEATH_COOLDOWN_MULTIPLIER,
   STRUCTURE_DAMAGE_MULTIPLIER,
   STRUCTURE_TOP_HEIGHT,
   SUDDEN_DEATH_DURATION,
@@ -88,12 +90,22 @@ import { PathGrid } from './PathGrid';
 import { type Role } from './roles';
 import { spellFor, type SpellApplication, type SpellCard, type SpellId } from './spells';
 import { spellRiderFor } from './spellRiders';
+import { DEFAULT_STANCE, abilityPolicyFor } from './abilityPolicy';
 import { Vec2 } from './Vec2';
 
 /** Why a `castSpell()` call was rejected — surfaced to the client for UI feedback. */
 export type CastRejection =
   | 'unknown_card'
   | 'not_enough_mana'
+  /* The per-mage rejections (plano v1.3 §7.1) — every one of them a fact about
+   * the body being asked, which is what the pivot moved permission onto. */
+  | 'unknown_mage'
+  | 'not_owner'
+  | 'mage_dead'
+  | 'mage_petrified'
+  | 'out_of_range'
+  | 'ability_on_cooldown'
+  | 'on_gcd'
   | 'out_of_bounds'
   | 'match_over'
   | 'on_cooldown'
@@ -205,6 +217,8 @@ export class World {
   private readonly pendingApplications: PendingApplication[] = [];
   /** A team's raised mana regeneration, while it lasts; see {@link attuneMana}. */
   private readonly manaFlow = new Map<Team, { multiplier: number; remaining: number }>();
+  /** A team's raised kit recharge, while it lasts; see {@link attuneCharge}. */
+  private readonly chargeFlow = new Map<Team, { multiplier: number; remaining: number }>();
   /** Re-entrancy guard for the pain bond; see {@link spreadBondedPain}. */
   private bondEcho = false;
   /**
@@ -442,6 +456,11 @@ export class World {
     position: Vec2;
     isBot: boolean;
   }): Mage {
+    // A bare mage — `addMage`, the pre-pivot combat-test shape — has no roster
+    // entry and therefore no kit. That is right rather than a gap: the kit is a
+    // property of *who this mage is*, and those tests are about elements and
+    // collision, not about who is allowed to cast what.
+    const abilities = spec.rosterId ? (rosterFor(spec.rosterId)?.abilities ?? []) : [];
     const m: Mage = {
       id: spec.id,
       team: spec.team,
@@ -450,6 +469,10 @@ export class World {
       role: spec.role,
       rosterId: spec.rosterId,
       moveSpeed: spec.moveSpeed,
+      abilities,
+      abilityCooldowns: abilities.map(() => 0),
+      abilityGcd: 0,
+      stance: DEFAULT_STANCE,
       position: spec.position,
       facing: new Vec2(facingSignForTeam(spec.team), 0),
       velocity: Vec2.zero,
@@ -477,6 +500,120 @@ export class World {
     };
     this.mages.set(m.id, m);
     return m;
+  }
+
+  /* ---- Abilities (plano v1.3 §3.3) ------------------------------------------ */
+
+  /** Seconds until `spellId` is ready on this mage; 0 when it may go now. */
+  abilityCooldownOf(mageId: string, spellId: string): number {
+    const m = this.mages.get(mageId);
+    if (!m) return 0;
+    const i = m.abilities.indexOf(spellId as SpellId);
+    return i < 0 ? 0 : m.abilityCooldowns[i];
+  }
+
+  /**
+   * One mage spends one of its own abilities — the only way a spell reaches the
+   * field in v1.3 (plano §7.1).
+   *
+   * Every rejection below names something about *this body*, which is the whole
+   * of the pivot: `castSpell` asked whether the side could afford it, and this
+   * asks whether the mage is alive, awake, carrying the skill, charged for it,
+   * and close enough. The order follows the same rule the old method wrote down
+   * — what is wrong with the *request* first, because the caller can act on it,
+   * and what is only a matter of time last, because it resolves on its own.
+   */
+  castAbility(mageId: string, spellId: string, position: Vec2): CastResult {
+    if (this.roundOver) return { ok: false, reason: 'match_over' };
+
+    const m = this.mages.get(mageId);
+    if (!m) return { ok: false, reason: 'unknown_mage' };
+
+    const spell = spellFor(spellId);
+    if (!spell) return { ok: false, reason: 'unknown_card' };
+
+    const slot = m.abilities.indexOf(spell.id);
+    if (slot < 0) return { ok: false, reason: 'not_owner' };
+
+    if (!m.alive) return { ok: false, reason: 'mage_dead' };
+    // Per body rather than per squad, unlike the old `squadPetrified` gate:
+    // stone is something done to a mage, and the rest of its squad losing their
+    // kits because one of them was caught was an artefact of a team-wide bar.
+    if (hasEffect(m, 'petrify')) return { ok: false, reason: 'mage_petrified' };
+
+    if (this.arena.outOfBounds(position)) return { ok: false, reason: 'out_of_bounds' };
+    const policy = abilityPolicyFor(spell.id);
+    if (policy && m.position.distanceTo(position) > policy.range) {
+      return { ok: false, reason: 'out_of_range' };
+    }
+
+    if (m.abilityCooldowns[slot] > 0) return { ok: false, reason: 'ability_on_cooldown' };
+    if (m.abilityGcd > 0) return { ok: false, reason: 'on_gcd' };
+
+    m.abilityCooldowns[slot] = policy?.cooldown ?? 0;
+    m.abilityGcd = ABILITY_GCD;
+    this.applySpellEffect(m.team, spell, position);
+    this.recordCastFx(m.team, spell, position);
+    this.recordCast(m.team, spell.id);
+    return { ok: true };
+  }
+
+  /**
+   * Advances one mage's charges. Called from `updateMage` *after* the dead and
+   * petrified have already returned, which is what implements "as cargas
+   * daquele mago não andam" without a second liveness check.
+   */
+  private updateAbilityCooldowns(m: Mage, dt: number): void {
+    const rate =
+      (this.suddenDeath ? SUDDEN_DEATH_COOLDOWN_MULTIPLIER : 1) * this.chargeRateOf(m.team);
+    const step = dt * rate;
+    if (m.abilityGcd > 0) m.abilityGcd = decay(m.abilityGcd, dt);
+    for (let i = 0; i < m.abilityCooldowns.length; i++) {
+      if (m.abilityCooldowns[i] > 0) m.abilityCooldowns[i] = decay(m.abilityCooldowns[i], step);
+    }
+  }
+
+  /**
+   * Raises a team's recharge rate for a while — Fluxo de Mana, re-pointed.
+   *
+   * The card bought tempo with mana; with the bar gone it buys the same tempo
+   * out of the resource that replaced it. A team-level timer rather than an
+   * effect on the mages, for the reason the mana version gave: a squad wiped
+   * mid-flow should not lose an investment it had already paid for.
+   */
+  attuneCharge(team: Team, multiplier: number, duration: number): void {
+    if (multiplier <= 1 || duration <= 0) return;
+    const running = this.chargeFlow.get(team);
+    this.chargeFlow.set(team, {
+      multiplier: Math.max(multiplier, running?.multiplier ?? 0),
+      remaining: Math.max(duration, running?.remaining ?? 0),
+    });
+  }
+
+  /**
+   * Hands one mage `seconds` back off every charge it is waiting on — Tributo
+   * Obscuro, re-pointed the same way, and still paid for in its squad's blood
+   * by the `strike` rider printed on the same card.
+   */
+  refundCharge(mageId: string, seconds: number): void {
+    if (seconds <= 0) return;
+    const m = this.mages.get(mageId);
+    if (!m) return;
+    for (let i = 0; i < m.abilityCooldowns.length; i++) {
+      m.abilityCooldowns[i] = Math.max(0, m.abilityCooldowns[i] - seconds);
+    }
+  }
+
+  private chargeRateOf(team: Team): number {
+    const flow = this.chargeFlow.get(team);
+    return flow && flow.remaining > 0 ? flow.multiplier : 1;
+  }
+
+  private updateChargeFlow(dt: number): void {
+    for (const [team, flow] of this.chargeFlow) {
+      if (flow.remaining > 0) flow.remaining = decay(flow.remaining, dt);
+      else this.chargeFlow.delete(team);
+    }
   }
 
   /* ---- Spells (GDD §5, §9) -------------------------------------------------- */
@@ -827,6 +964,9 @@ export class World {
     this.elapsed += dt;
     this.updateMana(dt);
     this.updateCastCooldown(dt);
+    // Before the mages are stepped, so every kit this tick recharges at the
+    // rate the flow was running at when the tick opened.
+    this.updateChargeFlow(dt);
     // Before movement, so a card that was warning about this tick catches the
     // squad where the player last saw them standing rather than a step on.
     this.updatePendingApplications(dt);
@@ -897,8 +1037,16 @@ export class World {
       m.knockbackVelocity = Vec2.zero;
       m.charge = 0;
       m.state = 'petrified';
+      // Returns without advancing the kit, like the dead branch above it: stone
+      // is silence, so the charges wait with the body rather than quietly
+      // coming back while it cannot spend them.
       return;
     }
+
+    // Alive and not stone: from here the kit is charging. A stun does not stop
+    // it — being knocked down is not the same as being silenced, and a squad
+    // that lost its charges every time it was shoved would never cast at all.
+    this.updateAbilityCooldowns(m, dt);
 
     if (m.stunTimer > 0) {
       // Knockback is a decaying slide over the stun window (mirroring the
