@@ -265,6 +265,24 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     // because the field is not optional and a lie here would outlive the shape.
     direction: -1,
   },
+  /*
+   * Black's second card, against a first (Maldição da Lentidão) that is drawn
+   * blue for historical reasons — so this is the first time the deck's colour
+   * reaches the field. Nearly black, with a bruised violet on it.
+   *
+   * A `flash` like Clarão Nulo, and the pairing is honest rather than lazy:
+   * both are cards that *take something out of the disc*. The blue one takes
+   * the effects, this one takes the blood. What separates them at a glance is
+   * temperature — one is white on a cold void, this is violet on tar.
+   */
+  dark_tribute: {
+    shape: 'flash',
+    ring: 0x9d4edd,
+    zone: 0x10060f,
+    motes: [0xc77dff, 0x7b2cbf, 0x3c096c],
+    moteCount: 18,
+    direction: -1,
+  },
   plague: {
     shape: 'burst',
     ring: 0xb6e84a,

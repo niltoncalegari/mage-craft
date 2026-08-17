@@ -271,6 +271,21 @@ export class World {
     this.mana.set(team, Math.max(0, this.manaOf(team) - amount));
   }
 
+  /**
+   * Mana from something other than the clock (GDD §7) — Tributo Obscuro, so
+   * far, which buys it with its own squad's health.
+   *
+   * Clamped at {@link MANA_MAX}, and the clamp is the point. Nothing in
+   * `updateMana` ever brings an over-full bar back down: it stops *adding* at
+   * the ceiling and otherwise leaves the number alone. A grant that overshot
+   * would therefore park a team above the ceiling for the rest of the match,
+   * which is not a stronger card, it is a broken economy.
+   */
+  grantMana(team: Team, amount: number): void {
+    if (amount <= 0) return;
+    this.mana.set(team, Math.min(MANA_MAX, this.manaOf(team) + amount));
+  }
+
   /** Seconds a team must still wait before its next cast; 0 when it may cast now. */
   castCooldownOf(team: Team): number {
     return this.castCooldown.get(team) ?? 0;

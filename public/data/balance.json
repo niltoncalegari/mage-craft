@@ -505,6 +505,19 @@
         { "effect": "burn", "duration": 3, "tickInterval": 0.5, "tickDamage": 5, "delay": 0.7 }
       ]
     },
+    "dark_tribute": {
+      "name": "Tributo Obscuro",
+      "color": "black",
+      "kind": "buff",
+      "cost": 1,
+      "radius": 3,
+      "duration": 0.6,
+      "target": "allies",
+      "apply": [
+        { "effect": "strike", "magnitude": 10 },
+        { "effect": "tribute", "magnitude": 1 }
+      ]
+    },
     "meteor_shower": {
       "name": "Chuva de Meteoros",
       "color": "red",

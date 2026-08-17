@@ -120,7 +120,26 @@ const knockback: SpellRider = (w, { app, position, targets }) => {
   for (const m of targets) w.shove(m, m.position.sub(position), magnitude);
 };
 
-const RIDERS: Readonly<Record<string, SpellRider>> = { puddle, strike, dispel, knockback };
+/**
+ * Tributo Obscuro: mana for blood, `magnitude` of it per body that answered.
+ *
+ * The first resource trade in the game. Mana arrives on a fixed clock for both
+ * sides, so no program has ever been able to get *ahead* on tempo — only to be
+ * better at spending what the clock handed it. This card is a program saying
+ * "not yet" to that clock, and paying its own squad's health for the privilege.
+ *
+ * Per body rather than flat, which is what makes it a decision instead of a
+ * button: a scattered squad returns less than the card cost to ask, and a squad
+ * tight enough to make it pay is a squad tight enough for the enemy's zone
+ * cards to be worth their mana too. The damage is a separate `strike` in the
+ * same card, so what bleeds and what pays stay two numbers a designer can move
+ * independently.
+ */
+const tribute: SpellRider = (w, { team, app, targets }) => {
+  w.grantMana(team, (app.magnitude ?? 0) * targets.length);
+};
+
+const RIDERS: Readonly<Record<string, SpellRider>> = { puddle, strike, dispel, knockback, tribute };
 
 export function isSpellRider(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(RIDERS, name);

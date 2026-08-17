@@ -34,6 +34,7 @@ export type SpellId =
   | 'thunderstrike'
   | 'null_flash'
   | 'volcanic_eruption'
+  | 'dark_tribute'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -90,6 +91,7 @@ export const ALL_SPELLS: readonly SpellId[] = [
   'arcane_shield',
   'consecrated_ground',
   'slow_curse',
+  'dark_tribute',
 ];
 
 function build(): Readonly<Record<SpellId, SpellCard>> {

@@ -268,6 +268,23 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
       { kind: 'noise', filter: 'highpass', from: 200, to: 1200, at: 0, duration: 0.5, gain: 0.025 },
     ],
   },
+  /*
+   * The other black card, and the one that has to sound like a *cost*. Every
+   * buff in the catalog is consonant or bright; this one helps the player who
+   * cast it and still has to be unpleasant, because what it did was hurt his
+   * own squad.
+   *
+   * So: a minor second, held — two tones a semitone apart, which is the one
+   * interval in this file that does not resolve — over a short wet thud. The
+   * beating between them is the sound of the bargain.
+   */
+  dark_tribute: {
+    detune: 0.025,
+    layers: [
+      { kind: 'chord', wave: 'triangle', freqs: [146.83, 155.56], at: 0, duration: 0.42, gain: 0.05 },
+      { kind: 'noise', filter: 'lowpass', from: 700, to: 120, at: 0, duration: 0.14, gain: 0.05 },
+    ],
+  },
   /* Falling, and the only card whose noise bed simply gets darker under it. */
   slow_curse: {
     detune: 0.03,

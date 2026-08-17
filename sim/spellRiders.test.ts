@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { MANA_MAX } from './config';
 import { applyEffect, hasEffect, magnitudeOf } from './effects';
 import { TEAM_A, TEAM_B } from './entities';
 import { isSpellRider } from './spellRiders';
@@ -21,7 +22,79 @@ describe('spell riders', () => {
     expect(isSpellRider('strike')).toBe(true);
     expect(isSpellRider('dispel')).toBe(true);
     expect(isSpellRider('knockback')).toBe(true);
+    expect(isSpellRider('tribute')).toBe(true);
     expect(isSpellRider('teleport')).toBe(false);
+  });
+
+  /**
+   * Tributo Obscuro, and black's whole argument in one card: the only mana in
+   * the game that does not come from waiting.
+   *
+   * Mana regenerates on a fixed clock for both sides (GDD §7), so until now no
+   * program could ever be *ahead* on tempo — only better at spending. This one
+   * buys a cast out of turn and pays for it in its own squad's health, which is
+   * the first resource in the game a player can trade for another.
+   */
+  describe('tribute', () => {
+    it('pays the caster in mana and the squad in blood', () => {
+      const w = new World();
+      const a = w.summon(TEAM_A, 'pyromancer', new Vec2(0, 0));
+      const b = w.summon(TEAM_A, 'pyromancer', new Vec2(0, 1));
+      const before = w.manaOf(TEAM_A);
+
+      w.castSpell(TEAM_A, 'dark_tribute', new Vec2(0, 0.5));
+
+      expect(a.health).toBeLessThan(a.maxHealth);
+      expect(b.health).toBeLessThan(b.maxHealth);
+      // Net of the card's own cost: two bodies bled is worth more than the one
+      // mana it took to ask, or the card is a worse way to do nothing.
+      expect(w.manaOf(TEAM_A)).toBeGreaterThan(before);
+    });
+
+    it('pays per body, so a scattered squad is a bad trade', () => {
+      const one = new World();
+      one.summon(TEAM_A, 'pyromancer', new Vec2(0, 0));
+      one.castSpell(TEAM_A, 'dark_tribute', new Vec2(0, 0));
+
+      const two = new World();
+      two.summon(TEAM_A, 'pyromancer', new Vec2(0, 0));
+      two.summon(TEAM_A, 'pyromancer', new Vec2(0, 1));
+      two.castSpell(TEAM_A, 'dark_tribute', new Vec2(0, 0.5));
+
+      expect(two.manaOf(TEAM_A)).toBeGreaterThan(one.manaOf(TEAM_A));
+    });
+
+    /**
+     * The bargain has to stop at the ceiling, or a clustered squad turns the
+     * card into a free reset of the mana bar — and the ceiling is the only
+     * thing in the economy stopping a program from banking a whole match and
+     * spending it in four seconds.
+     */
+    it('never fills past what the economy allows', () => {
+      const w = new World();
+      for (let i = 0; i < 4; i++) w.summon(TEAM_A, 'pyromancer', new Vec2(0, i * 0.6));
+      // Wait out a full bar first: nothing clamps mana on the way *down* from
+      // an overfill, so an unclamped grant would leave a team banking more than
+      // the economy has a ceiling for, for the rest of the match.
+      for (let t = 0; t < 15; t += 1 / 60) w.step(1 / 60);
+      expect(w.manaOf(TEAM_A)).toBe(MANA_MAX);
+
+      w.castSpell(TEAM_A, 'dark_tribute', new Vec2(0, 1));
+
+      expect(w.manaOf(TEAM_A)).toBeLessThanOrEqual(MANA_MAX);
+    });
+
+    it('takes nothing from the other squad, in either direction', () => {
+      const w = new World();
+      const enemy = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+      w.summon(TEAM_A, 'pyromancer', new Vec2(0, 0.5));
+      const enemyMana = w.manaOf(TEAM_B);
+
+      w.castSpell(TEAM_A, 'dark_tribute', new Vec2(0, 0.25));
+
+      expect(enemy.health).toBe(enemy.maxHealth);
+      expect(w.manaOf(TEAM_B)).toBe(enemyMana);
+    });
   });
 
   /**
