@@ -563,6 +563,16 @@
       "target": "allies",
       "apply": [{ "effect": "bonded", "magnitude": 0.5 }]
     },
+    "spatial_fold": {
+      "name": "Dobra Espacial",
+      "color": "blue",
+      "kind": "buff",
+      "cost": 4,
+      "radius": 3,
+      "duration": 0.5,
+      "target": "allies",
+      "apply": [{ "effect": "fold" }]
+    },
     "meteor_shower": {
       "name": "Chuva de Meteoros",
       "color": "red",

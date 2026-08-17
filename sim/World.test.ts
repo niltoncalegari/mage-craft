@@ -711,3 +711,75 @@ describe('a solidarity bond', () => {
     }
   });
 });
+
+/**
+ * Dobra Espacial, and the only card that moves a squad without moving it —
+ * position is otherwise something a program can only ask for and wait out.
+ *
+ * The whole idle model is that a rule fires and the squad *then* walks
+ * somewhere, which takes seconds a fight does not always have. This puts them
+ * there, which is why it is worth four mana for no damage at all: every zone
+ * card in the game is a bet on where the enemy will be, and this is the only
+ * answer to being read.
+ */
+describe('a spatial fold', () => {
+  it('gathers the squad it caught onto the spot it was cast', () => {
+    const w = new World();
+    const scattered = [
+      w.summon(TEAM_A, 'pyromancer', new Vec2(-4, -4)),
+      w.summon(TEAM_A, 'pyromancer', new Vec2(4, 4)),
+      w.summon(TEAM_A, 'pyromancer', new Vec2(-4, 4)),
+    ];
+    const to = new Vec2(0, 0);
+
+    w.castSpell(TEAM_A, 'spatial_fold', to);
+
+    for (const m of scattered) expect(m.position.distanceTo(to)).toBeLessThan(3);
+  });
+
+  /**
+   * Landed on top of each other they would be shoved apart by the spacing pass
+   * over the next few ticks, which reads as the card throwing the squad about.
+   * Worse, a stack of four inside one body is a single point that one Chuva de
+   * Meteoros deletes.
+   */
+  it('does not stack them inside one another', () => {
+    const w = new World();
+    const squad = [
+      w.summon(TEAM_A, 'pyromancer', new Vec2(-4, -4)),
+      w.summon(TEAM_A, 'pyromancer', new Vec2(4, 4)),
+      w.summon(TEAM_A, 'pyromancer', new Vec2(-4, 4)),
+    ];
+
+    w.castSpell(TEAM_A, 'spatial_fold', new Vec2(0, 0));
+
+    for (const a of squad) {
+      for (const b of squad) {
+        if (a === b) continue;
+        expect(a.position.distanceTo(b.position)).toBeGreaterThan(MAGE_RADIUS);
+      }
+    }
+  });
+
+  it('never puts a body inside a wall', () => {
+    const w = new World();
+    const m = w.summon(TEAM_A, 'pyromancer', new Vec2(-4, -4));
+
+    // The enemy Core: the most solid thing on the map, and the spot a program
+    // would most like to fold onto if the card let it.
+    const core = [...w.structures.values()].find((s) => s.kind === 'core' && s.team === TEAM_B)!;
+    w.castSpell(TEAM_A, 'spatial_fold', core.position);
+
+    expect(m.position.distanceTo(core.position)).toBeGreaterThan(core.radius);
+  });
+
+  it('leaves the other squad standing where it was', () => {
+    const w = new World();
+    const enemy = w.summon(TEAM_B, 'pyromancer', new Vec2(4, 4));
+    const at = enemy.position;
+
+    w.castSpell(TEAM_A, 'spatial_fold', new Vec2(0, 0));
+
+    expect(enemy.position).toEqual(at);
+  });
+});

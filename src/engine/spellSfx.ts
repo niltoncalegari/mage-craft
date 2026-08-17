@@ -208,6 +208,24 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * An intake of air and then bodies where there were none. The only sound in
+   * the catalog that runs *backwards* — a filter opening upward under a tone
+   * that falls into it, so the impact reads as a thing being pulled shut rather
+   * than a thing striking.
+   *
+   * It has to be told apart from Escudo Arcano, which is the other card that
+   * snaps closed over your own squad. That one ticks first and rings after;
+   * this one has no attack at all until the very end, where the arrival lands.
+   */
+  spatial_fold: {
+    detune: 0.03,
+    layers: [
+      { kind: 'noise', filter: 'highpass', from: 300, to: 4200, at: 0, duration: 0.26, gain: 0.035 },
+      { kind: 'tone', wave: 'sine', freq: 880, toFreq: 220, at: 0.04, duration: 0.24, gain: 0.04 },
+      { kind: 'noise', filter: 'bandpass', from: 1400, to: 600, at: 0.28, duration: 0.08, gain: 0.05, q: 2 },
+    ],
+  },
+  /*
    * The card whose effect the player cannot see, so this is the whole of the
    * confirmation that it landed — nothing on the field changes for twelve
    * seconds except a number in the corner.

@@ -632,6 +632,31 @@ export class World {
   }
 
   /**
+   * Puts a mage somewhere else (GDD §9) — Dobra Espacial.
+   *
+   * Resolved through {@link freePositionNear}, the same helper the spacing pass
+   * uses, so a fold aimed at a wall or at the enemy Core puts the body beside
+   * it rather than inside it. Arriving inside a blocker does not read as a
+   * failed cast: it reads as a mage stuck in scenery for the rest of the match.
+   *
+   * The knockback goes, because a shove belongs to the place it happened. The
+   * charge does not: a mage that folded mid-throw still has a throw in its
+   * hands, which is the card's best moment and nothing about the trip undoes it.
+   *
+   * Nothing has to be said to the `Brain` here, and that is worth writing down
+   * because the plan expected the opposite. Its cached route is dropped when
+   * `pathFrom` and the body disagree by more than `PATH_REPLAN_DISTANCE`, which
+   * a fold guarantees — the staleness test that exists for a bot walking away
+   * from its own plan already covers a bot that arrived somewhere else.
+   */
+  foldTo(m: Mage, to: Vec2): void {
+    if (!m.alive) return;
+    m.position = this.freePositionNear(this.arena.clamp(to, MAGE_RADIUS));
+    m.velocity = Vec2.zero;
+    m.knockbackVelocity = Vec2.zero;
+  }
+
+  /**
    * Cuts short a mage's time off the field (GDD §4) — Chamado à Batalha.
    *
    * The floor is load-bearing and is not defensive rounding. `updateMage` only

@@ -282,6 +282,26 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     trauma: 0.22,
   },
   /*
+   * A dome, and the odd one out in that family: Escudo Arcano and Brisa
+   * Rejuvenescedora put a shell over people who are already there, and this one
+   * is the shell people arrive *inside*. Reading the same is fine and even
+   * useful — all three are white-blue things that close over your own squad —
+   * because what tells them apart is what happens next, and what happens next
+   * here is four bodies appearing.
+   *
+   * The palette is the coldest in the catalog on purpose. This is the only card
+   * that touches space rather than bodies, and it should not look like weather,
+   * fire or growth.
+   */
+  spatial_fold: {
+    shape: 'dome',
+    ring: 0xbfe9ff,
+    zone: 0x1b2a4a,
+    motes: [0xffffff, 0x9fd6ff, 0x5f7ad6],
+    moteCount: 20,
+    direction: 1,
+  },
+  /*
    * The only card in the catalog that does nothing to anybody. It changes a
    * number the field cannot show, over twelve seconds nobody will connect to
    * this beat unless the beat says "this one is not about the fight".

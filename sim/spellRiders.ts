@@ -16,10 +16,12 @@
  */
 
 import type { SpellApplyRule } from './balance';
+import { SPACING } from './config';
 import { polarityOf } from './effects';
+import { sortedIds } from './ids';
 import type { Mage, Team } from './entities';
 import type { SpellCard } from './spells';
-import type { Vec2 } from './Vec2';
+import { Vec2 } from './Vec2';
 import type { World } from './World';
 
 /** What a rider is handed: the cast, and who it caught. */
@@ -184,6 +186,45 @@ const attune: SpellRider = (w, { team, spell, app, targets }) => {
   w.attuneMana(team, app.magnitude ?? 1, app.duration ?? spell.duration);
 };
 
+/**
+ * Dobra Espacial: the whole living squad arrives on the spot, in a ring.
+ *
+ * Ignores `targets` on purpose, the way `rally` does — a fold that only
+ * gathered the allies *already* standing near the disc would be a card that
+ * tidies a squad that did not need tidying. What the radius means here is
+ * where they land, not who is caught, which is the one place in the catalog
+ * that field carries a different job. It is written down because nothing in
+ * the schema says so.
+ *
+ * The ring is {@link SPACING} across rather than a point, because four bodies
+ * dropped on one spot get shoved apart over the next few ticks — which reads as
+ * the card throwing the squad about — and, worse, a stack of four is a single
+ * point that one Chuva de Meteoros deletes.
+ *
+ * Ordered by mage id so two runs of the same match fold the same squad into the
+ * same seats. Position feeds targeting, pathing and every zone card in the
+ * game; a fold that seated them by iteration order would be the deepest kind of
+ * replay divergence this simulation can have.
+ */
+const fold: SpellRider = (w, { team, spell, position }) => {
+  const squad: Mage[] = [];
+  for (const id of sortedIds(w.mages.keys())) {
+    const m = w.mages.get(id);
+    if (m?.alive && m.team === team) squad.push(m);
+  }
+  if (squad.length === 0) return;
+  if (squad.length === 1) {
+    w.foldTo(squad[0], position);
+    return;
+  }
+
+  const ring = Math.min(SPACING, spell.radius);
+  for (const [i, m] of squad.entries()) {
+    const angle = (i / squad.length) * Math.PI * 2;
+    w.foldTo(m, position.add(new Vec2(Math.cos(angle) * ring, Math.sin(angle) * ring)));
+  }
+};
+
 const RIDERS: Readonly<Record<string, SpellRider>> = {
   puddle,
   strike,
@@ -192,6 +233,7 @@ const RIDERS: Readonly<Record<string, SpellRider>> = {
   tribute,
   rally,
   attune,
+  fold,
 };
 
 export function isSpellRider(name: string): boolean {

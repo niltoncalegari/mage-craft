@@ -39,6 +39,7 @@ export type SpellId =
   | 'mana_flow'
   | 'bond_of_pain'
   | 'bond_of_solidarity'
+  | 'spatial_fold'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -88,6 +89,7 @@ export const ALL_SPELLS: readonly SpellId[] = [
   'thunderstrike',
   'null_flash',
   'mana_flow',
+  'spatial_fold',
   'plague',
   'sticky_swamp',
   'entangling_roots',
