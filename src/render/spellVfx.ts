@@ -48,7 +48,13 @@ export type SpellShape =
    * *converges*. See {@link SpellVfx.direction}, which this shape ignores:
    * a card that takes things away has no good news and no bad news to press.
    */
-  | 'flash';
+  | 'flash'
+  /**
+   * Jets of burning rock thrown *up* out of the ground, after a warning. The
+   * mirror of `column`, which arrives from above — and the only shape that is
+   * preceded by anything, since it is the only one whose card is late.
+   */
+  | 'pillars';
 
 export interface SpellVfx {
   /** Which beat to draw. See {@link SpellShape}. */
@@ -62,8 +68,10 @@ export interface SpellVfx {
   /** +1 for a buff (motes lift), -1 for a curse (motes press down). */
   direction: 1 | -1;
   /**
-   * `column` only: how many separate impacts fall, and over how many seconds
-   * they are spread.
+   * `column` and `pillars` only: how many separate impacts land, and over how
+   * many seconds they are spread. One falls out of the sky and the other comes
+   * up out of the floor; the distribution question is the same either way, and
+   * so is {@link planColumnFall}, which answers it.
    *
    * The first cut of this shape drew a single narrow shaft down the middle of
    * the zone, which was wrong about the only card that uses it. Chuva de
@@ -112,12 +120,11 @@ export interface SpellVfx {
    * and exactly the point: it is a trap set for the Tier 2 cards (Erupção
    * Vulcânica, Chuva de Meteoros) that bring the `delayed` rider with them.
    *
-   * **Declared, not yet drawn.** `ParticleRenderer` does not read this field —
-   * there is nothing in the simulation to warn about, so a warning built now
-   * would be a beat nobody has ever seen fire, in the one part of the codebase
-   * whose bugs are only findable by looking. The commit that adds the `delayed`
-   * rider owns the drawing, and the second assertion in the test file is what
-   * stops anything from setting a telegraph before then and getting silence.
+   * **Drawn since Erupção Vulcânica**, which is the card the trap was set for.
+   * It is the life of the ground disc — the shared footprint every cast draws
+   * becomes the warning rather than a second thing layered over it — plus a
+   * ring pulsing at the same spot on a beat, so the wait reads as a count
+   * rather than as a card that failed to go off.
    */
   telegraph?: number;
   /**
@@ -366,6 +373,49 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     motes: [0xffb3b3, 0xe63946, 0x8b0d1f],
     moteCount: 24,
     direction: 1,
+  },
+  /*
+   * The mirror of Chuva de Meteoros, which is the card it has to be told apart
+   * from at a glance: both are red, both are five mana, both scatter several
+   * impacts over a disc. That one comes down through the roof and the reading
+   * is *weather* — it is already happening when you notice it. This one comes
+   * up out of the floor, and the floor tells you first.
+   *
+   * The warning is what the card is buying: a second and a bit in which the
+   * disc is lit and nothing has happened yet is the only moment in this game
+   * where a player watches the field knowing exactly what is about to occur
+   * there. Everything else resolves the instant a rule fires.
+   *
+   * Five jets rather than seven, over a third of a second rather than a whole
+   * one: an eruption is one event with several mouths, where a shower is many
+   * events. Same arithmetic underneath (`planColumnFall`), different reading.
+   */
+  volcanic_eruption: {
+    shape: 'pillars',
+    ring: 0xff7a1f,
+    zone: 0x8b1a06,
+    motes: [0xffd166, 0xff6a2e, 0x7a0e02],
+    moteCount: 24,
+    direction: -1,
+    impacts: 5,
+    impactWindow: 0.35,
+    /*
+     * The card's own `delay` in balance.json, both directions asserted — and
+     * the number is what it is because of the *sound*. A cast may not ring for
+     * longer than the global cooldown (0.75s, `spellVfx.test.ts`), so a warning
+     * of a second and a half would have had the rupture land in silence: the
+     * swell would end, the screen would erupt, and nothing would be heard. A
+     * card whose whole idea is "you can see this coming" cannot afford to be
+     * the one card that arrives unannounced.
+     */
+    telegraph: 0.7,
+    /*
+     * The third card allowed to move the camera, and the first that shakes it
+     * from *underneath*. The other two arrive from outside the arena, which was
+     * the old line — this one redraws it as "a card whose weight is the point".
+     * Between the two: heavier than a bolt, lighter than a sky full of rock.
+     */
+    trauma: 0.28,
   },
   overload_field: {
     shape: 'torus',

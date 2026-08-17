@@ -85,7 +85,7 @@ import {
 } from './entities';
 import { PathGrid } from './PathGrid';
 import { type Role } from './roles';
-import { spellFor, type SpellCard, type SpellId } from './spells';
+import { spellFor, type SpellApplication, type SpellCard, type SpellId } from './spells';
 import { spellRiderFor } from './spellRiders';
 import { Vec2 } from './Vec2';
 
@@ -145,6 +145,19 @@ export interface SpellCastFx {
   elapsed: number;
 }
 
+/**
+ * One entry of a card's `apply` list that has not happened yet — see
+ * `SpellApplyRule.delay`. The position is kept and the *targets* are not: who
+ * it catches is decided when it fires.
+ */
+interface PendingApplication {
+  readonly team: Team;
+  readonly spell: SpellCard;
+  readonly app: SpellApplication;
+  readonly position: Vec2;
+  remaining: number;
+}
+
 export class World {
   readonly mages = new Map<string, Mage>();
   readonly projectiles = new Map<string, Projectile>();
@@ -182,6 +195,13 @@ export class World {
   private readonly manaAccum = new Map<Team, number>();
   /** Seconds until each team may cast again; see {@link SPELL_GLOBAL_COOLDOWN}. */
   private readonly castCooldown = new Map<Team, number>();
+  /**
+   * Card applications waiting out their `delay`. Not cosmetic and not a marker:
+   * this is damage that has been paid for and has not landed yet, so it is
+   * simulation state like any other and it is why {@link updatePendingApplications}
+   * runs inside `step` rather than off a timer.
+   */
+  private readonly pendingApplications: PendingApplication[] = [];
 
   private cachedPathGrid: PathGrid | null = null;
   private cachedPathBlockers = -1;
@@ -494,32 +514,94 @@ export class World {
    * edit, and only a new *kind* of behaviour reaches code.
    */
   private applySpellEffect(team: Team, spell: SpellCard, position: Vec2): void {
-    const targets = this.spellTargets(team, spell, position);
-
     for (const app of spell.apply) {
-      if (isEffectKind(app.effect)) {
-        for (const m of targets) {
-          applyEffect(m, {
-            kind: app.effect,
-            magnitude: app.magnitude ?? 0,
-            duration: app.duration ?? spell.duration,
-            tickInterval: app.tickInterval,
-            tickDamage: app.tickDamage,
-            tickHeal: app.tickHeal,
-          });
-
-          // A cast stun has to root the body, not merely decorate it.
-          // `updateMage` reads `stunTimer`, so an effect on its own would show
-          // the motes over the head and let the mage walk away — the element
-          // path already mirrors it for exactly this reason (see `applyOnHit`).
-          if (app.effect === 'stun') {
-            const duration = app.duration ?? spell.duration;
-            m.stunTimer = Math.max(m.stunTimer, duration);
-          }
-        }
+      const delay = app.delay ?? 0;
+      if (delay > 0) {
+        this.pendingApplications.push({ team, spell, app, position, remaining: delay });
         continue;
       }
-      spellRiderFor(app.effect)?.(this, { team, spell, app, position, targets });
+      this.applyOneApplication(team, spell, app, position);
+    }
+  }
+
+  /**
+   * Runs the applications whose warning has run out (GDD §9).
+   *
+   * Targets are resolved here rather than being remembered from the cast, which
+   * is the whole reason a delayed card is a different card and not a slow one:
+   * the eruption catches whoever is standing on it when it goes off. A queue
+   * that held onto its victims would be an instant card wearing a wind-up, and
+   * the warning drawn on the ground would be telling the player something he
+   * cannot act on.
+   *
+   * Iterated back to front so an entry can be spliced out on the tick it fires.
+   * Order between two entries due on the same tick is cast order, which is what
+   * keeps two eruptions landing together deterministic.
+   */
+  private updatePendingApplications(dt: number): void {
+    for (let i = this.pendingApplications.length - 1; i >= 0; i--) {
+      const pending = this.pendingApplications[i];
+      pending.remaining -= dt;
+      if (pending.remaining > 0) continue;
+
+      this.pendingApplications.splice(i, 1);
+      this.applyOneApplication(pending.team, pending.spell, pending.app, pending.position);
+    }
+  }
+
+  /** One entry of a card's `apply` list, against whoever it catches right now. */
+  private applyOneApplication(team: Team, spell: SpellCard, app: SpellApplication, position: Vec2): void {
+    const targets = this.spellTargets(team, spell, position);
+
+    if (isEffectKind(app.effect)) {
+      for (const m of targets) {
+        applyEffect(m, {
+          kind: app.effect,
+          magnitude: app.magnitude ?? 0,
+          duration: app.duration ?? spell.duration,
+          tickInterval: app.tickInterval,
+          tickDamage: app.tickDamage,
+          tickHeal: app.tickHeal,
+        });
+
+        // A cast stun has to root the body, not merely decorate it.
+        // `updateMage` reads `stunTimer`, so an effect on its own would show
+        // the motes over the head and let the mage walk away — the element
+        // path already mirrors it for exactly this reason (see `applyOnHit`).
+        if (app.effect === 'stun') {
+          const duration = app.duration ?? spell.duration;
+          m.stunTimer = Math.max(m.stunTimer, duration);
+        }
+      }
+      return;
+    }
+    spellRiderFor(app.effect)?.(this, { team, spell, app, position, targets });
+  }
+
+  /**
+   * Shoves a mage, without hurting it (GDD §9).
+   *
+   * The same additive velocity `dealDamage` applies, and for the same reason it
+   * lives in `World` rather than in the rider that calls it: knockback is a
+   * decaying slide over the stun window, and the heal interrupt hangs off how
+   * hard the shove was rather than off what caused it. A rider writing to
+   * `knockbackVelocity` directly would have been the second place in the
+   * codebase that knows either of those things.
+   *
+   * Hit stun comes with it. A body flying backwards that is still calmly
+   * charging a throw is the tell that this was applied to the wrong field —
+   * and without the stun, `updateMage` never runs the slide at all, so the
+   * velocity would be set and silently ignored.
+   */
+  shove(m: Mage, direction: Vec2, magnitude: number): void {
+    if (magnitude <= 0 || !m.alive) return;
+    const n = direction.normalized();
+    if (n.lengthSq() <= 0) return;
+
+    m.knockbackVelocity = m.knockbackVelocity.add(n.scale(magnitude));
+    m.stunTimer = Math.max(m.stunTimer, HIT_STUN);
+    if (magnitude >= HEAL_INTERRUPT_KNOCKBACK) {
+      m.healInterruptTimer = Math.max(m.healInterruptTimer, HEAL_INTERRUPT_DURATION);
     }
   }
 
@@ -590,6 +672,9 @@ export class World {
     this.elapsed += dt;
     this.updateMana(dt);
     this.updateCastCooldown(dt);
+    // Before movement, so a card that was warning about this tick catches the
+    // squad where the player last saw them standing rather than a step on.
+    this.updatePendingApplications(dt);
     // Auras are resolved before movement so a mage charges at the rate implied
     // by where the support stood at the top of this tick.
     this.updateSupportAuras();

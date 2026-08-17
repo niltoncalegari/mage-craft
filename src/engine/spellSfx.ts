@@ -97,6 +97,35 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * The only card in the catalog whose sound has to cover a *wait*. Everything
+   * else here is the whole event; this is a low swell rising under a second and
+   * a bit of silence on screen, and then the rupture.
+   *
+   * The swell is what stops the telegraph reading as a card that failed. It
+   * climbs rather than sits — 40Hz to 70Hz over the warning — so a player who
+   * is not looking at that corner of the field still knows something is coming
+   * and roughly how soon. The break lands with the jets rather than with the
+   * cast, a hair early: the ground cracking just before rock comes out of it.
+   *
+   * This is the card that made the sound budget bite. Nothing may ring longer
+   * than the global cooldown, so the whole card — warning and rupture — has to
+   * fit in 0.75s, and that ceiling is what set the telegraph in `spellVfx.ts`
+   * rather than the other way round.
+   *
+   * Chuva de Meteoros is the card to be told apart from, and the two are
+   * opposites in time: the shower is loudest at the start and decays for half a
+   * second, this is near-silent at the start and arrives at the end.
+   */
+  volcanic_eruption: {
+    detune: 0.03,
+    layers: [
+      { kind: 'tone', wave: 'triangle', freq: 40, toFreq: 70, at: 0, duration: 0.6, gain: 0.05 },
+      { kind: 'noise', filter: 'lowpass', from: 200, to: 700, at: 0.1, duration: 0.5, gain: 0.03 },
+      { kind: 'noise', filter: 'bandpass', from: 900, to: 260, at: 0.6, duration: 0.15, gain: 0.06, q: 1.2 },
+      { kind: 'tone', wave: 'square', freq: 96, toFreq: 44, at: 0.6, duration: 0.15, gain: 0.055 },
+    ],
+  },
+  /*
    * Read against Pântano Pegajoso, the card it shares a colour and a target
    * shape with. Praga boils *up* out of a bright puddle: a resonant bandpass
    * that opens, over a square blipping underneath. The swamp below is the same

@@ -27,6 +27,7 @@ const KNOWN_SHAPES: readonly SpellShape[] = [
   'roots',
   'strike',
   'flash',
+  'pillars',
 ];
 
 /**
@@ -275,19 +276,28 @@ describe('trauma stays inside what a watched game can take', () => {
 
   /*
    * An allowlist rather than a threshold, so widening it is a decision somebody
-   * had to type. Two cards may move the camera, and they are the two that
-   * arrive from outside the arena: Chuva de Meteoros, which is the heaviest card
-   * in the game, and Fúria do Trovão, which is the sharpest. Everything else
-   * happens on the ground the cards are played on and has no business moving the
-   * instrument the player is reading his program through.
+   * had to type — and it has been widened once, deliberately.
    *
-   * Their numbers are not equal and should not be: a meteor shower is weight and
-   * a bolt is a flinch.
+   * It started as the two cards that arrive from *outside* the arena: Chuva de
+   * Meteoros, the heaviest card in the game, and Fúria do Trovão, the sharpest.
+   * Erupção Vulcânica breaks that description and belongs anyway, which is what
+   * showed the description was a proxy for the real rule: a cast may move the
+   * camera when its weight is the point of the card. Five mana and a second and
+   * a half of warning is a promise, and a promise kept quietly is a card that
+   * feels cheaper than it cost.
+   *
+   * Everything else still happens on the ground the cards are played on and has
+   * no business moving the instrument the player reads his program through.
+   * Their numbers are not equal and should not be: a bolt is a flinch, an
+   * eruption is a heave, a sky full of rock is a landslide.
    */
   it('spends it on the heavy cards only', () => {
     const shaking = ALL_SPELLS.filter((id) => (spellVfxFor(id).trauma ?? 0) > 0);
-    expect([...shaking].sort()).toEqual(['meteor_shower', 'thunderstrike']);
-    expect(spellVfxFor('thunderstrike').trauma!).toBeLessThan(spellVfxFor('meteor_shower').trauma!);
+    expect([...shaking].sort()).toEqual(['meteor_shower', 'thunderstrike', 'volcanic_eruption']);
+
+    const trauma = (id: string): number => spellVfxFor(id).trauma!;
+    expect(trauma('thunderstrike')).toBeLessThan(trauma('volcanic_eruption'));
+    expect(trauma('volcanic_eruption')).toBeLessThan(trauma('meteor_shower'));
   });
 });
 

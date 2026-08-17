@@ -20,6 +20,7 @@ describe('spell riders', () => {
     expect(isSpellRider('puddle')).toBe(true);
     expect(isSpellRider('strike')).toBe(true);
     expect(isSpellRider('dispel')).toBe(true);
+    expect(isSpellRider('knockback')).toBe(true);
     expect(isSpellRider('teleport')).toBe(false);
   });
 
@@ -122,5 +123,101 @@ describe('spell riders', () => {
 
     expect(magnitudeOf(victim, 'stun')).toBeGreaterThanOrEqual(0);
     expect(victim.stunTimer).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Erupção Vulcânica, and the first card in the game that does not land when it
+ * is cast.
+ *
+ * `delay` is a field on the application rather than a rider of its own,
+ * because *anything* a card does can be worth postponing — damage, a shove, a
+ * burn — and a rider would have had to be told what to run afterwards. It is
+ * also the half of a contract whose other half has been sitting in
+ * `spellVfx.ts` since the VFX pass: `telegraph` is the seconds of warning drawn
+ * on the ground, and `spellVfx.test.ts` asserts the two numbers are equal in
+ * both directions. Until this card there was nothing on the sim side to be
+ * equal to.
+ */
+describe('a delayed card', () => {
+  function stepFor(w: World, seconds: number): void {
+    for (let t = 0; t < seconds; t += 1 / 60) w.step(1 / 60);
+  }
+
+  it('does nothing at all on the tick it is cast', () => {
+    const w = new World();
+    const victim = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+
+    w.castSpell(TEAM_A, 'volcanic_eruption', victim.position);
+
+    expect(victim.health).toBe(victim.maxHealth);
+    expect(hasEffect(victim, 'burn')).toBe(false);
+  });
+
+  it('lands once the warning is over', () => {
+    const w = new World();
+    const victim = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+
+    w.castSpell(TEAM_A, 'volcanic_eruption', victim.position);
+    stepFor(w, 1.5);
+
+    expect(victim.health).toBeLessThan(victim.maxHealth);
+    expect(hasEffect(victim, 'burn')).toBe(true);
+  });
+
+  /**
+   * The reason a telegraph is worth drawing at all. A delayed card that
+   * remembered who it caught at cast time would be an instant card with a
+   * decorative wind-up — the warning on the ground would be telling the player
+   * something he cannot act on, which is worse than not drawing it.
+   */
+  it('catches who is standing there when it goes off, not who was there when it was cast', () => {
+    const w = new World();
+    const fled = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+    const stayed = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 1));
+
+    w.castSpell(TEAM_A, 'volcanic_eruption', new Vec2(0, 0));
+    fled.position = new Vec2(10, 0);
+    stepFor(w, 1.5);
+
+    expect(fled.health).toBe(fled.maxHealth);
+    expect(stayed.health).toBeLessThan(stayed.maxHealth);
+  });
+
+  /**
+   * The failure a queue makes cheap: an entry that fires without being removed
+   * erupts *every tick* from then on, which kills the whole squad in about a
+   * second and looks like a damage bug rather than a bookkeeping one. Every
+   * other test here passes while that is happening.
+   */
+  it('fires once, not once per tick', () => {
+    const w = new World();
+    const victim = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
+
+    w.castSpell(TEAM_A, 'volcanic_eruption', victim.position);
+    stepFor(w, 5);
+
+    expect(victim.alive).toBe(true);
+    // One eruption is the hit plus the whole burn; anything past that is the
+    // card going off more than once.
+    expect(victim.health).toBeGreaterThan(victim.maxHealth - 70);
+  });
+
+  /**
+   * The shove is what makes the card read as an *eruption* rather than as a
+   * slow fireball: bodies leave the disc outward, which is also the only reason
+   * a squad that survived it is no longer standing where their program put
+   * them.
+   */
+  it('throws what it caught away from the middle', () => {
+    const w = new World();
+    const victim = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 2));
+
+    w.castSpell(TEAM_A, 'volcanic_eruption', new Vec2(0, 0));
+    // Far enough past the delay for the shove to have moved the body, and
+    // still inside the hit stun it slides during.
+    stepFor(w, 1.5);
+
+    expect(victim.position.y).toBeGreaterThan(2.05);
   });
 });

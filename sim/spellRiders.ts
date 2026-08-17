@@ -101,7 +101,26 @@ const dispel: SpellRider = (_w, { team, targets }) => {
   }
 };
 
-const RIDERS: Readonly<Record<string, SpellRider>> = { puddle, strike, dispel };
+/**
+ * Erupção Vulcânica's shove: everyone it caught leaves the disc outward.
+ *
+ * Damage-free on purpose, and separate from the `strike` next to it in the
+ * same card. Bundling the two would have made "hit them" and "move them" one
+ * behaviour that no other card could take half of — and moving a squad is
+ * worth something on its own here, because a program that spent four seconds
+ * arranging itself around a cluster has to arrange itself again.
+ *
+ * A mage standing exactly on the centre gets nothing rather than a direction
+ * chosen for it. The alternative is picking an angle out of nowhere, which
+ * either reads for a `Rng` this rider must not touch or bakes in a compass
+ * bearing that would be visible as every eruption throwing bodies the same way.
+ */
+const knockback: SpellRider = (w, { app, position, targets }) => {
+  const magnitude = app.magnitude ?? 0;
+  for (const m of targets) w.shove(m, m.position.sub(position), magnitude);
+};
+
+const RIDERS: Readonly<Record<string, SpellRider>> = { puddle, strike, dispel, knockback };
 
 export function isSpellRider(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(RIDERS, name);

@@ -129,6 +129,21 @@ export interface SpellApplyRule {
   readonly tickHeal?: number;
   /** Ground hazards only: whether the damage goes through Escudo Arcano. */
   readonly bypassShield?: boolean;
+  /**
+   * Seconds between the cast and this application actually happening; absent
+   * or 0 for a card that lands the moment it is cast.
+   *
+   * A field rather than a rider, because anything a card does can be worth
+   * postponing — a hit, a shove, a burn — and a rider would have had to be
+   * told what to run afterwards. The targets are resolved when it fires, not
+   * when it was cast, which is what makes the warning on the ground worth
+   * drawing: a squad that walks out is a squad that is not there any more.
+   *
+   * Half of a contract. The other half is `telegraph` in `spellVfx.ts`, and
+   * `spellVfx.test.ts` asserts the two are equal in both directions — damage
+   * that arrives after the warning stops is damage out of nowhere.
+   */
+  readonly delay?: number;
 }
 
 export interface SpellRule {

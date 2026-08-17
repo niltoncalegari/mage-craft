@@ -33,6 +33,7 @@ export type SpellId =
   | 'petrify'
   | 'thunderstrike'
   | 'null_flash'
+  | 'volcanic_eruption'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -75,6 +76,7 @@ export interface SpellCard {
 export const ALL_SPELLS: readonly SpellId[] = [
   'overload_field',
   'meteor_shower',
+  'volcanic_eruption',
   'blood_frenzy',
   'executioners_mark',
   'petrify',

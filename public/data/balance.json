@@ -491,6 +491,20 @@
       "target": "all",
       "apply": [{ "effect": "dispel" }]
     },
+    "volcanic_eruption": {
+      "name": "Erupção Vulcânica",
+      "color": "red",
+      "kind": "curse",
+      "cost": 5,
+      "radius": 4,
+      "duration": 0.7,
+      "target": "enemies",
+      "apply": [
+        { "effect": "strike", "magnitude": 24, "delay": 0.7 },
+        { "effect": "knockback", "magnitude": 9, "delay": 0.7 },
+        { "effect": "burn", "duration": 3, "tickInterval": 0.5, "tickDamage": 5, "delay": 0.7 }
+      ]
+    },
     "meteor_shower": {
       "name": "Chuva de Meteoros",
       "color": "red",

@@ -151,6 +151,23 @@ const TORUS_RIM_SPEED = 2.2;
  */
 const FLASH_MOTE_LIFE = 0.3;
 const FLASH_MOTE_HEIGHT = 0.5;
+/** How long a cast's ground disc lies there, for a card that lands when it is cast. */
+const CAST_ZONE_LIFE = 0.85;
+/**
+ * The warning of a telegraphed card: rings pulsing at the cast radius while
+ * the disc waits, and how long one of them lasts.
+ *
+ * Three, so the wait reads as a count rather than as a card that failed to go
+ * off — two is a blink and four at this spacing is a strobe. They are spread
+ * across the telegraph rather than pinned to a rate, so a longer warning
+ * pulses slower instead of pulsing more.
+ */
+const WARNING_PULSES = 3;
+const WARNING_PULSE_LIFE = 0.3;
+/** One jet of an eruption: cubes thrown straight up, and how hard. */
+const PILLAR_VOXELS = 8;
+const PILLAR_RISE = 6.4;
+const PILLAR_SPREAD = 0.5;
 /**
  * What a cast's mote count is multiplied by under `prefers-reduced-motion`.
  *
@@ -549,7 +566,7 @@ interface StrikeSlot {
 }
 
 /** Which beat of a falling meteor a queued entry is: the body, or the break. */
-type PendingKind = 'fall' | 'hit';
+type PendingKind = 'fall' | 'hit' | 'warn' | 'erupt';
 
 /** A stone on its way down. The fire is the trail it sheds, never the body. */
 interface MeteorSlot {
@@ -575,6 +592,8 @@ interface PendingImpact {
   remaining: number;
   kind: PendingKind;
   cfg: SpellVfx;
+  /** What the beat is drawn at: the cast's radius for a warning, one jet's for a pillar. */
+  radius: number;
 }
 
 interface PlayerFxState {
@@ -1839,7 +1858,11 @@ export class ParticleRenderer implements GameRenderer {
   private spawnSpellCast(spellId: string, x: number, y: number, radius: number, friendly: boolean): void {
     const cfg = spellVfxFor(spellId);
 
-    this.spawnZone(x, y, radius, cfg.zone, 0.85);
+    // A telegraphed card holds its ground disc for the whole warning instead of
+    // drawing a second thing over the top of it. The footprint already answers
+    // *where* and *whose*; a card that lands late only needs it to answer
+    // *when*, and it does that by still being there.
+    this.spawnZone(x, y, radius, cfg.zone, cfg.telegraph ?? CAST_ZONE_LIFE);
     this.spawnRing(x, y, cfg.ring, radius, 0.5);
     this.spawnRing(x, y, cfg.zone, radius * 0.62, 0.32);
     // Your own cast gets a white core flash: on a busy field the colour alone
@@ -1869,6 +1892,9 @@ export class ParticleRenderer implements GameRenderer {
         break;
       case 'flash':
         this.spawnFlashCollapse(x, y, radius, cfg);
+        break;
+      case 'pillars':
+        this.spawnEruption(x, y, radius, cfg);
         break;
       case 'burst':
         this.spawnSpellMotes(x, y, radius, cfg);
@@ -1923,11 +1949,11 @@ export class ParticleRenderer implements GameRenderer {
    * these, against a particle pool that turns over hundreds per second. Pooling
    * it would buy nothing and cost a slot budget to get wrong.
    */
-  private schedule(x: number, y: number, at: number, kind: PendingKind, cfg: SpellVfx): void {
-    this.pendingImpacts.push({ x, y, remaining: at, kind, cfg });
+  private schedule(x: number, y: number, at: number, kind: PendingKind, cfg: SpellVfx, radius = 0): void {
+    this.pendingImpacts.push({ x, y, remaining: at, kind, cfg, radius });
   }
 
-  /** Advances the shower queue and fires whatever has come due this frame. */
+  /** Advances the queue of scheduled beats and fires whatever has come due. */
   private updatePendingImpacts(): void {
     for (let i = this.pendingImpacts.length - 1; i >= 0; i--) {
       const pending = this.pendingImpacts[i];
@@ -1935,8 +1961,20 @@ export class ParticleRenderer implements GameRenderer {
       if (pending.remaining > 0) continue;
 
       this.pendingImpacts.splice(i, 1);
-      if (pending.kind === 'fall') this.spawnMeteorBody(pending.x, pending.y);
-      else this.spawnMeteorHit(pending.x, pending.y, pending.cfg);
+      switch (pending.kind) {
+        case 'fall':
+          this.spawnMeteorBody(pending.x, pending.y);
+          break;
+        case 'warn':
+          this.spawnRing(pending.x, pending.y, pending.cfg.ring, pending.radius, WARNING_PULSE_LIFE);
+          break;
+        case 'erupt':
+          this.spawnPillar(pending.x, pending.y, pending.cfg);
+          break;
+        default:
+          this.spawnMeteorHit(pending.x, pending.y, pending.cfg);
+          break;
+      }
     }
   }
 
@@ -2145,6 +2183,71 @@ export class ParticleRenderer implements GameRenderer {
    */
   private moteBudget(count: number): number {
     return prefersReducedMotion() ? Math.max(1, Math.round(count * REDUCED_MOTE_SCALE)) : count;
+  }
+
+  /**
+   * A `pillars` cast: a warning, then jets of burning rock out of the floor.
+   *
+   * The mirror of {@link spawnColumnShaft}, and it reuses that shape's
+   * arithmetic — where the mouths open is the same question as where the
+   * meteors land, so it is the same {@link planColumnFall} rather than a second
+   * scatter written by eye. What differs is the direction and the fact that
+   * this one is *late*: nothing at all happens for `telegraph` seconds except
+   * the disc lying there and a ring pulsing on it.
+   *
+   * Those seconds are the card. This is the only moment in the game where a
+   * player watches a patch of ground knowing exactly what is about to happen
+   * on it, so the beat is not allowed to be quiet — a warning nobody notices is
+   * a card that simply deals damage a second after it was cast.
+   */
+  private spawnEruption(x: number, y: number, radius: number, cfg: SpellVfx): void {
+    const telegraph = cfg.telegraph ?? 0;
+    for (let i = 1; i <= WARNING_PULSES; i++) {
+      this.schedule(x, y, (telegraph * i) / (WARNING_PULSES + 1), 'warn', cfg, radius);
+    }
+
+    const mouths = planColumnFall(this.moteBudget(cfg.impacts ?? 1), radius, cfg.impactWindow ?? 0);
+    for (const mouth of mouths) {
+      this.schedule(x + mouth.dx, y + mouth.dy, telegraph + mouth.at, 'erupt', cfg);
+    }
+  }
+
+  /**
+   * One mouth of an eruption: cubes thrown straight up out of the ground, and
+   * a ring where the floor broke.
+   *
+   * Cubes rather than motes, and out of the voxel pool the meteors use, because
+   * this is rock — the same material arriving by the opposite route. They are
+   * given almost no horizontal speed on purpose: a jet that fans out reads as
+   * an explosion, and an explosion is the card next to this one in the deck.
+   */
+  private spawnPillar(x: number, y: number, cfg: SpellVfx): void {
+    this.spawnRing(x, y, cfg.ring, 0.9, 0.24);
+
+    const count = this.moteBudget(PILLAR_VOXELS);
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * SPARKLE_TWO_PI;
+      const dist = Math.random() * PILLAR_SPREAD;
+      toThree(this.tmp, x + Math.cos(angle) * dist, y + Math.sin(angle) * dist, 0.05);
+      const slot = this.emit(
+        this.voxelSlots,
+        this.tmp.x,
+        this.tmp.y,
+        this.tmp.z,
+        Math.cos(angle) * 0.5,
+        // Staggered by index rather than rolled flat, so the jet has a nose and
+        // a tail instead of a front of cubes rising like a lift.
+        PILLAR_RISE * (0.55 + (i / count) * 0.55),
+        Math.sin(angle) * 0.5,
+        0.09 + Math.random() * 0.08,
+        0.55 + Math.random() * 0.35,
+        cfg.motes[i % cfg.motes.length],
+        1.5,
+      );
+      // The rock comes back down and lies there; the burning half burns out in
+      // the air, the same split the meteor's debris makes.
+      if (slot && i % 2 === 0) slot.floor = true;
+    }
   }
 
   /**
