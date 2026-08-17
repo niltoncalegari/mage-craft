@@ -18,7 +18,16 @@ import { Deck, defaultDeck } from '../sim/Deck';
 import { TEAM_A, TEAM_B, type Team } from '../sim/entities';
 import { Rng } from '../sim/rng';
 import { defaultStrategy, emptyStrategy, type Strategy } from '../sim/strategy';
-import { flatProgram, naiveProgram, responsiveProgram } from '../sim/strategyPresets';
+import type { CardId } from '../sim/spells';
+import {
+  conditionalDeck,
+  conditionalDeckWithoutStone,
+  conditionalFlatProgram,
+  conditionalResponsiveProgram,
+  flatProgram,
+  naiveProgram,
+  responsiveProgram,
+} from '../sim/strategyPresets';
 import { World } from '../sim/World';
 
 const SEEDS = process.argv.slice(2).map(Number).filter(Number.isFinite);
@@ -219,7 +228,7 @@ function emptyRecord(): Record_ {
   return { wins: 0, losses: 0, draws: 0, casts: 0 };
 }
 
-function runStrategyMatch(seed: number, byTeam: Record<Team, Strategy>) {
+function runStrategyMatch(seed: number, byTeam: Record<Team, Strategy>, cards: CardId[] = defaultDeck()) {
   const rng = new Rng(seed);
   const world = new World();
   world.initSquad(TEAM_A, defaultSquad());
@@ -236,8 +245,8 @@ function runStrategyMatch(seed: number, byTeam: Record<Team, Strategy>) {
     [TEAM_B]: new Tactician(byTeam[TEAM_B]),
   };
   const decks: Record<Team, Deck> = {
-    [TEAM_A]: new Deck(defaultDeck(), new Rng(seed + 1)),
-    [TEAM_B]: new Deck(defaultDeck(), new Rng(seed + 6)),
+    [TEAM_A]: new Deck(cards, new Rng(seed + 1)),
+    [TEAM_B]: new Deck(cards, new Rng(seed + 6)),
   };
   const casts: Record<Team, number> = { [TEAM_A]: 0, [TEAM_B]: 0 };
 
@@ -321,6 +330,85 @@ for (const p of PROGRAMS) {
   console.log(
     `  ${p.name.padEnd(11)} ${String(r.wins).padStart(3)} ${String(r.losses).padStart(3)} ${String(r.draws).padStart(3)}   ` +
       `${rate.padStart(15)}   ${String(r.casts).padStart(5)}`,
+  );
+}
+
+/* ---- Does reading the situation pay? ---------------------------------------
+ *
+ * The sweep above answers this over `defaultDeck()`, and that is the whole of
+ * what it answers. Both sides of every match in it hold the same four Tier 1
+ * cards, so a catalog that grew from 7 cards to 22 moved none of those numbers
+ * and would have moved none however many more were added.
+ *
+ * That is a problem for the finding the sweep is cited for. §10 reads
+ * `responsiva` × `plana` = 50% as "reading the situation does not pay", and
+ * explains it by the Tier 1 cards being too generic for the situation to
+ * matter — a reasonable reading of a measurement that could not have detected
+ * it being wrong.
+ *
+ * So the same question is asked again below over a deck of cards whose value
+ * genuinely depends on *when* the rule fires, with the guards as the only
+ * variable. Two decks rather than one, because Petrificar protects the target
+ * it lands on: a flat program firing it on cooldown spends the match shielding
+ * the enemy, and a win taken over that deck alone could not be told apart from
+ * "guards pay". The stone-free deck is what separates the two sentences.
+ *
+ * Read the three rows together. Tier 1 apart from the conditional pair says the
+ * *cards* were the limit; all three sitting at 50% says the limit is the model,
+ * and that is a much larger finding than a card pass can answer.
+ */
+console.log(`\n\n=== does reading the situation pay? · ${seeds.length} seeds per deck ===`);
+
+const GUARD_TRIALS: readonly { deck: string; cards: CardId[]; guarded: Strategy; flat: Strategy }[] = [
+  { deck: 'tier 1 (base)', cards: defaultDeck(), guarded: responsiveProgram(), flat: flatProgram() },
+  {
+    deck: 'condicional',
+    cards: conditionalDeck(),
+    guarded: conditionalResponsiveProgram(),
+    flat: conditionalFlatProgram(),
+  },
+  {
+    deck: 'condicional sem pedra',
+    cards: conditionalDeckWithoutStone(),
+    guarded: conditionalResponsiveProgram(),
+    flat: conditionalFlatProgram(),
+  },
+];
+
+for (const trial of GUARD_TRIALS) {
+  let guardedWins = 0;
+  let flatWins = 0;
+  let draws = 0;
+  let guardedCasts = 0;
+  let flatCasts = 0;
+
+  for (const [k, seed] of seeds.entries()) {
+    // Alternate sides: the map is not symmetric, and a fixed assignment would
+    // report the map's bias as the program's.
+    const guardedOnA = k % 2 === 0;
+    const r = runStrategyMatch(
+      seed,
+      {
+        [TEAM_A]: guardedOnA ? trial.guarded : trial.flat,
+        [TEAM_B]: guardedOnA ? trial.flat : trial.guarded,
+      },
+      trial.cards,
+    );
+
+    const guardedTeam: Team = guardedOnA ? TEAM_A : TEAM_B;
+    guardedCasts += r.casts[guardedTeam];
+    flatCasts += r.casts[guardedOnA ? TEAM_B : TEAM_A];
+
+    if (r.winner === null) draws++;
+    else if (r.winner === guardedTeam) guardedWins++;
+    else flatWins++;
+  }
+
+  const decided = guardedWins + flatWins;
+  const rate = decided > 0 ? ((guardedWins / decided) * 100).toFixed(0) + '%' : '—';
+  console.log(
+    `  ${trial.deck.padEnd(22)} · guarded ${String(guardedWins).padStart(2)}-${String(flatWins).padStart(2)}-${String(draws).padStart(2)} (W-L-D) · ` +
+      `guarded takes ${rate.padStart(4)} of decided · casts ${guardedCasts}/${flatCasts}`,
   );
 }
 

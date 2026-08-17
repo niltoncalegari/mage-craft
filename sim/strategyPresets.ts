@@ -18,6 +18,7 @@
  * it) — but a benchmark made of inert rules would measure nothing.
  */
 
+import type { CardId } from './spells';
 import { STRATEGY_VERSION, type Strategy, type StrategyRule } from './strategy';
 
 const rule = (
@@ -72,6 +73,131 @@ export function flatProgram(): Strategy {
       rule('shield-up', 'arcane_shield', { kind: 'always' }, 'ally_cluster'),
       rule('bog-them', 'sticky_swamp', { kind: 'always' }, 'enemy_cluster'),
       rule('rot-them', 'plague', { kind: 'always' }, 'enemy_cluster'),
+    ],
+  };
+}
+
+/* ---- The conditional deck --------------------------------------------------
+ *
+ * **Why any of this exists.** The three programs above are written against
+ * `defaultDeck()`, which is four Tier 1 cards, and `scripts/ai-report.mts` gave
+ * that deck to both sides of every match in the sweep. So when the catalog grew
+ * from 7 cards to 22, the sweep measured *exactly the same thing* — same win
+ * rates, same cast counts to within a handful — and it would have gone on doing
+ * so however many cards were added. Fourteen of the twenty-two were unreachable
+ * by any program in it, three of them from Tier 1.
+ *
+ * That matters because the sweep is what the GDD's §10 finding rests on:
+ * `responsiva` × `plana` = exactly 50%, read as "reading the situation does not
+ * pay", with the proposed explanation that the cards were too generic for the
+ * situation to matter. The explanation may well be right — but the experiment
+ * that produced the number could not have detected it being wrong, and running
+ * it again after a card pass answers a question nobody asked.
+ *
+ * So: a second deck, of cards whose value genuinely depends on *when* the rule
+ * fires, and the same responsive-versus-flat pair over it. The Tier 1 deck stays
+ * exactly as it was — it is the comparison, and deleting it would throw away the
+ * only measurement the two can be read against.
+ */
+
+/**
+ * Eight cards, two colours, all of them situational. Blue and red because
+ * `MAX_COLORS` is enforced now and the conditional cards are spread across four
+ * colours — this is the pair that carries the most of them.
+ *
+ * Every card here is worth a different amount depending on the moment it is
+ * played, which is the property the measurement is about:
+ *
+ * - **Marca do Carrasco** is inert against a healthy target and only pays under
+ *   the execute threshold.
+ * - **Clarão Nulo** is worth nothing until the enemy has spent mana, and then
+ *   worth whatever they spent.
+ * - **Erupção Vulcânica** warns before it lands, so a squad that is leaving
+ *   anyway takes none of it.
+ * - **Vórtice Gravitacional** does almost nothing alone and changes what a
+ *   hazard is worth entirely.
+ * - **Chuva de Meteoros** and **Campo de Sobrecarga** want a crowd.
+ * - **Frenesi Sanguinário** wants your own squad together and in a fight.
+ * - **Petrificar** — see {@link conditionalDeckWithoutStone}.
+ *
+ * Not run through `validateDeck` here, deliberately: this is a benchmark
+ * fixture, and a preset that silently changed shape to satisfy a rule would
+ * stop being the thing that was measured. It is built to be legal, and
+ * `strategyPresets.test.ts` is what says so out loud.
+ */
+export function conditionalDeck(): CardId[] {
+  return [
+    'executioners_mark',
+    'null_flash',
+    'volcanic_eruption',
+    'gravity_well',
+    'meteor_shower',
+    'overload_field',
+    'blood_frenzy',
+    'petrify',
+  ];
+}
+
+/**
+ * The same deck with Petrificar swapped for a second Fúria do Trovão.
+ *
+ * Petrify is the one card in the set that can *help the target*: it makes them
+ * immune to damage while it runs. A flat program casting it on every cooldown
+ * would spend the match protecting the enemy, so a large win for the responsive
+ * program over the conditional deck could mean "guards pay" or it could mean
+ * "one of these eight cards is a trap when mistimed" — two different sentences,
+ * and only one of them is what §10 is asking about.
+ *
+ * Running both decks is what separates them. This is not a better deck; it is
+ * the control that makes the other one legible.
+ */
+export function conditionalDeckWithoutStone(): CardId[] {
+  return conditionalDeck().map((id) => (id === 'petrify' ? 'thunderstrike' : id));
+}
+
+/**
+ * Reads the field with the conditional deck: every card guarded by the
+ * situation it is actually good in, situational rules above the fallback.
+ */
+export function conditionalResponsiveProgram(): Strategy {
+  return {
+    version: STRATEGY_VERSION,
+    name: 'Condicional responsiva',
+    rules: [
+      rule('finish', 'executioners_mark', { kind: 'enemy_health', op: 'lte', value: 0.5 }, 'strongest_enemy'),
+      rule('strip', 'null_flash', { kind: 'enemy_has_effect', effect: 'shield' }, 'enemy_cluster'),
+      rule('bombard', 'meteor_shower', { kind: 'enemy_cluster', op: 'gte', value: 3 }, 'enemy_cluster'),
+      rule('hold-them', 'gravity_well', { kind: 'enemy_cluster', op: 'gte', value: 2 }, 'enemy_cluster'),
+      rule('erupt', 'volcanic_eruption', { kind: 'enemy_cluster', op: 'gte', value: 2 }, 'enemy_cluster'),
+      rule('lock', 'petrify', { kind: 'intruder' }, 'deepest_intruder'),
+      rule('overload', 'overload_field', { kind: 'enemy_count', op: 'gte', value: 3 }, 'enemy_cluster'),
+      rule('frenzy', 'blood_frenzy', { kind: 'always' }, 'ally_cluster'),
+    ],
+  };
+}
+
+/**
+ * The same eight cards, the same eight places, no guards — the control.
+ *
+ * The pairing has to hold the cards fixed and vary only the guards, which is the
+ * correction the Tier 1 measurement already had to make once: its first control
+ * had a single rule, so it measured card *variety* rather than situational
+ * play. Ordered by cost so the cheap rule is reached first and the program keeps
+ * casting rather than banking, which is a decision and this program makes none.
+ */
+export function conditionalFlatProgram(): Strategy {
+  return {
+    version: STRATEGY_VERSION,
+    name: 'Condicional plana',
+    rules: [
+      rule('finish', 'executioners_mark', { kind: 'always' }, 'strongest_enemy'),
+      rule('strip', 'null_flash', { kind: 'always' }, 'enemy_cluster'),
+      rule('lock', 'petrify', { kind: 'always' }, 'deepest_intruder'),
+      rule('hold-them', 'gravity_well', { kind: 'always' }, 'enemy_cluster'),
+      rule('overload', 'overload_field', { kind: 'always' }, 'enemy_cluster'),
+      rule('frenzy', 'blood_frenzy', { kind: 'always' }, 'ally_cluster'),
+      rule('erupt', 'volcanic_eruption', { kind: 'always' }, 'enemy_cluster'),
+      rule('bombard', 'meteor_shower', { kind: 'always' }, 'enemy_cluster'),
     ],
   };
 }
