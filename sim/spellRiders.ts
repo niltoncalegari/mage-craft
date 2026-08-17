@@ -165,6 +165,25 @@ const rally: SpellRider = (w, { team, spell, app, position }) => {
   }
 };
 
+/**
+ * Fluxo de Mana: the caster's team regenerates `magnitude` times faster for
+ * the card's duration.
+ *
+ * Tributo Obscuro's opposite number. That one buys mana with health, now; this
+ * buys it with time, and so it is the only card in the catalog that gets worse
+ * the later it is cast — three mana spent two seconds before a fight ends is
+ * three mana burned. A program that plays it well is a program that decided the
+ * match was going long.
+ *
+ * It does nothing at all with nobody in the disc, which is the only thing
+ * keeping an economy card on the map: without that, a rule could fire at a
+ * fixed spot for a whole match and never once look at the field.
+ */
+const attune: SpellRider = (w, { team, spell, app, targets }) => {
+  if (targets.length === 0) return;
+  w.attuneMana(team, app.magnitude ?? 1, app.duration ?? spell.duration);
+};
+
 const RIDERS: Readonly<Record<string, SpellRider>> = {
   puddle,
   strike,
@@ -172,6 +191,7 @@ const RIDERS: Readonly<Record<string, SpellRider>> = {
   knockback,
   tribute,
   rally,
+  attune,
 };
 
 export function isSpellRider(name: string): boolean {

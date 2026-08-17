@@ -24,7 +24,70 @@ describe('spell riders', () => {
     expect(isSpellRider('knockback')).toBe(true);
     expect(isSpellRider('tribute')).toBe(true);
     expect(isSpellRider('rally')).toBe(true);
+    expect(isSpellRider('attune')).toBe(true);
     expect(isSpellRider('teleport')).toBe(false);
+  });
+
+  /**
+   * Fluxo de Mana. Tributo Obscuro buys mana with health, all at once; this
+   * buys it with *time*, which is the other half of the same idea and the
+   * reason blue and black both get an economy card instead of one of them
+   * getting the only one.
+   *
+   * The two are opposites to play. The tribute is a spike — you are poorer in
+   * health and richer this second. This is an investment that has to survive
+   * long enough to pay, which means it is the one card in the catalog that is
+   * worse the later in a fight it is cast.
+   */
+  describe('attune', () => {
+    /**
+     * Ticks to get back to a full bar after paying for `spell`.
+     *
+     * Measured as a refill *time* rather than as mana held after N seconds,
+     * because the ceiling would otherwise do the measuring: with nothing being
+     * spent, both worlds park at {@link MANA_MAX} and a doubled rate looks
+     * exactly like a normal one. A real match spends constantly, so the honest
+     * question is how fast the bar comes back, not how full it gets.
+     */
+    function ticksToFull(spell: string, at = new Vec2(0, 0)): number {
+      const w = new World();
+      w.summon(TEAM_A, 'pyromancer', new Vec2(0, 0));
+      w.castSpell(TEAM_A, spell, at);
+
+      let ticks = 0;
+      while (w.manaOf(TEAM_A) < MANA_MAX && ticks < 60 * 120) {
+        w.step(1 / 60);
+        ticks++;
+      }
+      return ticks;
+    }
+
+    // Maldição da Lentidão is the control: the same three mana spent on a card
+    // that does nothing for the economy, so what is compared is the flow and
+    // not the price.
+    it('refills the bar faster than the same mana spent elsewhere', () => {
+      expect(ticksToFull('mana_flow')).toBeLessThan(ticksToFull('slow_curse'));
+    });
+
+    /**
+     * The expiry, tested through the only thing it changes: how much of the
+     * refill happens at the raised rate. A flow that never ran out would finish
+     * in less than half the control's time, since it would carry the whole
+     * refill; this one carries the first few seconds and hands the rest back.
+     */
+    it('lets go, so the tail of the refill is at the ordinary rate', () => {
+      const plain = ticksToFull('slow_curse');
+      expect(ticksToFull('mana_flow')).toBeGreaterThan(plain / 2);
+    });
+
+    /**
+     * A card cast where none of your squad is standing does nothing at all,
+     * which is what keeps an economy card on the map. Without it, a rule could
+     * fire at a fixed spot for a whole match and never look at the field.
+     */
+    it('needs somebody to channel through', () => {
+      expect(ticksToFull('mana_flow', new Vec2(0, 14))).toBe(ticksToFull('slow_curse'));
+    });
   });
 
   /**

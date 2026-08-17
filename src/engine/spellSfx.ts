@@ -208,6 +208,23 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * The card whose effect the player cannot see, so this is the whole of the
+   * confirmation that it landed — nothing on the field changes for twelve
+   * seconds except a number in the corner.
+   *
+   * A rising open fifth on sines, clean and slow, and the only layer in the
+   * file with no noise under it at all. Everything else here has grit because
+   * everything else here hits something; this one is the sound of a channel
+   * opening, which has no impact in it to voice.
+   */
+  mana_flow: {
+    detune: 0.02,
+    layers: [
+      { kind: 'tone', wave: 'sine', freq: 330, toFreq: 494, at: 0, duration: 0.4, gain: 0.045 },
+      { kind: 'chord', wave: 'sine', freqs: [659.25, 987.77], at: 0.14, duration: 0.34, gain: 0.03 },
+    ],
+  },
+  /*
    * The only sound in the catalog that goes *away*. Every other card here
    * arrives — an impact, a swell, a crack — and this one is a bright band of
    * noise closing to nothing in a fifth of a second, with a tone sliding down

@@ -36,6 +36,7 @@ export type SpellId =
   | 'volcanic_eruption'
   | 'dark_tribute'
   | 'call_to_battle'
+  | 'mana_flow'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -84,6 +85,7 @@ export const ALL_SPELLS: readonly SpellId[] = [
   'petrify',
   'thunderstrike',
   'null_flash',
+  'mana_flow',
   'plague',
   'sticky_swamp',
   'entangling_roots',

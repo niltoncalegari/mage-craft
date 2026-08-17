@@ -264,6 +264,24 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     trauma: 0.22,
   },
   /*
+   * The only card in the catalog that does nothing to anybody. It changes a
+   * number the field cannot show, over twelve seconds nobody will connect to
+   * this beat unless the beat says "this one is not about the fight".
+   *
+   * So it is a torus like Solo Consagrado — an area switched on rather than
+   * struck — but the palette is the mana bar's own cyan rather than a spell
+   * colour, and the motes lift and keep lifting. It should read as *supply*,
+   * which is the one thing no other card in the deck is about.
+   */
+  mana_flow: {
+    shape: 'torus',
+    ring: 0x9df9ff,
+    zone: 0x0b3d5c,
+    motes: [0xe6ffff, 0x63d8f0, 0x2a7fa8],
+    moteCount: 22,
+    direction: 1,
+  },
+  /*
    * Blue's third, and the first card in the catalog whose beat has to say
    * something *negative* — not "you are hurt" or "you are held", but "what was
    * here is gone". Every other shape in the table is an arrival. This one is a

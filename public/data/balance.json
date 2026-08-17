@@ -531,6 +531,16 @@
         { "effect": "rally", "magnitude": 3 }
       ]
     },
+    "mana_flow": {
+      "name": "Fluxo de Mana",
+      "color": "blue",
+      "kind": "buff",
+      "cost": 3,
+      "radius": 3.5,
+      "duration": 6,
+      "target": "allies",
+      "apply": [{ "effect": "attune", "magnitude": 2.5 }]
+    },
     "meteor_shower": {
       "name": "Chuva de Meteoros",
       "color": "red",

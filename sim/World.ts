@@ -203,6 +203,8 @@ export class World {
    * runs inside `step` rather than off a timer.
    */
   private readonly pendingApplications: PendingApplication[] = [];
+  /** A team's raised mana regeneration, while it lasts; see {@link attuneMana}. */
+  private readonly manaFlow = new Map<Team, { multiplier: number; remaining: number }>();
 
   private cachedPathGrid: PathGrid | null = null;
   private cachedPathBlockers = -1;
@@ -299,9 +301,42 @@ export class World {
     }
   }
 
+  /**
+   * Raises a team's mana regeneration for a while (GDD §7) — Fluxo de Mana.
+   *
+   * A team-level timer rather than an effect on the mages, because the thing
+   * being changed belongs to the team and not to any body: mana is not carried
+   * by anybody, and a squad wiped mid-flow would otherwise lose an investment
+   * it had already paid for, for a reason no readout on the field explains.
+   *
+   * The stronger flow wins and the longer one lasts, independently — the same
+   * `refresh_strongest` bargain the effect catalog makes, kept the same here so
+   * two casts of an economy card behave the way two casts of a slow do.
+   */
+  attuneMana(team: Team, multiplier: number, duration: number): void {
+    if (multiplier <= 1 || duration <= 0) return;
+    const running = this.manaFlow.get(team);
+    this.manaFlow.set(team, {
+      multiplier: Math.max(multiplier, running?.multiplier ?? 0),
+      remaining: Math.max(duration, running?.remaining ?? 0),
+    });
+  }
+
+  private manaRateOf(team: Team): number {
+    const flow = this.manaFlow.get(team);
+    return flow && flow.remaining > 0 ? flow.multiplier : 1;
+  }
+
   private updateMana(dt: number): void {
-    const rate = this.suddenDeath ? SUDDEN_DEATH_MANA_MULTIPLIER : 1;
+    // Sudden death and a card multiply rather than replace each other: one is
+    // the clock the whole match runs on and the other is something a player
+    // paid for, and picking a winner would quietly refund whichever lost.
+    const global = this.suddenDeath ? SUDDEN_DEATH_MANA_MULTIPLIER : 1;
     for (const team of [TEAM_A, TEAM_B] as Team[]) {
+      const rate = global * this.manaRateOf(team);
+      const flow = this.manaFlow.get(team);
+      if (flow && flow.remaining > 0) flow.remaining = decay(flow.remaining, dt);
+
       if (this.manaOf(team) >= MANA_MAX) {
         this.manaAccum.set(team, 0);
         continue;
