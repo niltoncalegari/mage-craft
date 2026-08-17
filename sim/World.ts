@@ -1556,6 +1556,10 @@ export class World {
     const executing = mark > 0 && m.health <= m.maxHealth * EXECUTE_THRESHOLD;
 
     let remaining = amount * dealt * damageTakenMultiplier(m) * (executing ? 1 + mark : 1);
+    // Ahead of the shield, because what is handed to the rest of the squad was
+    // never this body's to absorb: the share should meet *their* shields, not
+    // be eaten by one Escudo Arcano on the mage who happened to be aimed at.
+    remaining = this.shareBondedDamage(m, remaining, opts);
     if (!opts.bypassShield) remaining = absorbWithShield(m, remaining);
     m.health -= remaining;
 
@@ -1580,6 +1584,51 @@ export class World {
 
     if (m.health <= 0) this.kill(m, opts.attackerId ?? null);
     this.spreadBondedPain(m, remaining, opts);
+  }
+
+  /**
+   * Vínculo de Solidariedade: `magnitude` of a hit is lifted off the body it
+   * landed on and split evenly among the rest of the bond (GDD §9). Returns
+   * what the struck mage is left holding.
+   *
+   * Nothing is lost on the way round, and that is the design rather than an
+   * accident of the arithmetic. A bond that quietly shed damage in transit
+   * would be a mitigation card wearing a bond's clothes, and every number in
+   * the game would have to be re-read against it. What the card buys is not
+   * less damage — it is that no single body falls off the field, and a death
+   * costs six seconds of presence where a wound costs none.
+   *
+   * With nobody else left in the bond the share has nowhere to go, so the mage
+   * keeps all of it: a solidarity of one is the last survivor of a squad, and
+   * quietly deleting the other half of the hit would make it the toughest mage
+   * in the game at exactly the wrong moment.
+   */
+  private shareBondedDamage(m: Mage, amount: number, opts: DamageOptions): number {
+    if (this.bondEcho || amount <= 0) return amount;
+    const share = magnitudeOf(m, 'bonded');
+    if (share <= 0) return amount;
+
+    const others: Mage[] = [];
+    for (const id of sortedIds(this.mages.keys())) {
+      const other = this.mages.get(id);
+      if (!other || other === m || !other.alive || other.team !== m.team) continue;
+      if (hasEffect(other, 'bonded')) others.push(other);
+    }
+    if (others.length === 0) return amount;
+
+    const each = (amount * share) / others.length;
+    this.bondEcho = true;
+    try {
+      // Credited to whoever swung, and without the flinch: the blow landed on
+      // one body, and stunning three more for it would take a whole squad off
+      // the field for a hit they were not in the way of.
+      for (const other of others) {
+        this.dealDamage(other, each, { attackerId: opts.attackerId ?? null, noHitStun: true });
+      }
+    } finally {
+      this.bondEcho = false;
+    }
+    return amount * (1 - share);
   }
 
   /**

@@ -38,6 +38,7 @@ export type SpellId =
   | 'call_to_battle'
   | 'mana_flow'
   | 'bond_of_pain'
+  | 'bond_of_solidarity'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -95,6 +96,7 @@ export const ALL_SPELLS: readonly SpellId[] = [
   'arcane_shield',
   'consecrated_ground',
   'call_to_battle',
+  'bond_of_solidarity',
   'slow_curse',
   'dark_tribute',
   'bond_of_pain',

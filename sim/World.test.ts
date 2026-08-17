@@ -640,3 +640,74 @@ describe('a pain bond', () => {
     expect(ours.health).toBe(ours.maxHealth);
   });
 });
+
+/**
+ * Vínculo de Solidariedade, and Vínculo da Dor's answer.
+ *
+ * The two are the same wire read from opposite ends: one copies a share of
+ * every hit onto the others, one takes a share *off* the body that was struck
+ * and hands it round. Black adds damage to a squad standing together; white
+ * refuses to let a squad standing together lose a body.
+ *
+ * That is the whole card, and it is worth explaining why it is worth four mana
+ * for no mitigation at all: a death costs six seconds of presence, and focus
+ * fire is how a death happens. Spreading a hit across four bars changes nothing
+ * about the total and everything about whether anybody falls off the field.
+ */
+describe('a solidarity bond', () => {
+  function bondedSquad(): { w: World; struck: Mage; others: Mage[] } {
+    const w = new World();
+    const struck = w.summon(TEAM_A, 'pyromancer', new Vec2(0, 0));
+    const others = [
+      w.summon(TEAM_A, 'pyromancer', new Vec2(0, 1)),
+      w.summon(TEAM_A, 'pyromancer', new Vec2(0, 2)),
+    ];
+    w.castSpell(TEAM_A, 'bond_of_solidarity', new Vec2(0, 1));
+    return { w, struck, others };
+  }
+
+  it('takes the hit off the body it landed on and hands it round', () => {
+    const { w, struck, others } = bondedSquad();
+
+    w.dealDamage(struck, 30, {});
+
+    expect(struck.maxHealth - struck.health).toBeLessThan(30);
+    for (const o of others) expect(o.health).toBeLessThan(o.maxHealth);
+  });
+
+  /**
+   * No mitigation, and that is the design. A bond that quietly lost damage on
+   * the way round would be a damage-reduction card wearing a bond's clothes,
+   * and every number in the game would have to be re-read against it.
+   */
+  it('moves the damage without shrinking it', () => {
+    const { w, struck, others } = bondedSquad();
+
+    w.dealDamage(struck, 30, {});
+
+    const total = [struck, ...others].reduce((sum, m) => sum + (m.maxHealth - m.health), 0);
+    expect(total).toBeCloseTo(30, 5);
+  });
+
+  it('shares with the squad it was cast on, and nobody else', () => {
+    const { w, struck } = bondedSquad();
+    const enemy = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 1));
+
+    w.dealDamage(struck, 30, {});
+
+    expect(enemy.health).toBe(enemy.maxHealth);
+  });
+
+  it('does not pass the same hit round twice', () => {
+    const { w, struck, others } = bondedSquad();
+
+    w.dealDamage(struck, 30, {});
+
+    // A share that re-split on arrival would keep circulating, and the clearest
+    // symptom is one of the receivers ending up worse off than the body that
+    // was actually hit.
+    for (const o of others) {
+      expect(o.maxHealth - o.health).toBeLessThan(struck.maxHealth - struck.health);
+    }
+  });
+});

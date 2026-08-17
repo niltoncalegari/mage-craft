@@ -73,7 +73,12 @@ export type EffectKind =
    * Bound to everything else carrying this: a share of every hit one of them
    * takes arrives on all the others. `magnitude` is that share.
    */
-  | 'linked';
+  | 'linked'
+  /**
+   * Bound to the rest of the squad the other way round: `magnitude` of every
+   * hit this body takes is lifted off it and handed to the others.
+   */
+  | 'bonded';
 
 /**
  * Iteration and wire order. Fixed so the effect list is canonical: a mage
@@ -94,6 +99,7 @@ export const EFFECT_ORDER: readonly EffectKind[] = [
   'empower',
   'marked',
   'linked',
+  'bonded',
   'shield',
 ];
 

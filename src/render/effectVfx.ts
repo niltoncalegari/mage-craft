@@ -235,6 +235,30 @@ export const EFFECT_VFX: readonly EffectEmission[] = [
   },
   {
     /*
+     * `linked`'s mirror, and drawn as one on purpose: the same thread at the
+     * same height off the same waist, running the other way. Black's spools off
+     * the body and falls; this one climbs and holds, because what it is doing
+     * is carrying weight rather than leaking it.
+     *
+     * A player who has seen one should recognise the other instantly and know
+     * only that they are opposites — which is the truth about the two cards.
+     */
+    kind: 'bonded',
+    interval: 0.3,
+    perStack: false,
+    colors: [0xfff4d6, 0xffd97d],
+    radius: 0.36,
+    spread: 0.04,
+    height: 0.75,
+    heightSpread: 0.15,
+    drift: -0.3,
+    rise: 0.35,
+    size: 0.05,
+    life: 0.55,
+    gravityScale: -0.1,
+  },
+  {
+    /*
      * The only outward emission in the table. Everything else here rises off a
      * mage or falls around one; Frenesi Sanguinário is the one status that is
      * about what its carrier is going to do to *somebody else*, and motes

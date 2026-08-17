@@ -203,6 +203,24 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     direction: 1,
   },
   /*
+   * Vínculo da Dor's mirror, and it borrows that card's burst deliberately —
+   * same tight shape, same waist-high thread on the bodies afterwards, lifting
+   * where the black one falls. The two cards do the same thing to a squad
+   * standing together and mean opposite things by it, and a player should be
+   * able to see that without being told.
+   *
+   * Direction is the whole read here, so the palette stays inside white's own
+   * warm gold rather than reaching for a second idea.
+   */
+  bond_of_solidarity: {
+    shape: 'burst',
+    ring: 0xfff4d6,
+    zone: 0x8a6b2a,
+    motes: [0xfff4d6, 0xffd97d, 0xd9a441],
+    moteCount: 20,
+    direction: 1,
+  },
+  /*
    * White's fourth, and the loudest thing white owns. The other three are
    * quiet by design — a triad, a dome snapping shut, a slow swell — because
    * what they do is protect. This one is an order being given over the spot

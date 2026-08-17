@@ -305,6 +305,23 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * The answer to Vínculo da Dor, and written as one: the same two tones, the
+   * same slide toward each other — except these two *arrive*. Black's pair
+   * stops a tritone apart and beats against itself; this one closes on a
+   * unison, which is the only resolution in the catalog.
+   *
+   * Sine rather than square, because the black card is a web being pulled tight
+   * and this is a squad agreeing to share.
+   */
+  bond_of_solidarity: {
+    detune: 0.02,
+    layers: [
+      { kind: 'tone', wave: 'sine', freq: 349.23, toFreq: 440, at: 0, duration: 0.4, gain: 0.045 },
+      { kind: 'tone', wave: 'sine', freq: 554.37, toFreq: 440, at: 0, duration: 0.4, gain: 0.04 },
+      { kind: 'noise', filter: 'highpass', from: 1200, to: 2600, at: 0, duration: 0.1, gain: 0.025 },
+    ],
+  },
+  /*
    * A web being drawn tight. Two square tones a tritone apart, sliding toward
    * each other without arriving — the one interval in the file more unpleasant
    * than Tributo Obscuro's minor second, and it has to be, because these are

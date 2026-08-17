@@ -184,6 +184,7 @@
     "root": { "stacking": "refresh_strongest", "maxMagnitude": 1, "polarity": "debuff" },
     "burn": { "stacking": "stack_intensity", "maxStacks": 3, "maxMagnitude": 1, "polarity": "debuff" },
     "linked": { "stacking": "refresh_strongest", "maxMagnitude": 0.6, "polarity": "debuff" },
+    "bonded": { "stacking": "refresh_strongest", "maxMagnitude": 0.75, "polarity": "buff" },
     "shield": { "stacking": "pool", "maxMagnitude": 9999, "polarity": "buff" }
   },
 
@@ -551,6 +552,16 @@
       "duration": 6,
       "target": "enemies",
       "apply": [{ "effect": "linked", "magnitude": 0.3 }]
+    },
+    "bond_of_solidarity": {
+      "name": "Vínculo de Solidariedade",
+      "color": "white",
+      "kind": "buff",
+      "cost": 4,
+      "radius": 3.5,
+      "duration": 5,
+      "target": "allies",
+      "apply": [{ "effect": "bonded", "magnitude": 0.5 }]
     },
     "meteor_shower": {
       "name": "Chuva de Meteoros",
