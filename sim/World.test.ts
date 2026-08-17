@@ -783,3 +783,67 @@ describe('a spatial fold', () => {
     expect(enemy.position).toEqual(at);
   });
 });
+
+/**
+ * Vórtice Gravitacional, and the first thing in the game that changes where
+ * bodies go rather than what happens to them.
+ *
+ * Every other card writes on the mages it caught and is then finished with the
+ * field. This one writes on the *field*: for three seconds a patch of ground
+ * pulls, and what that is worth depends entirely on what else the program has
+ * to say about the place it made. Alone it is nearly nothing — a squad walks
+ * out of it. Under a Chuva de Meteoros it is the difference between a hazard
+ * they scatter out of and one they cannot leave.
+ */
+describe('a gravity well', () => {
+  /**
+   * Compared against a world where the card was never cast, rather than against
+   * the starting distance: a body left alone still settles a little under the
+   * arena's own bookkeeping, and a test that called that settling "the pull"
+   * would pass whether or not the well did anything.
+   */
+  function pulledFrom(start: Vec2, seconds: number, cast: boolean): number {
+    const w = new World();
+    const m = w.summon(TEAM_B, 'pyromancer', start);
+    if (cast) w.castSpell(TEAM_A, 'gravity_well', new Vec2(0, 0));
+    for (let t = 0; t < seconds; t += 1 / 60) w.step(1 / 60);
+    return m.position.distanceTo(new Vec2(0, 0));
+  }
+
+  it('drags what stands in it toward the middle', () => {
+    const start = new Vec2(0, 2.5);
+    expect(pulledFrom(start, 1, true)).toBeLessThan(pulledFrom(start, 1, false));
+  });
+
+  it('leaves alone what stands outside it', () => {
+    const start = new Vec2(0, 9);
+    expect(pulledFrom(start, 1, true)).toBeCloseTo(pulledFrom(start, 1, false), 5);
+  });
+
+  /**
+   * A field is a place, not a curse. It has no caster's team to be polite
+   * about, and a program that walks its own squad into its own vortex has made
+   * a mistake the game should let it make — the alternative is a card that is
+   * safe to leave lying anywhere, which is no decision at all.
+   */
+  it('pulls the squad that cast it too', () => {
+    const w = new World();
+    const ours = w.summon(TEAM_A, 'pyromancer', new Vec2(0, 2.5));
+    w.castSpell(TEAM_A, 'gravity_well', new Vec2(0, 0));
+    for (let t = 0; t < 1; t += 1 / 60) w.step(1 / 60);
+
+    expect(ours.position.distanceTo(new Vec2(0, 0))).toBeLessThan(2.5);
+  });
+
+  it('lets go when it is over', () => {
+    const w = new World();
+    const m = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 2.5));
+    w.castSpell(TEAM_A, 'gravity_well', new Vec2(0, 0));
+    for (let t = 0; t < 6; t += 1 / 60) w.step(1 / 60);
+    const settled = m.position.distanceTo(new Vec2(0, 0));
+
+    for (let t = 0; t < 3; t += 1 / 60) w.step(1 / 60);
+
+    expect(m.position.distanceTo(new Vec2(0, 0))).toBeCloseTo(settled, 5);
+  });
+});

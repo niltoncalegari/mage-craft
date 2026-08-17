@@ -225,6 +225,24 @@ const fold: SpellRider = (w, { team, spell, position }) => {
   }
 };
 
+/**
+ * Vórtice Gravitacional: leaves a pull behind on the ground.
+ *
+ * Ground-targeted like `puddle`, and for the same reason — a field is a bet on
+ * where bodies will be, not a statement about where they are. What separates
+ * the two is that a hazard punishes standing somewhere and this one *decides*
+ * where standing happens, which is why the interesting rule that names it is a
+ * rule that also names something else.
+ */
+const vortex: SpellRider = (w, { spell, app, position }) => {
+  w.spawnVortex(
+    position,
+    app.radius ?? spell.radius,
+    app.duration ?? spell.duration,
+    app.magnitude ?? 0,
+  );
+};
+
 const RIDERS: Readonly<Record<string, SpellRider>> = {
   puddle,
   strike,
@@ -234,6 +252,7 @@ const RIDERS: Readonly<Record<string, SpellRider>> = {
   rally,
   attune,
   fold,
+  vortex,
 };
 
 export function isSpellRider(name: string): boolean {

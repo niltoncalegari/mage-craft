@@ -208,6 +208,24 @@ export const SPELL_SFX: Readonly<Record<string, SpellSound>> = {
     ],
   },
   /*
+   * A note bending down and refusing to arrive. The only layer in the catalog
+   * with no attack and no end — it fades rather than stopping, because the card
+   * does not finish when the sound does: the pull runs for three more seconds
+   * that no sound is allowed to cover (nothing may ring past the global
+   * cooldown), and a sound that ended cleanly would say the card had.
+   *
+   * Read against Dobra Espacial, blue's other card about space: that one closes
+   * on an arrival, this one opens on something that never lands.
+   */
+  gravity_well: {
+    detune: 0.03,
+    layers: [
+      { kind: 'tone', wave: 'sine', freq: 196, toFreq: 65, at: 0, duration: 0.55, gain: 0.05 },
+      { kind: 'tone', wave: 'triangle', freq: 293.66, toFreq: 98, at: 0.06, duration: 0.5, gain: 0.035 },
+      { kind: 'noise', filter: 'lowpass', from: 1200, to: 240, at: 0, duration: 0.5, gain: 0.03 },
+    ],
+  },
+  /*
    * An intake of air and then bodies where there were none. The only sound in
    * the catalog that runs *backwards* — a filter opening upward under a tone
    * that falls into it, so the impact reads as a thing being pulled shut rather

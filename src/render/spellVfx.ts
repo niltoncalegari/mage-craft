@@ -282,6 +282,26 @@ export const SPELL_VFX: Readonly<Record<string, SpellVfx>> = {
     trauma: 0.22,
   },
   /*
+   * The one card whose *effect* needs no drawing at all, which is why it gets
+   * no persistent body here. A vortex is three seconds of every mage in the
+   * disc sliding toward one point — the field itself is the readout, and it is
+   * a louder one than any ring could be. Compare Raízes Entrelaçadas, which had
+   * to grow a whole persistent shape precisely because a rooted mage looks
+   * identical to a standing one.
+   *
+   * So the beat only marks the place, and it marks it as a thing switched on:
+   * a torus, pressed down, in a cold violet that reads as pressure rather than
+   * as damage. Nothing here hurts anybody.
+   */
+  gravity_well: {
+    shape: 'torus',
+    ring: 0xc8b6ff,
+    zone: 0x241a4a,
+    motes: [0xe6dcff, 0x9b8cff, 0x4a3a8c],
+    moteCount: 26,
+    direction: -1,
+  },
+  /*
    * A dome, and the odd one out in that family: Escudo Arcano and Brisa
    * Rejuvenescedora put a shell over people who are already there, and this one
    * is the shell people arrive *inside*. Reading the same is fine and even

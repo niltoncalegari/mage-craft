@@ -573,6 +573,16 @@
       "target": "allies",
       "apply": [{ "effect": "fold" }]
     },
+    "gravity_well": {
+      "name": "Vórtice Gravitacional",
+      "color": "blue",
+      "kind": "curse",
+      "cost": 4,
+      "radius": 4,
+      "duration": 3,
+      "target": "ground",
+      "apply": [{ "effect": "vortex", "magnitude": 2.2 }]
+    },
     "meteor_shower": {
       "name": "Chuva de Meteoros",
       "color": "red",

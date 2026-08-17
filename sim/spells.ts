@@ -40,6 +40,7 @@ export type SpellId =
   | 'bond_of_pain'
   | 'bond_of_solidarity'
   | 'spatial_fold'
+  | 'gravity_well'
   | 'overload_field'
   | 'meteor_shower';
 
@@ -90,6 +91,7 @@ export const ALL_SPELLS: readonly SpellId[] = [
   'null_flash',
   'mana_flow',
   'spatial_fold',
+  'gravity_well',
   'plague',
   'sticky_swamp',
   'entangling_roots',

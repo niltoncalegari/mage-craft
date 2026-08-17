@@ -207,6 +207,8 @@ export class World {
   private readonly manaFlow = new Map<Team, { multiplier: number; remaining: number }>();
   /** Re-entrancy guard for the pain bond; see {@link spreadBondedPain}. */
   private bondEcho = false;
+  /** Gravity wells still turning; see {@link spawnVortex}. */
+  private readonly vortices: { position: Vec2; radius: number; pull: number; remaining: number }[] = [];
 
   private cachedPathGrid: PathGrid | null = null;
   private cachedPathBlockers = -1;
@@ -632,6 +634,58 @@ export class World {
   }
 
   /**
+   * Vórtice Gravitacional: a patch of ground that pulls, for as long as it
+   * lasts (GDD §9).
+   *
+   * The first card that writes on the *field* instead of on the mages it
+   * caught. Everything else in the catalog resolves against a list of bodies
+   * and is then finished; this leaves something behind that keeps asking the
+   * question, which is what makes it worth pairing with a hazard — a squad can
+   * walk out of a vortex, and cannot walk out of one under a meteor shower.
+   */
+  spawnVortex(position: Vec2, radius: number, duration: number, pull: number): void {
+    if (radius <= 0 || duration <= 0 || pull <= 0) return;
+    this.vortices.push({ position, radius, pull, remaining: duration });
+  }
+
+  /**
+   * Drags every living body inside a well toward its middle.
+   *
+   * Moved through {@link resolveMove} rather than by writing the position, so
+   * the pull slides along a wall instead of dragging mages into one — a field
+   * that could pull a squad inside the scenery would be a card that removes
+   * mages from the match.
+   *
+   * It pulls both teams, and there is no caster to exempt. A field is a place,
+   * not a curse: a program that walks its own squad into its own vortex has
+   * made a mistake the game should let it make, and the alternative is a card
+   * that is safe to leave lying anywhere, which is no decision at all.
+   */
+  private updateVortices(dt: number): void {
+    for (let i = this.vortices.length - 1; i >= 0; i--) {
+      const well = this.vortices[i];
+      well.remaining = decay(well.remaining, dt);
+      if (well.remaining <= 0) {
+        this.vortices.splice(i, 1);
+        continue;
+      }
+
+      for (const id of sortedIds(this.mages.keys())) {
+        const m = this.mages.get(id);
+        if (!m?.alive) continue;
+        const toCentre = well.position.sub(m.position);
+        const distance = toCentre.length();
+        if (distance > well.radius || distance <= 1e-6) continue;
+
+        // Capped by the distance left, so the pull never overshoots the centre
+        // and jitters a body back and forth across it at the tick rate.
+        const step = Math.min(well.pull * dt, distance);
+        m.position = this.resolveMove(m.position, toCentre.normalized().scale(step));
+      }
+    }
+  }
+
+  /**
    * Puts a mage somewhere else (GDD §9) — Dobra Espacial.
    *
    * Resolved through {@link freePositionNear}, the same helper the spacing pass
@@ -772,6 +826,10 @@ export class World {
     // by where the support stood at the top of this tick.
     this.updateSupportAuras();
     for (const m of this.mages.values()) this.updateMage(m, dt);
+    // After the mages have moved themselves and before they are spaced out: a
+    // well competes with walking rather than replacing it, and the spacing pass
+    // is what stops it from stacking a squad on one point.
+    this.updateVortices(dt);
     this.applySupportHealing(dt);
     this.separateMages();
     // Local pushout first; then the planner fallback for bodies still wedged
