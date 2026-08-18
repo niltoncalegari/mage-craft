@@ -1,92 +1,131 @@
-# Handover — 2026-08-18 (Claude Code — v1.3 Treinador, Fases 0, 1 e 2 completas)
+# Handover — 2026-08-18 (Claude Code — v1.3 Treinador, Fase 3 em curso)
 
-Branch **`feat/trainer-kits`** (de `main` `2487898`). Seis commits, suíte verde
+Branch **`feat/trainer-kits`** (de `main` `2487898`). Dez commits, suíte verde
 em todos. Plano de execução:
-`~/.claude/plans/use-o-handover-md-para-snazzy-mitten.md`.
+`~/.claude/plans/use-o-handover-md-para-snazzy-mitten.md`; produto em
+`treinador-plan.md` §5.
 
 ## What changed this session
 
-- `4a1f90c` **Fase 2 — o resto, num corte só.** É o único commit desta sessão, e
-  tinha que ser: `Session` e `LocalSession` perderam o `Caster` juntos, senão
-  practice e online divergiriam por um deploy.
-  - **`sim/World.ts`**: saem `mana`, `manaAccum`, `manaFlow`, `castCooldown`,
-    `manaOf`, `spendMana`, `grantMana`, `attuneMana`, `manaRateOf`, `updateMana`,
-    `castCooldownOf`, `squadPetrified`. `CastRejection` perde
-    `not_enough_mana`/`squad_petrified`/`on_cooldown`. `castSpell` vira porta de
-    **efeito** (`@internal`) — só `match_over`/`unknown_card`/`out_of_bounds`.
-  - **`initSquad(team, roster, stances?)`** e **`World.onAbilityCast`** são as
-    duas costuras novas. O callback existe porque a magia sai do kit lá dentro do
-    `Brain.step`: quem está acima do sim não consegue ver acontecer.
-  - **Protocolo**: `set_loadout` leva `squad` + `stances`; `SnapshotMsg` perde
-    `mana`/`hand`/`next`; `firedRule` → `firedAbility { mageId, spellId, at }`;
-    `MageSnapshotDTO` ganha `cd?: number[]` (omitido com kit cheio);
-    `CastStatDTO` ganha `rosterId?` **ao lado** de `cardId`.
-  - **`rosterOwnerOf(spellId)`** novo em `cards.ts` — bem definido porque os kits
-    são disjuntos e cobrem o catálogo, o que `kits.test.ts` já fixa.
-  - **Apagados**: `Tactician`, `Commander`, `DeckBuilder`, `StrategyBuilder`,
-    `screens/strategy/**`.
-  - **API**: `loadoutProfileSchema` ganha `stances: Map`; `deck`/`strategy` viram
-    **opcionais** (documentos antigos continuam legíveis); `parseRules` → 
-    `parseStances`; `cardUsageSchema` ganha `rosterId?`.
+Duas coisas, e a primeira invalida números que este arquivo afirmava.
+
+- `f0afdca` **O instrumento estava errado.** `headToHead` alternava assento
+  *por índice de seed*: cada seed jogava uma vez, do assento que sua posição na
+  lista desse. Isso parece cancelar a assimetria do mapa e não cancela — só
+  cancelaria se as seeds fossem intercambiáveis. Dois controles: espelho
+  (squads idênticos, mesmo caminho) deu **8-4 para o rótulo da esquerda**, e a
+  mesma matchup nas duas ordens de argumento discordou de si mesma (8-4 contra
+  11-1). Agora **cada seed é jogada nos dois assentos**, em `sim/agency.test.ts`
+  e no sweep novo. Espelho depois: 5-5.
+  - Novos: `scripts/kit-report.mts` (os cortes da §5.1) e `sim/kitUsage.test.ts`
+    (piso de CI da volta A). `npm run report:kit`.
+- `f0236a6` **A varredura em volume, e a primeira passagem da volta B.**
 
 ## Key decisions (and why)
 
-- **`hold` não é mute — é acelerador.** O plano previa "≈ 0 casts"; medido, é
-  ~4/5 do volume de `normal` (2696 contra 3382 em n=20). `HOLD_GUARD` abre com
-  core sob pressão, corpo ferido ou intruso, e isso acontece em qualquer partida
-  indo mal. A linha de base zero morreu junto com o programa vazio.
-- **`castSpell` sobrevive** em vez de morrer: os testes de efeito e as dev range
-  sessions só queriam a metade "aplica o efeito". Cortou ~70 edições de risco.
-- **`rosterId` derivado do catálogo, não de `castsByMage`.** Kits disjuntos ⇒ a
-  pergunta "de quem é esta magia" tem uma resposta só, sem segunda tabela.
-- **`cardId` continua sendo a chave** de `MatchLog.cards` — trocar não migraria o
-  histórico, esconderia.
-- **Duas fugas do plano, ambas forçadas** (registradas na mensagem do commit):
-  os dois builders saem agora, não na Fase 5, porque sem as abas do `HomeScreen`
-  viram UI inalcançável que não compila contra o loadout v3; e `ai-report.mts`
-  perde as Seções B/C de vez, porque comparavam programa contra programa.
+- **O all-tank não é dívida de balance.** Este arquivo registrava "balanceado
+  perde 3-17 para all-tank" como dívida aberta. `validateSquad` **rejeita**
+  aquele squad duas vezes (corpo duplicado, e sem role de damage nem support), e
+  `server/src/App.ts` roda esse check antes da partida. Ninguém pode montá-lo,
+  logo não é meta de ninguém. Re-medido é pior (**4-36**, n=40) e continua não
+  sendo dívida: mede o sim *debaixo* da regra de construção — tanks de 200-280
+  HP contra 60-80, `prefersStructures`, `retreatHealthFraction: 0` — e a regra
+  de roles é o preço já cobrado por isso. O comentário em `agency.test.ts` foi
+  reescrito.
+- **O sweep pergunta a legalidade à `validateSquad`**, em vez de reimplementá-la.
+  Isso derrubou duas linhas de leave-one-out que duplicavam corpo em silêncio.
+- **Tetos são relatados, nunca asseridos.** Piso em CI, volume no script — um
+  flake de doze seeds não pode escrever um nerf.
+- **Per-mage sai só do round robin.** Dobrar as seções desenhadas dentro poria
+  os quatro corpos do squad default no topo por tamanho de amostra e chamaria
+  isso de meta.
 
 ## Plan / todo status
 
-- **Done:** Fases 0, 1 e 2 inteiras. `npx tsc --noEmit`, `npx eslint sim
-  server/src src`, `npm test` (803 testes, 68 arquivos), `npm test` da `api/`
-  (51), `npm run build` e `npm run dev:server` — todos limpos.
-- **Pending:** Fases 3, 4 e 5. **O PR único ainda não foi aberto.**
+- **Done:** Fases 0, 1, 2. Fase 3 §1 (o sweep) e **volta A inteira**.
+- **Pending:** volta B (uma passagem feita e falsificada), Fases 4 e 5. **O PR
+  único ainda não foi aberto.**
+
+### Volta A — fechada
+
+Nenhuma skill do catálogo é muda. Normalizado por side os volumes ficam dentro
+de uma ordem de grandeza no mesmo tier de custo (cost 3: 10-16 casts/side;
+cost 4: 6-15). `sim/kitUsage.test.ts` segura isso em CI, em **três quartetos
+que a regra de construção aceita** — legalidade importa aqui: uma janela
+deslizante sobre o catálogo é mais curta, mas metade dos quartetos dela é
+immontável, e skill que só dispara ali é muda em toda partida real.
+
+### Volta B — passagem 1, falsificada (não repetir)
+
+`arcane_bard` 31.9% (n=1080 sides) e `arcane_archer` 40.6% (n=540) são os dois
+únicos magos de **kit com 2 slots**, e gastam ~22 casts/side contra 26-38 dos
+kits de 3. Toda skill roda quase saturada no cooldown (`paranoia` dispara 11.8×
+num teto de ~13 em 150 s), então cooldown é o dial que morde. Hipótese: kit de
+2 slots é curto de throughput.
+
+Dial: `bond_of_pain` 14→9, `paranoia` 11→7. Throughput subiu **36%**
+(`paranoia` 12757→16972, `bond_of_pain` 10974→15482). Win rate foi de **31.9%
+para 32.1%** — três partidas em 1080.
+
+**Revertido.** Frequência não é o que segura um kit de 2 slots. A próxima
+passagem pega magnitude ou o corpo, não frequência.
+
+## Números da varredura (900 partidas, 10 quartetos legais, seeds 3..66)
+
+Por mago, contra o pool (teto ~55% / piso ~45% da §5.1):
+
+| mago | win% | n (sides) |
+| --- | --- | --- |
+| alchemist | 85.0% | 180 ⚠ amostra fina |
+| cleric | 68.1% | 1080 |
+| stone_golem | 64.5% | 1080 |
+| pyromancer | 58.8% | 900 |
+| ice_sentinel | 49.1% | 1080 |
+| stormcaller | 40.9% | 540 |
+| arcane_archer | 40.6% | 540 |
+| arcane_bard | 31.9% | 1080 |
+| wind_dervish | 23.8% | 720 |
+
+Sete de nove fora da banda 45-55%. Taxa de empate 0%.
+
+Postura, n=40: `normal` × `hold` 33-7 (83%); `aggressive` × `hold` 37-3;
+`aggressive` × `normal` 22-18 (55%). Escada monotônica. `hold` gasta 5209 casts
+contra 6683 do `normal` — 78%, confirmando que é acelerador, não mute.
 
 ## Known issues / risks
 
-- **Nada chama `saveStances` ainda.** O fio inteiro (localStorage → wire →
-  `initSquad`) está pronto e testado, mas o seletor de postura é trabalho da
-  Fase 4 no `SquadBuilder`. Na prática toda postura é `normal` hoje, e o passo 3
-  da verificação ponta a ponta do plano ("pôr tudo em `hold`") não dá para fazer
-  pela UI — só por teste.
-- **Dívida de balance, medida e não asserida:** esquadrão balanceado *perde*
-  3-17 para um all-tank (`stone_golem` ×2, `ice_sentinel` ×2), 55 estruturas
-  contra 17, n=20. Durabilidade está subprecificada. É da Fase 3 (§5, tetos de
-  55% por mago); está fixada num comentário em `sim/agency.test.ts`.
-- **A flaky de `App.test.ts` parece ter ido embora.** `plays both queued seats`
-  era ~1 run em 3 por desenho (dois programas disputando um cooldown global);
-  reescrito para contar casts no mundo, deu 8/8 limpos. Sob a taxa antiga isso
-  tem ~4% de chance de ser sorte — evidência boa, não prova. Se voltar a falhar,
-  o desenho mudou e vale investigar em vez de re-rodar.
+- **O alvo mais valioso é o slot de support.** Há exatamente **dois** supports,
+  todo quarteto legal precisa de ≥1, e eles estão 68.1% contra 31.9%. A escolha
+  do slot está quase decidida — é o risco de meta da pergunta 5 do plano, e é
+  o corte com melhor amostra que existe. Mesma forma, mais fraca, nos tanks
+  (`stone_golem` 64.5% × `ice_sentinel` 49.3%).
+- **`alchemist` 85% não é achado.** Vinha de um pool onde ele aparecia em **um**
+  quarteto. O sampler agora é guloso na cobertura (3-6 aparições por mago) e o
+  relatório imprime quartetos-por-mago — **mas a tabela acima foi medida com o
+  sampler antigo**. Re-baselinar antes da próxima passagem da volta B.
+- **O pool é 10 de 60 quartetos legais.** O completo custa ~12 h a 10 seeds.
+  Subir `--pool` custa quadrático em pairings.
+- **Nada chama `saveStances` ainda** (Fase 4). Toda postura é `normal` na
+  prática; o passo 3 da verificação ponta a ponta só dá por teste.
 - `MANA_MAX`/`MANA_START`/`SUDDEN_DEATH_MANA_MULTIPLIER` continuam em
-  `config.ts` e `balance.json`. `MANA_MAX` ainda é lido (é o range do vocabulário
-  `mana`, inerte até a Fase 5); os outros dois estão órfãos. Saem na Fase 5.
-- O kind `'mana'` do `NumericConditionKind` continua no vocabulário e **retorna
-  0** — todo `mana >= N` lê falso. Proposital: programas salvos ainda fazem
-  parse até a Fase 5 apagar o leitor.
+  `config.ts` e `balance.json`; o kind `'mana'` continua no vocabulário e
+  retorna 0. Saem na Fase 5.
+- `auraChargeBonus` do `arcane_bard` **não** morreu com a mana — alimenta
+  `chargeRateBonus`, que é a carga do ataque básico. Verificado; não é stat
+  morto.
 
 ## Next steps
 
-1. **Abrir o PR único** com os seis commits (`main` ← `feat/trainer-kits`).
-2. **Fase 3** — `scripts/kit-report.mts`, voltas A e B da §5, tetos de 55% por
-   mago. Começar pela dívida do all-tank acima.
-3. **Fase 4** — `SquadBuilder` mostra kit + postura (**e chama `saveStances`**);
-   carga por skill no `SquadPanel` a partir de `SquadMemberView.cooldowns`, que
-   já chega pelo fio; telegraph; pós-partida por mago via `MageStat.casts`.
+1. **Fase 3, volta B passagem 2** — re-baselinar com o sampler novo
+   (`npm run report:kit -- --seeds 10 --pool 10 --only pool`), depois **um**
+   dial: magnitude de `bond_of_pain`/`paranoia`, ou o corpo do `arcane_bard`
+   (70 HP contra 95 do cleric). Não cooldown — já medido e falsificado.
+2. **Abrir o PR único** (`main` ← `feat/trainer-kits`).
+3. **Fase 4** — `SquadBuilder` com kit + postura (**e chamando `saveStances`**);
+   carga por skill no `SquadPanel`; telegraph; pós-partida por mago.
 4. **Fase 5** — apagar `Deck.ts`, `strategy*.ts`, `strategyPresets.ts`, o kind
-   `'mana'` e as constantes órfãs de `config.ts`/`balance.json`; `SpellRange`
-   cicla kit por mago; reescrever `GDD.md` e `README.md`.
+   `'mana'` e as constantes órfãs; `SpellRange` cicla kit por mago; reescrever
+   `GDD.md` e `README.md`.
 
 **Antes de cada fase:** `git status` e `git log` no worktree principal — o outro
 agente commita nesta mesma branch. Stage por path explícito, nunca `git add -A`.
