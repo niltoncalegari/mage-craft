@@ -155,7 +155,7 @@ de o esquadrão ser montado antes da partida (§9) e de a morte ser temporária 
 | Duração | 3 min de tempo normal + até 1 min de morte súbita |
 | Tick | 60 Hz autoritativo, snapshots a 20 Hz (já em produção) |
 | Vitória normal | Mais estruturas derrubadas ao fim dos 3 min |
-| Empate em estruturas | Morte súbita: **mana dobrada**, primeira estrutura a cair vence |
+| Empate em estruturas | Morte súbita: **recarga de kit dobrada** (§6), primeira estrutura a cair vence |
 | Empate total | Menor HP restante de Núcleo perde; se idêntico, empate |
 
 **Entrada na partida:** o jogador aperta Batalhar e entra numa fila. O servidor
@@ -407,7 +407,8 @@ a medição que os afinou (§14).
 
 Estes eram as cartas de unidade da v1.0. Continuam existindo com os mesmos números,
 mas **saíram da mão**: agora são as opções da montagem do esquadrão (§7). A coluna
-de custo de mana morreu — escolher o esquadrão não gasta mana.
+de custo de mana morreu com a mana — escolher o esquadrão não custa recurso
+nenhum, o custo foi a escolha.
 
 | Mago | Papel | HP | Vel. | Elemento (ataque) | Nota de design |
 | --- | --- | --- | --- | --- | --- |
@@ -435,9 +436,14 @@ de custo de mana morreu — escolher o esquadrão não gasta mana.
 > Nenhum dos dois é selecionável no lobby (`PICKABLE_ELEMENTS`): são ataques de
 > classe, chegam com o esquadrão.
 
-### Cartas — buffs e maldições (o que o programa joga)
+### Habilidades — buffs e maldições (o que os kits gastam)
 
-Todas de **área**, aplicada no ponto que o **seletor da regra** resolver (§7) — não
+Continuam chamadas de "cartas" em vários lugares do código (`cardId` é a chave do
+histórico desde antes do pivot, e trocá-la esconderia o histórico em vez de
+migrá-lo), mas não são cartas de ninguém: cada uma pertence ao kit de exatamente
+um mago (§7).
+
+Todas de **área**, aplicada no ponto que o **seletor da skill** resolver (§7) — não
 mais num ponto que a mão do jogador escolhe. Nenhuma carta do jogo é um botão que se
 aperta sem pensar onde; na v1.2 o "onde" é escrito antes, o que o torna uma decisão
 mais deliberada e não menos.
@@ -499,13 +505,13 @@ Distribuição atual: 🔴 4 · 🟢 4 · ⚪ 3 · 🔵 2 · ⚫ 1.
 | Silêncio Sepulcral | ⚫ | 2 | não pode conjurar |
 | Vórtice Gravitacional | 🔵 | 3 | campo persistente + atração no integrador |
 | Dobra Espacial | 🔵 | 3 | teleporte, limpando estado de rota e esquiva |
-| Fluxo de Mana | 🔵 | 3 | modificador de taxa de mana por time |
+| Fluxo de Mana | 🔵 | 3 | acelera a **recarga de kit** do time (re-skin da v1.3; o nome ficou) |
 | Fenda de Cristal | 🟢 | 3 | obstáculo temporário + invalidação da grade de rota |
 | Vínculo de Solidariedade | ⚪ | 3 | pool de dano compartilhado |
 | Chamado à Batalha | ⚪ | 3 | acelera o respawn |
 | Vínculo da Dor | ⚫ | 3 | espelho de dano, com guarda de recursão |
 | Paranoia | ⚫ | 3 | força retarget — o maior raio de explosão da lista |
-| Tributo Obscuro | ⚫ | 3 | auto-dano convertido em mana |
+| Tributo Obscuro | ⚫ | 3 | auto-dano convertido em **carga** — devolve cooldown pagando HP |
 
 **7 Tier 1 · 9 Tier 2 · 9 Tier 3**, dos quais 14 existem e 11 faltam.
 
@@ -872,6 +878,7 @@ continua **0%**, agora como critério de regressão e não como meta.
 ## 15. Non-goals (v1)
 
 - **Jogar carta durante a partida** (era o verbo primário da v1.1; saiu na v1.2 — a partida não tem entrada nenhuma)
+- **Escrever programa de regras** (era o verbo primário da v1.2; saiu na v1.3 — ver §10 para a medição que o matou)
 - **Invocar unidade com carta** (era o verbo primário da v1.0; saiu na v1.1)
 - Controle direto ou ordens táticas a um mago do esquadrão
 - Mira manual, WASD, câmera que segue unidade
@@ -943,7 +950,7 @@ não controla ninguém — se ele não consegue ler o campo, ele não tem jogo.
 - **Low poly procedural, sem textura de arquivo.** Tudo é primitiva de Three.js com paleta cartoon, gerado em código. Continua valendo e não é para mudar.
 - **Chão: gramado com trilhas de terra.** Era neve. A terra marca as rotas por onde as unidades andam, o que dá referência espacial num campo aberto. Pintado proceduralmente num canvas — grama mosqueada em três tons, trilhas com bordas que desbotam. **Grama volumétrica animada por shader foi tentada e descartada**: 13 mil lâminas com vento no vertex shader leem como sujeira tremendo numa câmera afastada, não como grama.
 - **Identidade do mago, em três camadas** (implementa a linha "Legibilidade" da §2): **time pela cor do corpo** (nunca perder "quem é meu"), **papel pela silhueta** conforme a §8 (tank grande e pesado, dano magro e alto, suporte pequeno e curvado), **elemento pelo acento** (chapéu, cajado, gema). O fio já carrega `role`, `element` e `cardId` por mago — é trabalho de render, não de protocolo.
-- **Efeito ativo tem que ser visível no mago.** Na v1.1 o jogo inteiro é aplicar efeito; buff invisível é carta que o jogador não sabe se funcionou.
+- **Efeito ativo tem que ser visível no mago.** O jogo inteiro é aplicar efeito; buff invisível é uma skill que o jogador não sabe se funcionou.
 - **Cada elemento tem silhueta, não só cor.** Todo projétil já foi a mesma `SphereGeometry` recolorida, e o resultado foi que o pedregulho do Golem lia como bola de neve e só o raio — o único com malha própria — lia como feitiço. A cor não sobrevive à distância da câmera de partida; a forma sobrevive. Cada elemento tem corpo próprio em `src/render/projectileGeometry.ts` (rocha facetada que tomba, estilhaço que aponta para onde vai, gosma que se deforma, orbe com anel de runas, lâmina em meia-lua, sigilo, onda concêntrica) e giro próprio. Continua tudo primitiva de Three.js gerada em código, conforme a regra acima.
 - **Estruturas:** Núcleo e Torre compartilham a linguagem de cristal sobre pedra, com escudo visível enquanto o Núcleo é imune.
 
@@ -953,15 +960,19 @@ não controla ninguém — se ele não consegue ler o campo, ele não tem jogo.
 - **Áudio é procedural** (Web Audio, sem arquivos), e serve ao feedback: conjuração, impacto, estrutura levando dano.
 - ✅ **Mute e volume alcançáveis de dentro da partida.** Era bug de produto em aberto desde a v1.0 (o controle só existia no menu do practice). **Fechado na v1.2:** botão no `MatchHUD` e tecla `M`. Não foi para o menu de pausa porque o menu de pausa online não pausa nada — o servidor continua — e silenciar o jogo é chrome, não uma jogada.
 
-### O que a v1.2 acrescenta — feedback num jogo que ninguém joga com a mão
+### Feedback num jogo que ninguém joga com a mão
 
 > **O reenquadramento que o pivot idle força.** A regra nº 1 de game feel — "o
 > verbo primário responde em menos de 100 ms" — **muda de endereço**. O verbo
-> primário agora é *escrever uma regra*, e ele acontece fora da partida. Dentro da
+> primário é *montar um esquadrão*, e ele acontece fora da partida. Dentro da
 > partida o feedback deixa de ser **impacto** e passa a ser **atribuição**: o
-> jogador não precisa sentir o soco, precisa entender *que regra dele causou
+> jogador não precisa sentir o soco, precisa entender *qual escolha dele causou
 > aquilo*. Por isso cada conjuração tem que responder **três** perguntas ao mesmo
-> tempo na tela: *que carta caiu*, *onde*, e *de quem foi*.
+> tempo na tela: *que habilidade saiu*, *onde*, e **de qual mago**.
+>
+> A v1.3 mudou a terceira. Antes "de quem foi" era o lado do campo; agora é um
+> corpo com nome, e é o que o `SquadPanel` (carga por skill descendo, na ordem do
+> kit) e o pós-partida por mago respondem.
 
 **Forma por carta.** O descritor de VFX ganhou um campo `shape` selecionando uma
 primitiva, em vez de todo feitiço ser a mesma batida recolorida:
@@ -978,14 +989,15 @@ primitiva, em vez de todo feitiço ser a mesma batida recolorida:
 
 > **A escala de trauma é menor aqui do que num jogo de ação, e é de propósito.**
 > Tremer a câmera pressupõe que o tremor confirma algo que a mão do jogador fez.
-> Aqui nenhuma mão fez nada, e a câmera é o instrumento pelo qual a *próxima* regra
-> vai ser lida — tremor esconde exatamente o aglomerado que o jogador precisa ver.
+> Aqui nenhuma mão fez nada, e a câmera é o instrumento pelo qual a *próxima*
+> troca de esquadrão vai ser decidida — tremor esconde exatamente o aglomerado
+> que o jogador precisa ver.
 > Só o Núcleo caindo dá flash de tela; **Torre só treme**, porque torre cai várias
 > vezes por partida e um quadro branco em cada uma é um alarme que ninguém desliga.
 
 - **`EFFECT_VFX`, uma tabela por `EffectKind`**, no lugar dos `if (burn)` escritos à mão. Anéis, tint de corpo e casca de vulnerabilidade continuam sendo material clonado por mago no `PlayerRenderer` — não entram nessa tabela, que é só emissão.
 - **Telegraph é requisito de legibilidade, não polimento.** Carta com atraso tem que desenhar o aviso no chão **antes** do dano, senão o dano parece vir do nada. O campo do descritor e o `delay` da sim são dois números que precisam ser o mesmo, e estão **presos por teste** nos dois sentidos — hoje nenhuma carta tem atraso, e o teste proíbe prometer um aviso que a sim não honra.
-- **Som por carta, com orçamento.** Nenhum som pode durar mais que o cooldown global de 0.75 s (senão empilha sobre o próprio sucessor) e nenhuma carta pode somar mais que 0.3 de ganho — qualquer carta sozinha é sempre defensável, é a sétima que estraga a mistura. Conjuração inimiga entra com ganho atenuado: o cast do outro lado do campo não pode soar tão perto quanto o seu.
+- **Som por carta, com orçamento.** Nenhum som pode durar mais que o GCD de 0.75 s (senão empilha sobre o próprio sucessor) e nenhuma carta pode somar mais que 0.3 de ganho — qualquer carta sozinha é sempre defensável, é a sétima que estraga a mistura. Conjuração inimiga entra com ganho atenuado: o cast do outro lado do campo não pode soar tão perto quanto o seu.
 - **Teto de vozes que corta a mais velha, não recusa a mais nova.** Dois programas conjurando a cada 0.75 s por 3 minutos são ~480 conjurações. A voz nova é o evento sobre o qual o jogador espera ser informado; a cortada já foi quase toda ouvida, e sai em fade de 20 ms.
 - **`prefers-reduced-motion` corta o tremor e afina os motes**, mas deixa intactos a pegada no chão e a emissão de status: quem pediu menos movimento não pediu para ser informado menos.
 
