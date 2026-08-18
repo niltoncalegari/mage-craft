@@ -1,40 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { Brain, type Difficulty } from './bot/Brain';
-import { Commander } from './bot/Commander';
 import { defaultSquad } from './cards';
 import { SIM_DT } from './config';
-import { Deck, defaultDeck } from './Deck';
 import { TEAM_A, TEAM_B, type Team } from './entities';
 import { summarize, type MageStat } from './matchStats';
 import { Rng } from './rng';
 import { Vec2 } from './Vec2';
 import { World } from './World';
 
-/** A full headless match, both sides commanded, mirroring agency.test.ts's harness. */
+/**
+ * A full headless match, mirroring agency.test.ts's harness.
+ *
+ * Nothing here plays a hand any more: since v1.3 the spells a side spends come
+ * out of its four kits, and `Brain` is the only thing that reaches for them.
+ * The loop is what a real match is — two squads and a clock.
+ */
 function playMatch(seed: number, maxTicks = 60 * 250): World {
-  const rng = new Rng(seed);
   const world = new World();
   world.initSquad(TEAM_A, defaultSquad());
   world.initSquad(TEAM_B, defaultSquad());
 
-  const brain = new Brain(rng);
+  const brain = new Brain(new Rng(seed));
   const units = new Map<string, Difficulty>();
   for (const id of world.mages.keys()) units.set(id, 'normal');
 
-  const sides: Record<Team, { commander: Commander; deck: Deck }> = {
-    [TEAM_A]: { commander: new Commander(new Rng(seed + 1), 'hard'), deck: new Deck(defaultDeck(), new Rng(seed + 2)) },
-    [TEAM_B]: { commander: new Commander(new Rng(seed + 3), 'hard'), deck: new Deck(defaultDeck(), new Rng(seed + 4)) },
-  };
-
   let ticks = 0;
   while (!world.roundOver && ticks < maxTicks) {
-    for (const team of [TEAM_A, TEAM_B] as Team[]) {
-      const side = sides[team];
-      const intent = side.commander.step(world, team, side.deck, SIM_DT);
-      if (!intent) continue;
-      if (!world.castSpell(team, intent.cardId, intent.position).ok) continue;
-      side.deck.play(intent.cardId);
-    }
     brain.step(world, units, SIM_DT);
     world.step(SIM_DT);
     ticks++;
@@ -55,7 +46,7 @@ describe('summarize', () => {
     expect(summary.perTeam[TEAM_B].structuresDestroyed).toBe(world.structuresDestroyedBy(TEAM_B));
   });
 
-  it('counts the casts both commanders actually spent', () => {
+  it('counts the casts the two squads actually spent', () => {
     const summary = summarize(playMatch(99));
 
     const castsA = summary.perTeam[TEAM_A].casts;
@@ -98,6 +89,19 @@ describe('summarize', () => {
  * one real decision — who to bring — unmeasurable.
  */
 describe('summarize — what each body spent', () => {
+  it('names the owning body beside each spell in the team tally', () => {
+    const w = new World();
+    const cleric = w.summon(TEAM_A, 'cleric', new Vec2(-10, 0));
+    expect(w.castAbility(cleric.id, 'blessing', cleric.position).ok).toBe(true);
+
+    // The team tally keeps `cardId` as its key — that is the shape the match
+    // log has stored since before the pivot — and gains the owner beside it, so
+    // "which mage earned its place" is answerable without a second table.
+    expect(summarize(w).perTeam[TEAM_A].casts).toEqual([
+      { cardId: 'blessing', rosterId: 'cleric', casts: 1 },
+    ]);
+  });
+
   it('credits a cast to the mage that carried it, and to nobody else', () => {
     const w = new World();
     const cleric = w.summon(TEAM_A, 'cleric', new Vec2(-10, 0));
@@ -116,10 +120,10 @@ describe('summarize — what each body spent', () => {
   });
 
   /**
-   * No Commander here, deliberately. `castSpell` survives as an effect door for
-   * the tests that predate the pivot, and it has no caster to credit — so the
-   * two tallies can only be reconciled on a board where every spell came out of
-   * somebody's kit, which is what a v1.3 match is.
+   * `castSpell` survives as an effect door for the tests that predate the
+   * pivot, and it has no caster to credit — so the two tallies can only be
+   * reconciled on a board where every spell came out of somebody's kit, which
+   * is what a v1.3 match is.
    */
   it('adds up to the tally the team already kept, when every spell came from a kit', () => {
     const world = new World();

@@ -13,9 +13,20 @@ const elementUsageSchema = new Schema(
 );
 
 /** Casts of one spell in a single match — the deck half of a loadout's record. */
+/**
+ * `cardId` stays the key, and `rosterId` is *added* beside it rather than
+ * replacing it.
+ *
+ * Every match logged before v1.3 is keyed this way, and `getUserCardStats`
+ * aggregates a player's whole history over it — renaming the field would not
+ * migrate that history, it would hide it. `rosterId` is what the pivot made
+ * askable: which of the four bodies spent this. Optional, because a spell cast
+ * through the team-wide effect door has nobody to credit.
+ */
 const cardUsageSchema = new Schema(
   {
     cardId: { type: String, required: true },
+    rosterId: { type: String, required: false },
     casts: { type: Number, required: true, min: 0, default: 0 },
   },
   { _id: false },

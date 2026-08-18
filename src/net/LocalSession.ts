@@ -3,29 +3,24 @@
  *
  * Practice used to be a different game: `bootOfflineMatch` ran the pre-v1.1
  * SnowCraft loop with a controllable hero and lives, teaching mechanics the
- * siege no longer has. This runs the real `sim/` instead — the same `World`,
- * the same `Brain` driving every mage, the same `Tactician` playing the
- * player's program and the same `Commander` playing the opponent's hand — and
- * emits the same snapshot messages the server sends, so `OnlineMatch` renders
- * it without knowing the difference.
+ * siege no longer has. This runs the real `sim/` instead — the same `World` and
+ * the same `Brain` driving every mage and spending every kit — and emits the
+ * same snapshot messages the server sends, so `OnlineMatch` renders it without
+ * knowing the difference.
  *
  * Because `sim/defaultMap.ts` imports the arena directly, the map here is the
  * exact one the server plays on, with no fetch and nothing that could drift.
  */
 
+import { abilityPolicyFor, type Stance } from '../../sim/abilityPolicy';
 import { Brain, type Difficulty } from '../../sim/bot/Brain';
-import { Commander, type CastIntent } from '../../sim/bot/Commander';
-import { Tactician } from '../../sim/bot/Tactician';
 import { defaultSquad, type RosterId } from '../../sim/cards';
 import { SIM_DT } from '../../sim/config';
-import { Deck, defaultDeck } from '../../sim/Deck';
 import { TEAM_A, TEAM_B, type Team } from '../../sim/entities';
 import { summarize, type MatchSummary } from '../../sim/matchStats';
-import type { FiredRuleDTO } from '../../sim/protocol';
+import type { FiredAbilityDTO } from '../../sim/protocol';
 import { Rng } from '../../sim/rng';
 import { buildSnapshot, SNAPSHOT_EVERY_N_TICKS, toSnapshotMsg } from '../../sim/snapshot';
-import type { CardId } from '../../sim/spells';
-import { defaultStrategy, type Strategy } from '../../sim/strategy';
 import { World } from '../../sim/World';
 import type { SnapshotMsg } from './protocol';
 
@@ -41,13 +36,12 @@ const MAX_CATCH_UP_TICKS = 5;
 
 export interface LocalSessionOptions {
   squad: RosterId[];
-  deck: CardId[];
   /**
-   * The program that plays the player's hand. Omitted falls back to
-   * `defaultStrategy(deck)` — practice against a bot with a seat that casts
-   * nothing would teach the wrong lesson about the deck being tried out.
+   * How eagerly each of those mages spends its kit. Omitted leaves every one of
+   * them at `normal` — practice with a squad sitting on its kits would teach
+   * the wrong lesson about the squad being tried out.
    */
-  strategy?: Strategy;
+  stances?: Partial<Record<RosterId, Stance>>;
   difficulty: Difficulty;
   /** Fixed seed makes a practice match reproducible; omit for a fresh one. */
   seed?: number;
@@ -59,16 +53,13 @@ export class LocalSession {
   private world: World | null;
   private readonly brain: Brain;
   private readonly units = new Map<string, Difficulty>();
-  private readonly decks = new Map<Team, Deck>();
-  private readonly commander: Commander;
-  private readonly tactician: Tactician;
   private readonly opts: LocalSessionOptions;
 
   private tickCount = 0;
   private accumulator = 0;
   private ended = false;
-  /** The player's last rule to actually cast; their only in-match feedback. */
-  private firedRule: FiredRuleDTO | null = null;
+  /** The player's last mage to actually cast; their only in-match feedback. */
+  private firedAbility: FiredAbilityDTO | null = null;
 
   constructor(opts: LocalSessionOptions) {
     this.opts = opts;
@@ -76,20 +67,25 @@ export class LocalSession {
     const rng = new Rng(seed);
 
     const world = new World();
-    world.initSquad(PLAYER_TEAM, opts.squad);
+    world.initSquad(PLAYER_TEAM, opts.squad, opts.stances);
     world.initSquad(BOT_TEAM, defaultSquad());
     this.world = world;
 
+    // Exactly as on the server: the world announces a cast rather than this
+    // loop catching it, because a spell leaves a kit inside `Brain.step`.
+    // Only the player's own side is recorded — the HUD has nothing to say
+    // about the opponent's cadence.
+    world.onAbilityCast = (mageId, team, spellId) => {
+      if (team !== PLAYER_TEAM) return;
+      this.firedAbility = {
+        mageId,
+        spellId,
+        at: abilityPolicyFor(spellId)?.at ?? 'enemy_cluster',
+      };
+    };
+
     this.brain = new Brain(rng);
     for (const id of world.mages.keys()) this.units.set(id, opts.difficulty);
-
-    this.decks.set(PLAYER_TEAM, new Deck(opts.deck, rng));
-    this.decks.set(BOT_TEAM, new Deck(defaultDeck(), rng));
-    this.commander = new Commander(rng, opts.difficulty);
-    // No `rng` on purpose, exactly as on the server: a caster that drew from
-    // the shared stream would make editing a rule list change how the mages
-    // fight, and a practice match would stop being reproducible from its seed.
-    this.tactician = new Tactician(opts.strategy ?? defaultStrategy(opts.deck));
   }
 
   /** Satisfies `MatchTransport` — a local match is never disconnected. */
@@ -100,10 +96,10 @@ export class LocalSession {
   /**
    * Satisfies `MatchTransport`, and does nothing.
    *
-   * Since the idle pivot a hand is played by its owner's program, so there is
-   * no by-hand cast to apply — the server answers the same message with
-   * `idle_mode`. Kept rather than removed from the interface because that is
-   * the seam a future override mode would come back through.
+   * Since v1.3 a spell is spent by the mage carrying it, so there is no by-hand
+   * cast to apply — the server answers the same message with `idle_mode`. Kept
+   * rather than removed from the interface because that is the seam a future
+   * override mode would come back through.
    */
   sendCast(): void {}
 
@@ -129,7 +125,6 @@ export class LocalSession {
     const world = this.world;
     if (!world) return;
 
-    this.stepCasters(world);
     this.brain.step(world, this.units, SIM_DT);
     world.step(SIM_DT);
     this.tickCount++;
@@ -146,49 +141,9 @@ export class LocalSession {
     }
   }
 
-  /**
-   * Runs both hands. Practice is the same idle match the server runs: the
-   * player's side is played by the program they wrote and the AI's by its
-   * commander, and neither of them waits for a click.
-   *
-   * The Tactician gets Brain's own squad plan, so a rule guarded on "defend"
-   * and the mages actually defending mean the same thing.
-   */
-  private stepCasters(world: World): void {
-    const player = this.decks.get(PLAYER_TEAM);
-    if (player) {
-      const plan = this.brain.planner.planFor(PLAYER_TEAM);
-      const intent = this.tactician.step(world, PLAYER_TEAM, player, SIM_DT, plan);
-      if (this.apply(world, PLAYER_TEAM, player, intent)) {
-        const d = this.tactician.lastDecision;
-        // Only a cast the world accepted is announced; a refusal leaves the
-        // last real one standing rather than blanking the HUD's trace.
-        if (d) this.firedRule = { ruleId: d.ruleId, index: d.ruleIndex, cardId: d.cardId, at: d.at };
-      }
-    }
-
-    const bot = this.decks.get(BOT_TEAM);
-    if (bot) this.apply(world, BOT_TEAM, bot, this.commander.step(world, BOT_TEAM, bot, SIM_DT));
-  }
-
-  /** Casts an intent and cycles the deck, reporting whether the world took it. */
-  private apply(world: World, team: Team, deck: Deck, intent: CastIntent | null): boolean {
-    if (!intent) return false;
-    if (!world.castSpell(team, intent.cardId, intent.position).ok) return false;
-    deck.play(intent.cardId);
-    return true;
-  }
-
   private emitSnapshot(world: World): void {
-    const deck = this.decks.get(PLAYER_TEAM);
-    const snap = buildSnapshot(world, this.tickCount);
     this.opts.onSnapshot(
-      toSnapshotMsg(snap, {
-        mana: snap.mana[PLAYER_TEAM] ?? 0,
-        hand: deck?.hand() ?? [],
-        next: deck?.next() ?? null,
-        firedRule: this.firedRule,
-      }),
+      toSnapshotMsg(buildSnapshot(world, this.tickCount), { firedAbility: this.firedAbility }),
     );
   }
 

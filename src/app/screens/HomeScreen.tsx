@@ -6,21 +6,17 @@ import { ApiClient, type UserSummary } from '../../net/ApiClient';
 import type { UserProfile } from '../auth';
 import { pushLoadoutToServer, syncLoadoutFromServer } from '../loadout';
 import styles from '../App.module.css';
-import { DeckBuilder } from './DeckBuilder';
 import { HistoryPanel } from './HistoryPanel';
 import { RankingPanel } from './RankingPanel';
 import { SquadBuilder } from './SquadBuilder';
-import { StrategyBuilder } from './StrategyBuilder';
 
-type LoadoutTab = 'squad' | 'deck' | 'strategy' | 'history';
+type LoadoutTab = 'squad' | 'history';
 
-// Reading order is assembly order (GDD §7): who fights, what they spend, and
-// what decides when to spend it. Strategy sits after Deck because a rule may
-// only name a card the deck brings.
+// Deck and Strategy are gone with the hand (plano v1.3 §3.1): a mage carries
+// its own kit, so there is no deck to build and no program to write. What the
+// player assembles is the squad, and the postures live inside that tab.
 const LOADOUT_TABS: readonly (readonly [LoadoutTab, string])[] = [
   ['squad', 'Squad'],
-  ['deck', 'Deck'],
-  ['strategy', 'Strategy'],
   ['history', 'History'],
 ];
 
@@ -164,8 +160,6 @@ export function HomeScreen(props: {
         ))}
       </div>
       {loadoutTab === 'squad' ? <SquadBuilder onSaved={pushLoadout} /> : null}
-      {loadoutTab === 'deck' ? <DeckBuilder onSaved={pushLoadout} /> : null}
-      {loadoutTab === 'strategy' ? <StrategyBuilder onSaved={pushLoadout} /> : null}
       {loadoutTab === 'history' ? <HistoryPanel user={props.user} /> : null}
 
       <div class={styles.panelHeader} style={{ marginTop: 28 }}>

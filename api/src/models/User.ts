@@ -22,17 +22,36 @@ const strategyRuleSchema = new Schema(
   { _id: false },
 );
 
-/** A named squad + deck + program the player can bring to a match. */
+/**
+ * A named squad, and a posture for each mage in it, that the player can bring
+ * to a match.
+ *
+ * `deck` and `strategy` are **optional, not removed**. Nothing writes them any
+ * more — v1.3 retired the hand and the program it was played from — but every
+ * document saved before the pivot still carries them, and making them required
+ * would make those documents unreadable rather than merely out of date. They
+ * are simply ignored on the way out; `routes/loadout.ts` no longer accepts them
+ * on the way in.
+ *
+ * `stances` is a Map because its keys are roster ids, which this service is
+ * deliberately unable to enumerate — it cannot import `sim/` at all (see
+ * `strategyRuleSchema` above). Structural limits are enforced here; the game
+ * server decides what is actually a mage and what is actually a posture.
+ */
 const loadoutProfileSchema = new Schema(
   {
     id: { type: String, required: true, maxlength: 32 },
     name: { type: String, required: true, maxlength: 24 },
     squad: { type: [String], default: [] },
-    deck: { type: [String], default: [] },
+    stances: { type: Map, of: String, default: () => new Map<string, string>() },
+    deck: { type: [String], default: undefined },
     strategy: {
-      version: { type: Number, required: true },
-      name: { type: String, default: '', maxlength: 24 },
-      rules: { type: [strategyRuleSchema], default: [] },
+      type: {
+        version: { type: Number },
+        name: { type: String, maxlength: 24 },
+        rules: { type: [strategyRuleSchema] },
+      },
+      default: undefined,
     },
   },
   { _id: false },

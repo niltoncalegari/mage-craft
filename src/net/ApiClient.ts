@@ -82,6 +82,12 @@ export interface SquadStat {
 
 export interface CardStat {
   cardId: string;
+  /**
+   * Which of the four bodies spent it (plano v1.3 §7.1). Optional because it
+   * is absent from every match logged before the pivot, and from a spell cast
+   * through the team-wide effect door, which has nobody to credit.
+   */
+  rosterId?: string;
   casts: number;
 }
 
@@ -97,8 +103,8 @@ export interface LoadoutProfileDTO {
   id: string;
   name: string;
   squad: string[];
-  deck: string[];
-  strategy: { version: number; name: string; rules: unknown[] };
+  /** Roster id → posture. Absent entries stand at the sim's default. */
+  stances?: Record<string, string>;
 }
 
 export interface LoadoutResponse {

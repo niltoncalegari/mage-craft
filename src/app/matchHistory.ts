@@ -30,7 +30,7 @@ export interface MatchRecord {
   /** null is a draw — the sim can end a match with no winner (GDD §4). */
   won: boolean | null;
   squad: RosterId[];
-  cards: { cardId: CardId; casts: number }[];
+  cards: { cardId: CardId; rosterId?: string; casts: number }[];
   kills: number;
   deaths: number;
   durationSeconds: number;

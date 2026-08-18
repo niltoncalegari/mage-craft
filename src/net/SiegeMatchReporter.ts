@@ -31,7 +31,15 @@ export function recordFor(result: MatchResultMsg, myTeam: number, mode: MatchMod
     mode,
     won: result.winnerTeam === -1 ? null : result.winnerTeam === myTeam,
     squad: mine.squad.filter((id) => rosterFor(id as never) !== undefined) as MatchRecord['squad'],
-    cards: mine.casts.map((c) => ({ cardId: c.cardId as MatchRecord['cards'][number]['cardId'], casts: c.casts })),
+    cards: mine.casts.map((c) => ({
+      cardId: c.cardId as MatchRecord['cards'][number]['cardId'],
+      // Carried through when the server sent it: which mage earned its place is
+      // the question v1.3 made askable, and the post-match screen is where it
+      // gets answered. Omitted rather than defaulted — there is no honest
+      // stand-in for "nobody was credited".
+      ...(c.rosterId ? { rosterId: c.rosterId } : {}),
+      casts: c.casts,
+    })),
     kills: mine.kills,
     deaths: mine.deaths,
     durationSeconds: result.durationSeconds,

@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { defaultDeck } from '../../sim/Deck';
 import { BOT_FALLBACK_SECONDS, Matchmaker, type QueueEntry } from './Matchmaker';
 
 function entry(clientId: string, joinedAt = 0): QueueEntry {
-  return { clientId, name: clientId, deck: defaultDeck(), joinedAt };
+  return { clientId, name: clientId, joinedAt };
 }
 
 describe('Matchmaker', () => {

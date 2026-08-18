@@ -90,11 +90,11 @@ export class SpellRangeSession {
   constructor(private readonly opts: SpellRangeSessionOptions) {
     this.world = new World(Arena.parse(spellRangeMap()));
     /*
-     * Sudden death is on purely for its mana: it doubles the regen, which takes
-     * the carousel from a card every ten seconds to one every two or three.
-     * Nothing else about it applies here — the range map has no Core, so there
-     * is no match to end early. This is the *whole* reason the range does not
-     * need a mana cheat, and why every cast can go through `castSpell`.
+     * Left on from when it doubled mana regen and drove the carousel's cadence.
+     * With the bar gone `castSpell` charges nothing, so the carousel now paces
+     * itself; this survives only because sudden death still accelerates kit
+     * recharge, and nothing here would notice either way — the range map has no
+     * Core, so there is no match to end early.
      */
     this.world.suddenDeath = true;
 
@@ -153,7 +153,7 @@ export class SpellRangeSession {
 
     if (this.tickCount % SNAPSHOT_EVERY_N_TICKS === 0) {
       const snap = buildSnapshot(this.world, this.tickCount);
-      this.opts.onSnapshot(toSnapshotMsg(snap, { mana: 0, hand: [], next: null }));
+      this.opts.onSnapshot(toSnapshotMsg(snap, {}));
     }
   }
 

@@ -183,7 +183,6 @@ export interface AbilityPolicy {
  * over the field.
  */
 export interface StrategyFacts {
-  readonly mana: number;
   readonly elapsed: number;
   readonly suddenDeath: boolean;
   /** Null when the squad has no plan; posture conditions then never hold. */
@@ -260,8 +259,12 @@ export function holds(condition: Condition, facts: StrategyFacts, self?: MageFac
 
 function numericFact(kind: NumericConditionKind, f: StrategyFacts, self?: MageFacts): number {
   switch (kind) {
+    // Inert, not absent: `mana` stays in the vocabulary so the player's saved
+    // programs still parse until §5 deletes the reader, but there has been no
+    // bar to read since §3.3. Zero is the honest answer — every `mana >= N`
+    // guard reads false, which is what "this rule can no longer fire" means.
     case 'mana':
-      return f.mana;
+      return 0;
     case 'elapsed':
       return f.elapsed;
     case 'ally_count':

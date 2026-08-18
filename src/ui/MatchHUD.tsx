@@ -4,23 +4,16 @@ import { Team, type Structure } from '../game/types';
 import type { World } from '../game/World';
 import type { MatchState } from '../net/SnapshotSync';
 import { teamFill, teamInk } from './teamInk';
-import { HAND_SIZE } from '../../sim/Deck';
-import { MANA_MAX, MATCH_DURATION, SUDDEN_DEATH_DURATION } from '../../sim/config';
+import { MATCH_DURATION, SUDDEN_DEATH_DURATION } from '../../sim/config';
 import { spellFor, type CardId, type SpellCard } from '../../sim/spells';
 import { selectorLabel } from './strategyText';
 import styles from './MatchHUD.module.css';
 
-/** What the player can be told about a spell at a glance (GDD §9). */
-const KIND_LABEL: Readonly<Record<SpellCard['kind'], string>> = {
-  buff: 'Blessing',
-  curse: 'Curse',
-};
-
 export interface MatchHudDeps {
-  /** The latest wire state: mana, clock, hand and the rule that last fired. */
+  /** The latest wire state: the clock and the ability that last fired. */
   getState: () => MatchState;
   isVisible: () => boolean;
-  /** Spectators get the clock and the structures, but no hand of their own. */
+  /** Spectators get the clock and the structures, but no squad of their own. */
   isSpectating: () => boolean;
   /** Which half of the arena the local commander's own side stands on. */
   getMySide: () => 'left' | 'right';
@@ -38,13 +31,6 @@ export interface MatchHudDeps {
    */
   isMuted: () => boolean;
   onToggleMute: () => void;
-}
-
-interface CardRefs {
-  root: HTMLElement;
-  cost: HTMLElement;
-  name: HTMLElement;
-  role: HTMLElement;
 }
 
 interface SideRefs {
@@ -67,10 +53,6 @@ interface HudRefs {
   sound: HTMLButtonElement;
   left: SideRefs;
   right: SideRefs;
-  manaFill: HTMLElement;
-  manaText: HTMLElement;
-  hand: CardRefs[];
-  nextName: HTMLElement;
   trace: HTMLElement;
   bar: HTMLElement;
 }
@@ -143,38 +125,15 @@ function MatchHudView({ refs, onToggleMute }: { refs: HudRefs; onToggleMute: () 
         <SideView refs={refs.right} mirrored />
       </div>
 
+      {/*
+        The bar is down to one line. The hand, the Next slot and the mana meter
+        all described a resource the player no longer has (plano v1.3 §3.3) —
+        what is left is the one thing a v1.3 match still owes them, which is an
+        account of what their own squad just did. The full kit readout, with a
+        charge per skill, is the squad panel's job in Fase 4.
+      */}
       <div class={styles.bar} ref={keep(refs, 'bar')}>
         <span class={styles.trace} ref={keep(refs, 'trace')} />
-        <div class={styles.barRow}>
-          <div class={styles.nextBox}>
-            <span class={styles.nextLabel}>Next</span>
-            <span class={styles.nextName} ref={keep(refs, 'nextName')} />
-          </div>
-          <div class={styles.hand}>
-            {/*
-              Plain divs, not buttons: the hand is a readout now. Nothing here
-              is pressable, and a disabled button would still announce itself to
-              a screen reader as a control the player is being denied.
-            */}
-            {Array.from({ length: HAND_SIZE }, (_, slot) => {
-              const cardRefs = {} as CardRefs;
-              refs.hand[slot] = cardRefs;
-              return (
-                <div key={slot} class={styles.card} ref={keep(cardRefs, 'root')}>
-                  <span class={styles.cardCost} ref={keep(cardRefs, 'cost')} />
-                  <span class={styles.cardName} ref={keep(cardRefs, 'name')} />
-                  <span class={styles.cardRole} ref={keep(cardRefs, 'role')} />
-                </div>
-              );
-            })}
-          </div>
-          <div class={styles.manaBox}>
-            <div class={styles.manaMeter}>
-              <div class={styles.manaFill} ref={keep(refs, 'manaFill')} />
-            </div>
-            <span class={styles.manaText} ref={keep(refs, 'manaText')} />
-          </div>
-        </div>
       </div>
     </>
   );
@@ -182,7 +141,7 @@ function MatchHudView({ refs, onToggleMute }: { refs: HudRefs; onToggleMute: () 
 
 /**
  * The in-match readout for the siege model (GDD §13): the match clock, how both
- * Cores and Towers are holding up, your mana, your hand — and which of your own
+ * Cores and Towers are holding up — and which of your own
  * rules last spent it.
  *
  * Nothing here is pressable since the idle pivot. The hand stays on screen
@@ -201,7 +160,7 @@ export class MatchHUD implements GameRenderer {
    * `textContent` unconditionally would be ~60 pointless DOM writes a second
    * for a string that is almost always the same one.
    */
-  private tracedRuleId: string | null = null;
+  private tracedCastId: string | null = null;
   /** Same cache, same reason: the label changes on a click, not on a frame. */
   private shownMuted: boolean | null = null;
   /**
@@ -209,7 +168,6 @@ export class MatchHUD implements GameRenderer {
    * fires during render and writes straight into them.
    */
   private readonly refs = {
-    hand: [] as CardRefs[],
     left: {} as SideRefs,
     right: {} as SideRefs,
   } as HudRefs;
@@ -241,7 +199,6 @@ export class MatchHUD implements GameRenderer {
     this.updateSound();
     this.updateClock(state);
     this.updateSides();
-    this.updateHand(state);
     this.updateTrace(state);
   }
 
@@ -312,56 +269,37 @@ export class MatchHUD implements GameRenderer {
     return core.invulnerable ? `Core shielded · ${health}` : `Core ${health}`;
   }
 
-  private updateHand(state: MatchState): void {
-    const spectating = this.deps.isSpectating();
-    this.refs.bar.hidden = spectating;
-    if (spectating) return;
-
-    for (const [slot, refs] of this.refs.hand.entries()) {
-      const card = lookupCard(state.hand[slot]);
-      refs.root.hidden = !card;
-      if (!card) continue;
-
-      refs.cost.textContent = String(card.cost);
-      refs.name.textContent = card.name;
-      refs.role.textContent = KIND_LABEL[card.kind];
-      // Still greyed when the bank is short. Not to refuse a click — there are
-      // no clicks — but because "I cannot afford that yet" is exactly what a
-      // player is looking for when a rule of theirs has gone quiet.
-      refs.root.classList.toggle(styles.cardBroke, state.mana < card.cost);
-    }
-
-    const next = lookupCard(state.next);
-    this.refs.nextName.textContent = next ? `${next.name} · ${next.cost}` : '—';
-
-    const fraction = clamp01(state.mana / MANA_MAX);
-    this.refs.manaFill.style.width = `${Math.round(fraction * 100)}%`;
-    this.refs.manaText.textContent = `${Math.floor(state.mana)}/${MANA_MAX}`;
-  }
-
   /**
-   * Names the rule that last spent the player's mana.
+   * Names the mage that last spent something out of its own kit.
    *
-   * This is the whole of an idle match's feedback loop. The player wrote a
-   * program and then stopped touching the game, so the one thing the match owes
-   * them is an account of which of their own rules is doing the work — without
+   * This is the whole of an idle match's feedback loop. The player picked four
+   * bodies and then stopped touching the game, so the one thing the match owes
+   * them is an account of which of their own mages is doing the work — without
    * it, a won match and a lost one look equally like a screensaver.
    */
   private updateTrace(state: MatchState): void {
-    const fired = state.firedRule;
-    const id = fired?.ruleId ?? null;
-    if (id === this.tracedRuleId) return;
-    this.tracedRuleId = id;
+    this.refs.bar.hidden = this.deps.isSpectating();
+    if (this.refs.bar.hidden) return;
+
+    const fired = state.firedAbility;
+    // Keyed on the whole cast rather than on the mage: the same body spending a
+    // second skill is news, and keying on its id alone would swallow it.
+    const id = fired ? `${fired.mageId}:${fired.spellId}` : null;
+    if (id === this.tracedCastId) return;
+    this.tracedCastId = id;
 
     if (!fired) {
-      this.refs.trace.textContent = 'Nenhuma regra disparou ainda';
+      this.refs.trace.textContent = 'Nenhuma habilidade disparou ainda';
       return;
     }
 
-    // Falls back to the wire id for a card this build does not know, rather
+    // Falls back to the wire id for a spell this build does not know, rather
     // than blanking the line — a server one version ahead still gets to say
-    // which rule fired.
-    const card = lookupCard(fired.cardId)?.name ?? fired.cardId;
-    this.refs.trace.textContent = `Regra ${fired.index + 1} · ${card} → ${selectorLabel(fired.at)}`;
+    // what fired.
+    // Named by the spell rather than by the body, for now: putting a mage's
+    // name here needs the squad roster plumbed into the HUD, which is Fase 4's
+    // job. What must not happen in the meantime is the line going mute.
+    const spell = lookupCard(fired.spellId)?.name ?? fired.spellId;
+    this.refs.trace.textContent = `${spell} → ${selectorLabel(fired.at)}`;
   }
 }

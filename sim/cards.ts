@@ -90,6 +90,25 @@ export function rosterFor(id: RosterId): RosterEntry | undefined {
   return CATALOG[id];
 }
 
+/**
+ * The one mage that carries a spell, or undefined for an id no kit holds.
+ *
+ * Well-defined only because kits are disjoint and cover the whole catalog —
+ * both asserted in `kits.test.ts`, and both load-bearing for the pivot. That is
+ * what lets a per-team tally of spell ids be credited back to a body without a
+ * second table to keep in step with this one.
+ *
+ * Built once at module load rather than searched per call: the post-match
+ * summary walks every spell a side cast, and the catalog never changes shape.
+ */
+const OWNER_BY_SPELL: ReadonlyMap<SpellId, RosterId> = new Map(
+  ALL_ROSTER.flatMap((id) => (CATALOG[id]?.abilities ?? []).map((s) => [s, id] as const)),
+);
+
+export function rosterOwnerOf(spellId: SpellId): RosterId | undefined {
+  return OWNER_BY_SPELL.get(spellId);
+}
+
 export function isRosterId(value: string): value is RosterId {
   return Object.prototype.hasOwnProperty.call(CATALOG, value);
 }

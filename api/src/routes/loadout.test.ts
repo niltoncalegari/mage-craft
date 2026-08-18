@@ -1,11 +1,11 @@
 /**
- * The loadout endpoints, including the parts that exist because the body has a
- * free-form corner in it.
+ * The loadout endpoints, including the parts that exist because the body has an
+ * open-ended corner in it.
  *
- * A rule's condition is stored opaquely (this service cannot import the game's
- * rule vocabulary), so everything that would normally be caught by a schema has
- * to be caught by hand here: size, depth, and the two families of key that turn
- * a stored document into an operator or a prototype.
+ * The postures are stored as a map whose *keys* this service cannot enumerate —
+ * it has no access to the roster catalog — so everything a schema would
+ * normally catch has to be caught by hand: how many, how long, and the two
+ * families of key that turn a stored document into an operator or a prototype.
  */
 
 import request from 'supertest';
@@ -16,38 +16,10 @@ import { registerUser } from '../test/helpers.js';
 const app = createApp();
 
 const SQUAD = ['stone_golem', 'pyromancer', 'stormcaller', 'cleric'];
-const DECK = [
-  'blessing',
-  'blessing',
-  'arcane_shield',
-  'arcane_shield',
-  'plague',
-  'plague',
-  'sticky_swamp',
-  'sticky_swamp',
-];
+const STANCES = { stone_golem: 'hold', pyromancer: 'aggressive' };
 
 function loadout(over: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id: 'default',
-    name: 'Padrão',
-    squad: SQUAD,
-    deck: DECK,
-    strategy: {
-      version: 1,
-      name: 'Padrão',
-      rules: [
-        {
-          id: 'answer-cluster',
-          enabled: true,
-          card: 'plague',
-          when: { kind: 'enemy_cluster', op: 'gte', value: 2 },
-          at: 'enemy_cluster',
-        },
-      ],
-    },
-    ...over,
-  };
+  return { id: 'default', name: 'Padrão', squad: SQUAD, stances: STANCES, ...over };
 }
 
 function put(token: string, body: unknown): request.Test {
@@ -74,7 +46,7 @@ describe('PUT /api/me/loadout', () => {
     expect((await request(app).put('/api/me/loadout').send({ loadouts: [] })).status).toBe(401);
   });
 
-  it('stores a loadout and reads it back whole, condition included', async () => {
+  it('stores a loadout and reads it back whole, postures included', async () => {
     const { token } = await registerUser(app);
 
     const saved = await put(token, { loadouts: [loadout()], activeLoadoutId: 'default' });
@@ -83,14 +55,20 @@ describe('PUT /api/me/loadout', () => {
     const res = await request(app).get('/api/me/loadout').set('Authorization', `Bearer ${token}`);
     expect(res.body.activeLoadoutId).toBe('default');
     expect(res.body.loadouts).toHaveLength(1);
-    expect(res.body.loadouts[0].deck).toEqual(DECK);
-    // The opaque half has to survive the round trip byte for byte: it is the
-    // program, and the game server is what will read it.
-    expect(res.body.loadouts[0].strategy.rules[0].when).toEqual({
-      kind: 'enemy_cluster',
-      op: 'gte',
-      value: 2,
-    });
+    expect(res.body.loadouts[0].squad).toEqual(SQUAD);
+    // The half this service cannot read has to survive the round trip key for
+    // key: the game server is what will decide what any of it means.
+    expect(res.body.loadouts[0].stances).toEqual(STANCES);
+  });
+
+  it('accepts a loadout with no postures at all', async () => {
+    const { token } = await registerUser(app);
+
+    // What a player who never opened the builder sends. Absent is `normal`
+    // everywhere, and refusing it would make the default unsendable.
+    const res = await put(token, { loadouts: [loadout({ stances: undefined })] });
+
+    expect(res.status).toBe(200);
   });
 
   it('replaces wholesale rather than merging', async () => {
@@ -138,65 +116,37 @@ describe('PUT /api/me/loadout', () => {
     expect((await put(token, { loadouts: many })).status).toBe(400);
   });
 
-  it('caps how many rules a program may hold', async () => {
+  it('caps how many postures a profile may hold', async () => {
     const { token } = await registerUser(app);
-    const rules = Array.from({ length: 13 }, (_, i) => ({
-      id: `r${i}`,
-      enabled: true,
-      card: 'plague',
-      when: { kind: 'always' },
-      at: 'enemy_cluster',
-    }));
+    const many = Object.fromEntries(Array.from({ length: 33 }, (_, i) => [`m${i}`, 'hold']));
 
-    const res = await put(token, {
-      loadouts: [loadout({ strategy: { version: 1, name: 'x', rules } })],
-    });
-
-    expect(res.status).toBe(400);
+    expect((await put(token, { loadouts: [loadout({ stances: many })] })).status).toBe(400);
   });
 });
 
 /*
- * The condition is the only part of the body with no fixed shape, which makes
- * it the only part a client could use to store volume, reach the stack, or
- * smuggle a key that means something to Mongo or to Object.prototype.
+ * The posture map is the only part of the body whose keys this service does not
+ * control, which makes it the only part a client could use to store volume or
+ * to smuggle a key that means something to Mongo or to Object.prototype. It
+ * lands in a Mongoose `Map`, whose keys are written through verbatim.
  */
-describe('PUT /api/me/loadout — the free-form condition', () => {
-  function withCondition(when: unknown): Record<string, unknown> {
-    return {
-      loadouts: [
-        loadout({
-          strategy: {
-            version: 1,
-            name: 'x',
-            rules: [{ id: 'r1', enabled: true, card: 'plague', when, at: 'enemy_cluster' }],
-          },
-        }),
-      ],
-    };
+describe('PUT /api/me/loadout — the open-ended posture map', () => {
+  function withStances(stances: unknown): Record<string, unknown> {
+    return { loadouts: [loadout({ stances })] };
   }
 
-  it('refuses a condition bigger than the cap', async () => {
+  it('refuses a value longer than an id could be', async () => {
     const { token } = await registerUser(app);
-    const fat = { kind: 'always', padding: 'x'.repeat(600) };
 
-    expect((await put(token, withCondition(fat))).status).toBe(400);
-  });
-
-  it('refuses a condition nested past the walk depth', async () => {
-    const { token } = await registerUser(app);
-    let bomb: unknown = { kind: 'always' };
-    for (let i = 0; i < 20; i++) bomb = { kind: 'not', of: bomb };
-
-    expect((await put(token, withCondition(bomb))).status).toBe(400);
+    expect((await put(token, withStances({ cleric: 'x'.repeat(64) }))).status).toBe(400);
   });
 
   it('refuses a Mongo operator key', async () => {
     const { token } = await registerUser(app);
 
     // `$gt` inside a stored document is how it later becomes a query nobody wrote.
-    expect((await put(token, withCondition({ $gt: 1 }))).status).toBe(400);
-    expect((await put(token, withCondition({ 'a.b': 1 }))).status).toBe(400);
+    expect((await put(token, withStances({ $gt: 'hold' }))).status).toBe(400);
+    expect((await put(token, withStances({ 'a.b': 'hold' }))).status).toBe(400);
   });
 
   it('refuses a prototype-pollution key, and leaves the prototype alone', async () => {
@@ -208,22 +158,28 @@ describe('PUT /api/me/loadout — the free-form condition', () => {
       .put('/api/me/loadout')
       .set('Authorization', `Bearer ${token}`)
       .set('Content-Type', 'application/json')
-      .send(JSON.stringify(withCondition(JSON.parse('{"__proto__": {"polluted": true}}'))));
+      .send(JSON.stringify(withStances(JSON.parse('{"__proto__": "hold"}'))));
 
     expect(res.status).toBe(400);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
-  it('keeps a legal nested group, which is what the editor actually writes', async () => {
+  it('refuses a map whose values are not strings', async () => {
     const { token } = await registerUser(app);
-    const group = {
-      kind: 'all',
-      of: [{ kind: 'intruder' }, { kind: 'not', of: { kind: 'mana', op: 'lt', value: 5 } }],
-    };
 
-    expect((await put(token, withCondition(group))).status).toBe(200);
+    expect((await put(token, withStances({ cleric: { nested: true } }))).status).toBe(400);
+    expect((await put(token, withStances(['hold']))).status).toBe(400);
+  });
+
+  it('keeps an unknown-but-well-formed posture, and lets the game server judge it', async () => {
+    const { token } = await registerUser(app);
+
+    // This service cannot know `berserk` is not a stance, and must not pretend
+    // to: storing it and letting `resolveStances` refuse it at match time is
+    // the split the whole module is built on.
+    expect((await put(token, withStances({ cleric: 'berserk' }))).status).toBe(200);
 
     const res = await request(app).get('/api/me/loadout').set('Authorization', `Bearer ${token}`);
-    expect(res.body.loadouts[0].strategy.rules[0].when).toEqual(group);
+    expect(res.body.loadouts[0].stances).toEqual({ cleric: 'berserk' });
   });
 });

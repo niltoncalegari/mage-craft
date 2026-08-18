@@ -29,7 +29,6 @@ function targets(
 
 function facts(overrides: Partial<StrategyFacts> = {}): StrategyFacts {
   return {
-    mana: 10,
     elapsed: 0,
     suddenDeath: false,
     posture: 'push',
@@ -151,13 +150,13 @@ describe('evaluateStrategy — conditions', () => {
     evaluateStrategy(strategy([rule({ when })]), facts(f), RICH) !== null;
 
   it('compares numeric facts with every comparator', () => {
-    expect(fires({ kind: 'mana', op: 'lt', value: 5 }, { mana: 4 })).toBe(true);
-    expect(fires({ kind: 'mana', op: 'lt', value: 5 }, { mana: 5 })).toBe(false);
-    expect(fires({ kind: 'mana', op: 'lte', value: 5 }, { mana: 5 })).toBe(true);
-    expect(fires({ kind: 'mana', op: 'gt', value: 5 }, { mana: 6 })).toBe(true);
-    expect(fires({ kind: 'mana', op: 'gt', value: 5 }, { mana: 5 })).toBe(false);
-    expect(fires({ kind: 'mana', op: 'gte', value: 5 }, { mana: 5 })).toBe(true);
-    expect(fires({ kind: 'mana', op: 'eq', value: 5 }, { mana: 5 })).toBe(true);
+    expect(fires({ kind: 'elapsed', op: 'lt', value: 5 }, { elapsed: 4 })).toBe(true);
+    expect(fires({ kind: 'elapsed', op: 'lt', value: 5 }, { elapsed: 5 })).toBe(false);
+    expect(fires({ kind: 'elapsed', op: 'lte', value: 5 }, { elapsed: 5 })).toBe(true);
+    expect(fires({ kind: 'elapsed', op: 'gt', value: 5 }, { elapsed: 6 })).toBe(true);
+    expect(fires({ kind: 'elapsed', op: 'gt', value: 5 }, { elapsed: 5 })).toBe(false);
+    expect(fires({ kind: 'elapsed', op: 'gte', value: 5 }, { elapsed: 5 })).toBe(true);
+    expect(fires({ kind: 'elapsed', op: 'eq', value: 5 }, { elapsed: 5 })).toBe(true);
   });
 
   it('reads each numeric fact from its own field', () => {
@@ -207,22 +206,22 @@ describe('evaluateStrategy — conditions', () => {
     const both: Condition = {
       kind: 'all',
       of: [
-        { kind: 'mana', op: 'gte', value: 5 },
+        { kind: 'elapsed', op: 'gte', value: 5 },
         { kind: 'intruder' },
       ],
     };
-    expect(fires(both, { mana: 5, hasIntruder: true })).toBe(true);
-    expect(fires(both, { mana: 5, hasIntruder: false })).toBe(false);
+    expect(fires(both, { elapsed: 5, hasIntruder: true })).toBe(true);
+    expect(fires(both, { elapsed: 5, hasIntruder: false })).toBe(false);
 
     const either: Condition = {
       kind: 'any',
       of: [
-        { kind: 'mana', op: 'gte', value: 99 },
+        { kind: 'elapsed', op: 'gte', value: 99 },
         { kind: 'intruder' },
       ],
     };
-    expect(fires(either, { mana: 1, hasIntruder: true })).toBe(true);
-    expect(fires(either, { mana: 1, hasIntruder: false })).toBe(false);
+    expect(fires(either, { elapsed: 1, hasIntruder: true })).toBe(true);
+    expect(fires(either, { elapsed: 1, hasIntruder: false })).toBe(false);
   });
 });
 

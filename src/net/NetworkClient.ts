@@ -180,12 +180,11 @@ export class NetworkClient {
    * with `defaultStrategy(deck)` rather than with nothing, so an older client
    * still plays — just not the program its player wrote.
    */
-  setLoadout(deck?: string[], squad?: string[], strategy?: unknown): void {
+  setLoadout(squad?: string[], stances?: Record<string, string>): void {
     this.send({
       type: 'set_loadout',
-      ...(deck ? { deck } : {}),
       ...(squad ? { squad } : {}),
-      ...(strategy !== undefined ? { strategy } : {}),
+      ...(stances ? { stances } : {}),
     });
   }
 

@@ -38,10 +38,9 @@ export function PracticeScreen(props: { onExit(): void; token?: string; playerNa
 
     const session = new LocalSession({
       squad: loadout.squad,
-      deck: loadout.deck,
-      // Practice is where a program gets tried out before it is taken online,
-      // so it has to be the player's own and not the heuristic default.
-      strategy: loadout.strategy,
+      // Practice is where a squad gets tried out before it is taken online, so
+      // the postures have to be the player's own and not the default.
+      stances: loadout.stances,
       difficulty,
       onSnapshot: (msg) => matchRef.current?.applySnapshot(msg),
       onMatchResult: (summary) => {

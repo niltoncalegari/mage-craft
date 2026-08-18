@@ -13,10 +13,9 @@
  */
 
 import type { EffectKind } from './effects';
-import { TEAM_A, TEAM_B } from './entities';
 import type { ElementId } from './elements';
 import type { RosterId } from './cards';
-import type { FiredRuleDTO, SnapshotMsg } from './protocol';
+import type { FiredAbilityDTO, SnapshotMsg } from './protocol';
 import { fromVec2 } from './protocol';
 import { Vec2 } from './Vec2';
 import type { World } from './World';
@@ -35,8 +34,6 @@ export interface Snapshot {
   spells: SpellCastSnapshotState[];
   elapsed: number;
   suddenDeath: boolean;
-  /** Mana per team, indexed by team number — the caller picks the receiver's. */
-  mana: Record<number, number>;
 }
 
 export interface MageSnapshotState {
@@ -63,6 +60,11 @@ export interface MageSnapshotState {
   kills: number;
   /** Times this mage was put down. A team's kill total is the enemy's sum of these. */
   deaths: number;
+  /**
+   * Seconds until each ability recharges, parallel to the mage's kit. The wire
+   * omits it when every entry is 0 — a kit nobody has spent yet.
+   */
+  abilityCooldowns: number[];
   /** Seconds until it returns; 0 while alive. The wire omits it when 0. */
   respawnRemaining: number;
   /** Post-respawn damage immunity is running. The wire omits it when false. */
@@ -120,7 +122,6 @@ export function buildSnapshot(world: World, tick: number): Snapshot {
     tick,
     elapsed: world.elapsed,
     suddenDeath: world.suddenDeath,
-    mana: { [TEAM_A]: world.manaOf(TEAM_A), [TEAM_B]: world.manaOf(TEAM_B) },
     structures: [...world.structures.values()].map((s) => ({
       id: s.id,
       team: s.team,
@@ -148,6 +149,7 @@ export function buildSnapshot(world: World, tick: number): Snapshot {
       fx: m.effects.map((e) => ({ kind: e.kind, stacks: e.stacks })),
       kills: m.kills,
       deaths: m.deaths,
+      abilityCooldowns: m.abilityCooldowns,
       respawnRemaining: m.respawnTimer,
       immune: m.immunityTimer > 0,
     })),
@@ -176,17 +178,14 @@ export function buildSnapshot(world: World, tick: number): Snapshot {
   };
 }
 
-/** The per-receiver half of a snapshot: your bar, your cards, never the opponent's. */
+/** The per-receiver half of a snapshot: what your own squad just did, never theirs. */
 export interface SnapshotView {
-  mana: number;
-  hand: string[];
-  next?: string | null;
   /**
-   * The rule that last cast for this receiver, or null when none has. Rides the
-   * per-receiver channel for the same reason mana and hand do: a program is its
-   * author's, and the opponent must not read it off the wire.
+   * The ability one of this receiver's own mages last spent, or null when none
+   * has. Rides the per-receiver channel because the cadence of a squad's kits
+   * is a live read on how it is playing, and the opponent must not have it.
    */
-  firedRule?: FiredRuleDTO | null;
+  firedAbility?: FiredAbilityDTO | null;
 }
 
 /** Shapes a snapshot into the wire message for one receiver. */
@@ -229,6 +228,7 @@ export function toSnapshotMsg(snap: Snapshot, view: SnapshotView): SnapshotMsg {
       ...(m.fx.length > 0
         ? { fx: m.fx.map((e) => (e.stacks > 1 ? { k: e.kind, s: e.stacks } : { k: e.kind })) }
         : {}),
+      ...(m.abilityCooldowns.some((c) => c > 0) ? { cd: m.abilityCooldowns } : {}),
       ...(m.respawnRemaining > 0 ? { respawnRemaining: m.respawnRemaining } : {}),
       ...(m.immune ? { immune: true } : {}),
     })),
@@ -254,9 +254,6 @@ export function toSnapshotMsg(snap: Snapshot, view: SnapshotView): SnapshotMsg {
       position: fromVec2(fx.position),
       radius: fx.radius,
     })),
-    mana: view.mana,
-    hand: view.hand,
-    ...(view.next ? { next: view.next } : {}),
-    ...(view.firedRule ? { firedRule: view.firedRule } : {}),
+    ...(view.firedAbility ? { firedAbility: view.firedAbility } : {}),
   };
 }

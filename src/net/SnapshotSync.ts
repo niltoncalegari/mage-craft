@@ -11,7 +11,7 @@ import type { World } from '../game/World';
 import { rotateTowards } from '../utils/math';
 import { Vector2 } from '../utils/Vector2';
 import type {
-  FiredRuleDTO,
+  FiredAbilityDTO,
   MageSnapshotDTO,
   ProjectileSnapshotDTO,
   PuddleSnapshotDTO,
@@ -38,30 +38,24 @@ function hasWireFx(m: MageSnapshotDTO, kind: FxKind): boolean {
 }
 
 /**
- * The per-player state a siege match is played from (GDD §6, §7): everything
- * the card bar and the match clock need, none of which is derivable from the
- * rendered world. The server sends it in every snapshot, so this is always the
- * authoritative view — a rejected cast corrects itself on the next one.
+ * The per-player state a siege match is played from (GDD §6): the match clock
+ * and this player's own account of what their squad is doing, neither of which
+ * is derivable from the rendered world. The server sends it in every snapshot,
+ * so this is always the authoritative view.
  */
 export interface MatchState {
-  /** The local player's own mana, 0..MANA_MAX. */
-  mana: number;
   /** Seconds of match time elapsed. */
   elapsed: number;
   suddenDeath: boolean;
-  /** The local player's hand, in slot order. Empty while spectating. */
-  hand: string[];
-  /** The card entering the hand next, or null when unknown. */
-  next: string | null;
   /**
-   * The local player's rule that last actually cast, or null before one has.
+   * The local player's mage that last actually cast, or null before one has.
    *
    * Since the idle pivot this is the only in-match feedback there is: nobody
-   * clicked, so being told which of their own rules spent their mana is what
+   * clicked, so being told which of their own mages just spent what is what
    * separates a match the player authored from one that merely happens near
-   * them. Null for a spectator, who has no program.
+   * them. Null for a spectator, who has no squad.
    */
-  firedRule: FiredRuleDTO | null;
+  firedAbility: FiredAbilityDTO | null;
 }
 
 /**
@@ -88,6 +82,12 @@ export interface SquadMemberView {
   deaths: number;
   /** Seconds until it returns; 0 while alive. */
   respawnRemaining: number;
+  /**
+   * Seconds until each of this mage's abilities recharges, in its kit's stable
+   * order. Empty while the whole kit is ready — the wire omits it then, and the
+   * panel reads "nothing recharging" off the same emptiness.
+   */
+  cooldowns: number[];
   shielded: boolean;
   hasted: boolean;
   slowed: boolean;
@@ -95,12 +95,9 @@ export interface SquadMemberView {
 }
 
 const EMPTY_MATCH_STATE: MatchState = {
-  mana: 0,
   elapsed: 0,
   suddenDeath: false,
-  hand: [],
-  next: null,
-  firedRule: null,
+  firedAbility: null,
 };
 
 /**
@@ -229,15 +226,12 @@ export class SnapshotSync {
     this.world.time = snap.tick / SIM.hz;
 
     this.match = {
-      mana: snap.mana,
       elapsed: snap.elapsed,
       suddenDeath: snap.suddenDeath,
-      hand: snap.hand ?? [],
-      next: snap.next ?? null,
       // Handed straight through rather than copied into a retained object: the
       // wire message is already a fresh parse, so referencing it costs nothing
       // and the HUD reads it at most 20 times a second.
-      firedRule: snap.firedRule ?? null,
+      firedAbility: snap.firedAbility ?? null,
     };
 
     this.syncMages(snap.mages, dtSim);
@@ -331,6 +325,7 @@ export class SnapshotSync {
       kills: m.kills,
       deaths: m.deaths,
       respawnRemaining: m.respawnRemaining ?? 0,
+      cooldowns: m.cd ?? [],
       shielded: hasWireFx(m, 'shield'),
       hasted: hasWireFx(m, 'haste'),
       slowed: hasWireFx(m, 'slow'),
@@ -391,6 +386,7 @@ export class SnapshotSync {
     view.kills = m.kills;
     view.deaths = m.deaths;
     view.respawnRemaining = m.respawnRemaining ?? 0;
+    view.cooldowns = m.cd ?? [];
     view.shielded = player.shielded;
     view.hasted = player.hasted;
     view.slowed = player.slowed;

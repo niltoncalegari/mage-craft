@@ -220,3 +220,73 @@ describe('castAbility — stone silences the body, not the side', () => {
     expect(w.castAbility(free.id, cleric, free.position)).toEqual({ ok: true });
   });
 });
+
+describe('initSquad — the posture is authored, not defaulted', () => {
+  /*
+   * The stance is the one thing about a kit the player still decides at the
+   * table (§3.4), so it has to survive the trip from a saved loadout into the
+   * body that reads it. `initSquad` is the only door a real match builds a
+   * squad through — `summon` is a test and dev-tool affordance — which makes it
+   * the seam the wire has to land on.
+   */
+  it('gives each mage the stance its roster entry was assigned', () => {
+    const w = world();
+    w.initSquad(TEAM_A, ['stone_golem', 'pyromancer'], {
+      stone_golem: 'hold',
+      pyromancer: 'aggressive',
+    });
+
+    const byRoster = new Map([...w.mages.values()].map((m) => [m.rosterId, m.stance]));
+    expect(byRoster.get('stone_golem')).toBe('hold');
+    expect(byRoster.get('pyromancer')).toBe('aggressive');
+  });
+
+  it('falls back to normal for a roster entry the loadout never mentioned', () => {
+    const w = world();
+    w.initSquad(TEAM_A, ['stone_golem', 'pyromancer'], { pyromancer: 'hold' });
+
+    const byRoster = new Map([...w.mages.values()].map((m) => [m.rosterId, m.stance]));
+    expect(byRoster.get('stone_golem')).toBe('normal');
+    expect(byRoster.get('pyromancer')).toBe('hold');
+  });
+});
+
+describe('castAbility — the world says who just spent what', () => {
+  /*
+   * A spell now leaves a kit from inside `Brain.step`, several frames deep in
+   * the tick, so nothing above the sim can see it happen by watching a return
+   * value the way it watched `castSpell`'s. The session needs it anyway: the
+   * HUD's whole account of a match is "the Pyromancer just threw Erupção", and
+   * re-deriving that from a diff of two snapshots is not possible.
+   *
+   * Announced only on an *accepted* cast, because a rejection is not an event —
+   * the kit evaluator asks four times a second and is refused most of the time.
+   */
+  it('announces an accepted cast to a listener, and never a refused one', () => {
+    const w = world();
+    const mage = pyromancer(w);
+    const [first] = rosterFor('pyromancer')!.abilities;
+
+    const heard: { mageId: string; team: Team; spellId: string }[] = [];
+    w.onAbilityCast = (mageId, team, spellId) => heard.push({ mageId, team, spellId });
+
+    expect(w.castAbility(mage.id, first, ORIGIN).ok).toBe(true);
+    // Straight back for the same skill: still recharging, so refused.
+    expect(w.castAbility(mage.id, first, ORIGIN).ok).toBe(false);
+
+    expect(heard).toEqual([{ mageId: mage.id, team: TEAM_A, spellId: first }]);
+  });
+
+  it('stays quiet for a spell cast through the team-wide effect door', () => {
+    const w = world();
+    pyromancer(w);
+
+    let heard = 0;
+    w.onAbilityCast = () => heard++;
+    expect(w.castSpell(TEAM_A, 'blessing', ORIGIN).ok).toBe(true);
+
+    // `castSpell` casts for a whole side and has nobody to credit, so there is
+    // no mage for a listener to name.
+    expect(heard).toBe(0);
+  });
+});

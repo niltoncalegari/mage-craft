@@ -46,9 +46,6 @@ function snapshot(over: Partial<SnapshotMsg> = {}): SnapshotMsg {
     structures: [structure(TEAM_A, 'core'), structure(TEAM_B, 'core')],
     elapsed: 12.5,
     suddenDeath: false,
-    mana: 6,
-    hand: ['stone_golem', 'pyromancer', 'cleric', 'wind_dervish'],
-    next: 'arcane_archer',
     ...over,
   };
 }
@@ -161,37 +158,46 @@ describe('SnapshotSync — structures', () => {
 });
 
 describe('SnapshotSync — match state', () => {
-  it('carries mana, the clock and the hand straight off the wire', () => {
+  it('carries the clock straight off the wire', () => {
     const { sync } = makeSync(TEAM_A);
     sync.applySnapshot(snapshot());
 
     expect(sync.matchState).toEqual({
-      mana: 6,
       elapsed: 12.5,
       suddenDeath: false,
-      hand: ['stone_golem', 'pyromancer', 'cleric', 'wind_dervish'],
-      next: 'arcane_archer',
-      // Omitted on the wire until a rule has actually cast, which is what an
-      // empty program should look like on screen.
-      firedRule: null,
+      // Omitted on the wire until one of your own mages has actually cast,
+      // which is what a squad sitting on its kits should look like on screen.
+      firedAbility: null,
     });
   });
 
-  it('carries the rule that fired, so the HUD can name it', () => {
+  it('carries the ability that fired, so the HUD can name it', () => {
     const { sync } = makeSync(TEAM_A);
-    const fired = { ruleId: 'answer-cluster', index: 0, cardId: 'plague', at: 'enemy_cluster' };
+    const fired = { mageId: 'mage-3', spellId: 'plague', at: 'enemy_cluster' };
 
-    sync.applySnapshot(snapshot({ firedRule: fired }));
+    sync.applySnapshot(snapshot({ firedAbility: fired }));
 
-    expect(sync.matchState.firedRule).toEqual(fired);
+    expect(sync.matchState.firedAbility).toEqual(fired);
   });
 
-  it('reports an empty hand before the first snapshot, not a stale one', () => {
+  it('reports nothing fired before the first snapshot, not a stale cast', () => {
     const { sync } = makeSync(null);
-    expect(sync.matchState.hand).toEqual([]);
+    expect(sync.matchState.firedAbility).toBeNull();
 
-    sync.applySnapshot(snapshot({ hand: [], next: undefined, mana: 0 }));
-    expect(sync.matchState.next).toBeNull();
+    sync.applySnapshot(snapshot());
+    expect(sync.matchState.firedAbility).toBeNull();
+  });
+
+  it('reads a mage’s charges off the wire, and empty when the kit is full', () => {
+    const { sync } = makeSync(TEAM_A);
+
+    sync.applySnapshot(snapshot({ mages: [mage({ id: 'm1', cd: [0, 4.5, 0] })] }));
+    expect(sync.squad.find((m) => m.wireId === 'm1')?.cooldowns).toEqual([0, 4.5, 0]);
+
+    // The wire omits `cd` entirely once everything is ready; the panel has to
+    // read that as "nothing recharging" rather than holding the last value.
+    sync.applySnapshot(snapshot({ mages: [mage({ id: 'm1' })] }));
+    expect(sync.squad.find((m) => m.wireId === 'm1')?.cooldowns).toEqual([]);
   });
 });
 

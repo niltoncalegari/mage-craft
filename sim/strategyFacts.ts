@@ -72,7 +72,6 @@ export function buildFacts(w: World, team: Team, plan?: SquadPlan): StrategyFact
   };
 
   return {
-    mana: w.manaOf(team),
     elapsed: w.elapsed,
     suddenDeath: w.suddenDeath,
     posture: plan?.posture ?? null,

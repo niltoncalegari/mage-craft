@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { ALL_ROSTER, rosterFor, type RosterId } from './cards';
+import { ALL_ROSTER, rosterFor, rosterOwnerOf, type RosterId } from './cards';
 import { ALL_SPELLS, spellFor, type SpellId } from './spells';
 import { ALL_TARGET_SELECTORS, abilityPolicyFor, isCondition } from './abilityPolicy';
 
@@ -153,5 +153,25 @@ describe('ability policy — the Brain has something to read', () => {
         abilityPolicyFor(id)!.at,
       );
     }
+  });
+});
+
+describe('rosterOwnerOf — which body a spell belongs to', () => {
+  /*
+   * Well-defined only because the two tests above hold: kits are disjoint and
+   * they cover the catalog, so "who carries this spell" has exactly one answer
+   * for every spell. That is what lets the post-match tally credit a body from
+   * a per-team count of spell ids, without a second table to keep in step.
+   */
+  it('names the one mage carrying each spell in the catalog', () => {
+    for (const spellId of ALL_SPELLS) {
+      const owner = rosterOwnerOf(spellId);
+      expect(owner, spellId).toBeDefined();
+      expect(rosterFor(owner!)!.abilities).toContain(spellId);
+    }
+  });
+
+  it('has no answer for something that is not a spell', () => {
+    expect(rosterOwnerOf('fireball_of_doom' as never)).toBeUndefined();
   });
 });

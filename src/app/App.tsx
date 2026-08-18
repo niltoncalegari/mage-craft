@@ -132,7 +132,7 @@ function AppShell(props: AppProps): JSX.Element {
    */
   const sendLoadout = (bridge: LobbyBridge): void => {
     const loadout = loadLoadout();
-    bridge.net.setLoadout(loadout.deck, loadout.squad, loadout.strategy);
+    bridge.net.setLoadout(loadout.squad, loadout.stances);
   };
 
   const chooseElement = (element: ElementId): void => {

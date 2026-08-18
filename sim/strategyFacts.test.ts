@@ -215,7 +215,6 @@ describe('buildFacts — structures and the clock', () => {
 
     expect(f.elapsed).toBeCloseTo(SIM_DT);
     expect(f.suddenDeath).toBe(false);
-    expect(f.mana).toBe(w.manaOf(TEAM_A));
   });
 });
 

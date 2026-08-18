@@ -7,12 +7,10 @@
 import { isRosterId, type RosterId } from '../../sim/cards';
 import type { Team } from '../../sim/entities';
 import { TEAM_A, TEAM_B } from '../../sim/entities';
-import { defaultDeck, validateDeck } from '../../sim/Deck';
+import { isStance, type Stance } from '../../sim/abilityPolicy';
 import { PICKABLE_ELEMENTS } from '../../sim/elements';
 import type { MatchSummary } from '../../sim/matchStats';
 import { validateSquad } from '../../sim/squad';
-import { isSpellId, type CardId } from '../../sim/spells';
-import { validateStrategy, type Strategy } from '../../sim/strategy';
 import type {
   AddBotMsg,
   ClaimSlotMsg,
@@ -67,7 +65,7 @@ export class App {
    */
   private readonly loadouts = new Map<
     string,
-    { deck?: CardId[]; squad?: RosterId[]; strategy?: Strategy }
+    { squad?: RosterId[]; stances?: Partial<Record<RosterId, Stance>> }
   >();
   private readonly matchmaker = new Matchmaker();
   private queueTimer: ReturnType<typeof setInterval> | null = null;
@@ -289,17 +287,12 @@ export class App {
 
   private handleJoinQueue(clientId: string, msg: JoinQueueMsg): void {
     const stored = this.loadouts.get(clientId);
-    // `join_queue.deck` predates `set_loadout` and still wins when sent, so an
-    // older client keeps working; everything else comes from the stored loadout.
-    const deck = msg.deck ? this.resolveDeck(clientId, msg.deck) : (stored?.deck ?? defaultDeck());
-    if (!deck) return;
 
     this.matchmaker.join({
       clientId,
       name: msg.name || 'Conjurer',
-      deck,
       squad: stored?.squad,
-      strategy: this.strategyFor(clientId, deck),
+      stances: stored?.stances,
       joinedAt: this.now() / 1000,
       rating: msg.rating,
     });
@@ -307,19 +300,7 @@ export class App {
     this.sweepQueue();
   }
 
-  /** Validates a submitted deck, falling back to the default when none is sent. */
-  private resolveDeck(clientId: string, cards: string[] | undefined): CardId[] | null {
-    if (!cards) return defaultDeck();
-
-    const check = validateDeck(cards);
-    if (!check.ok) {
-      this.sendError(clientId, `invalid deck: ${check.reason}`);
-      return null;
-    }
-    return cards.filter(isSpellId);
-  }
-
-  /** Validates a submitted squad. Unlike a deck, absence means "keep the default". */
+  /** Validates a submitted squad. Absence means "keep the default". */
   private resolveSquad(clientId: string, ids: string[] | undefined): RosterId[] | null {
     if (!ids) return null;
 
@@ -332,37 +313,37 @@ export class App {
   }
 
   /**
-   * Validates a submitted strategy program against the deck it will be played
-   * with. Like a squad, absence means "keep what you had".
+   * Validates the postures a client assigned their squad.
    *
-   * The deck argument is not optional for a reason: a rule naming a card the
-   * player did not bring can never fire, so a program is only meaningful
-   * relative to a deck. `validateStrategy` enforces that, which is what turns a
-   * silently inert program into a rejected one.
+   * Both halves are untrusted: the key has to be a roster entry that exists and
+   * the value one of the three stances, so a client cannot smuggle an arbitrary
+   * string into a `Record` the sim will later index. Rejected whole rather than
+   * filtered, for the reason the squad is: silently dropping the half of a
+   * loadout that did not parse fields a squad the player did not choose.
+   *
+   * A stance for a mage the player is not fielding is *not* an error. The two
+   * halves arrive in either order and a builder may well remember a posture for
+   * a mage on the bench; `initSquad` reads only what it needs.
    */
-  private resolveStrategy(clientId: string, value: unknown, deck: readonly CardId[]): Strategy | null {
-    const check = validateStrategy(value, deck);
-    if (!check.ok) {
-      this.sendError(clientId, `invalid strategy: ${check.reason}`);
-      return null;
-    }
-    return value as Strategy;
-  }
+  private resolveStances(
+    clientId: string,
+    value: Record<string, string> | undefined,
+  ): Partial<Record<RosterId, Stance>> | null {
+    if (!value) return null;
 
-  /**
-   * The stored program for a client, but only when it is still legal against
-   * the deck actually being fielded.
-   *
-   * The two halves arrive as separate messages and in either order, so a deck
-   * that lands after a program can orphan rules that name cards it dropped.
-   * Withholding the program then is what makes Session fall back to
-   * `defaultStrategy(deck)` — a seat that plays badly beats one that has a
-   * program and casts nothing.
-   */
-  private strategyFor(clientId: string, deck: readonly CardId[]): Strategy | undefined {
-    const stored = this.loadouts.get(clientId)?.strategy;
-    if (!stored) return undefined;
-    return validateStrategy(stored, deck).ok ? stored : undefined;
+    const out: Partial<Record<RosterId, Stance>> = {};
+    for (const [id, stance] of Object.entries(value)) {
+      if (!isRosterId(id)) {
+        this.sendError(clientId, `invalid stances: unknown mage ${JSON.stringify(id)}`);
+        return null;
+      }
+      if (!isStance(stance)) {
+        this.sendError(clientId, `invalid stances: unknown stance ${JSON.stringify(stance)}`);
+        return null;
+      }
+      out[id] = stance;
+    }
+    return out;
   }
 
   /**
@@ -373,26 +354,17 @@ export class App {
    */
   private handleSetLoadout(clientId: string, msg: SetLoadoutMsg): void {
     // Validate every part before committing any: a message that half-applies
-    // would leave the player fielding a squad they can see and a deck they
-    // cannot, with only an error message to explain the difference.
-    const deck = msg.deck ? this.resolveDeck(clientId, msg.deck) : undefined;
-    if (msg.deck && !deck) return;
-
+    // would leave the player fielding mages they can see standing in postures
+    // they did not choose, with only an error message to explain the difference.
     const squad = msg.squad ? this.resolveSquad(clientId, msg.squad) : undefined;
     if (msg.squad && !squad) return;
 
-    const stored = this.loadouts.get(clientId) ?? {};
-    // Checked against the deck this very message settles on, not against
-    // whatever was stored before it — otherwise sending both at once would
-    // validate the new program against the old cards.
-    const against = deck ?? stored.deck ?? defaultDeck();
-    const strategy =
-      msg.strategy !== undefined ? this.resolveStrategy(clientId, msg.strategy, against) : undefined;
-    if (msg.strategy !== undefined && !strategy) return;
+    const stances = msg.stances ? this.resolveStances(clientId, msg.stances) : undefined;
+    if (msg.stances && !stances) return;
 
-    if (deck) stored.deck = deck;
+    const stored = this.loadouts.get(clientId) ?? {};
     if (squad) stored.squad = squad;
-    if (strategy) stored.strategy = strategy;
+    if (stances) stored.stances = { ...stored.stances, ...stances };
 
     this.loadouts.set(clientId, stored);
     this.applyLoadout(clientId);
@@ -407,11 +379,8 @@ export class App {
     const sess = roomId ? this.sessions.get(roomId) : null;
     if (!sess) return;
 
-    if (loadout.deck) sess.setDeck(clientId, loadout.deck);
     if (loadout.squad) sess.setSquad(clientId, loadout.squad);
-
-    const strategy = this.strategyFor(clientId, loadout.deck ?? defaultDeck());
-    if (strategy) sess.setStrategy(clientId, strategy);
+    if (loadout.stances) sess.setStances(clientId, loadout.stances);
   }
 
   private sendQueueStatus(clientId: string): void {
@@ -471,14 +440,13 @@ export class App {
          * line the day Room drops the requirement.
          */
         session.selectElement(entry.clientId, QUEUE_ELEMENT);
-        session.setDeck(entry.clientId, entry.deck);
         if (entry.squad) session.setSquad(entry.clientId, entry.squad);
-        if (entry.strategy) session.setStrategy(entry.clientId, entry.strategy);
+        if (entry.stances) session.setStances(entry.clientId, entry.stances);
         session.setReady(entry.clientId, true);
         this.clientRoom.set(entry.clientId, roomId);
       }
       // The AI's seat has to exist for the room to be startable; Session gives
-      // any bot seat a Commander.
+      // any bot seat the default squad, which spends its kits like any other.
       if (!b) session.addBot(TEAM_B, QUEUE_BOT_DIFFICULTY);
       session.startMatch();
     } catch (err) {
@@ -575,27 +543,23 @@ export class App {
   }
 
   private broadcastSnapshot(roomId: string, snap: Snapshot): void {
-    // Mana and hand are per-receiver: you see your own bar and your own cards,
-    // never the opponent's. A spectator has neither.
+    // The board itself is the same bytes for everybody; what is per-receiver is
+    // the account of your own squad. A spectator has no squad, so they get none.
     const sess = this.sessions.get(roomId);
     for (const id of this.humanIds(roomId)) {
       const team = sess?.teamOf(id) ?? null;
       if (team === null) {
-        this.sendJSON(id, toSnapshotMsg(snap, { mana: 0, hand: [] }));
+        this.sendJSON(id, toSnapshotMsg(snap, {}));
         continue;
       }
 
-      const deck = sess?.deckFor(team) ?? null;
       this.sendJSON(
         id,
         toSnapshotMsg(snap, {
-          mana: snap.mana[team] ?? 0,
-          hand: deck?.hand() ?? [],
-          next: deck?.next() ?? null,
-          // Per-recipient like the hand: which of *your* rules just fired is
-          // the only in-match feedback an idle player gets, and the opponent
-          // must not be able to read your program off the wire.
-          firedRule: sess?.firedRuleFor(team) ?? null,
+          // Per-recipient: which of *your* mages just spent what is the only
+          // in-match feedback an idle player gets, and the cadence of a squad's
+          // kits must not be readable off the opponent's wire.
+          firedAbility: sess?.firedAbilityFor(team) ?? null,
         }),
       );
     }
@@ -613,7 +577,11 @@ export class App {
         kills: side.kills,
         deaths: side.deaths,
         structuresDestroyed: side.structuresDestroyed,
-        casts: side.casts.map((c) => ({ cardId: c.cardId, casts: c.casts })),
+        casts: side.casts.map((c) => ({
+          cardId: c.cardId,
+          ...(c.rosterId ? { rosterId: c.rosterId } : {}),
+          casts: c.casts,
+        })),
         mages: side.mages.map((m) => ({
           role: m.role,
           kills: m.kills,

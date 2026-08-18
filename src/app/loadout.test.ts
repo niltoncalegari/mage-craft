@@ -1,20 +1,19 @@
 /**
  * The loadout store, with the parts that only matter because it is read on
- * every boot from storage nobody controls: the v1 migration, and what happens
- * when a stored part no longer agrees with the one next to it.
+ * every boot from storage nobody controls: the migrations forward from v1 and
+ * v2, and what happens when a stored part is not something this build can read.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { defaultSquad } from '../../sim/cards';
-import { defaultDeck } from '../../sim/Deck';
-import { STRATEGY_VERSION } from '../../sim/strategy';
-import { DEFAULT_LOADOUT_ID, loadLoadout, loadStore, saveDeck, saveStore } from './loadout';
+import { DEFAULT_LOADOUT_ID, loadLoadout, loadStore, saveStances, saveStore } from './loadout';
 
 const V1_KEY = 'mage-craft.loadout.v1';
 const V2_KEY = 'mage-craft.loadout.v2';
+const V3_KEY = 'mage-craft.loadout.v3';
 
 const SQUAD = ['ice_sentinel', 'wind_dervish', 'alchemist', 'arcane_bard'];
-/** Legal, two-colour, and deliberately holding no green — so no `plague`. */
+/** A legal v2 deck, kept only so the migration has a real v2 record to drop. */
 const WHITE_RED_DECK = [
   'blessing',
   'blessing',
@@ -56,82 +55,126 @@ beforeEach(() => {
 });
 
 describe('loadLoadout — defaults', () => {
-  it('gives a fresh device a playable profile, program included', () => {
+  it('gives a fresh device a playable squad standing at the default posture', () => {
     const loadout = loadLoadout();
 
     expect(loadout.squad).toEqual(defaultSquad());
-    expect(loadout.deck).toEqual(defaultDeck());
-    // Never an empty program: an empty one is the AFK baseline, and handing it
-    // to somebody who has not opened the editor would be a seat that never casts.
-    expect(loadout.strategy.rules.length).toBeGreaterThan(0);
+    // Empty rather than four explicit `normal` entries: absence *is* `normal`,
+    // and writing it out would make "the player chose this" indistinguishable
+    // from "nobody has opened the builder yet".
+    expect(loadout.stances).toEqual({});
   });
 });
 
-describe('loadStore — migrating v1', () => {
-  it('carries a v1 squad and deck forward and writes a program for them', () => {
+describe('loadStore — migrating forward', () => {
+  it('carries a v1 squad forward and drops the deck with it', () => {
     localStorage.setItem(V1_KEY, JSON.stringify({ squad: SQUAD, deck: WHITE_RED_DECK }));
 
     const loadout = loadLoadout();
 
     expect(loadout.id).toBe(DEFAULT_LOADOUT_ID);
     expect(loadout.squad).toEqual(SQUAD);
-    expect(loadout.deck).toEqual(WHITE_RED_DECK);
-    expect(loadout.strategy.version).toBe(STRATEGY_VERSION);
-    // v1 predates programs entirely, so the migration has to invent one — and
-    // every rule it invents has to name a card this deck actually holds.
-    expect(loadout.strategy.rules.length).toBeGreaterThan(0);
-    for (const rule of loadout.strategy.rules) expect(WHITE_RED_DECK).toContain(rule.card);
+    // The deck is not translated into anything. There is no hand to play, so
+    // nothing it said has a v3 meaning to be preserved into.
+    expect('deck' in loadout).toBe(false);
+    expect(loadout.stances).toEqual({});
   });
 
-  it('persists the migration, so v1 is read exactly once', () => {
-    localStorage.setItem(V1_KEY, JSON.stringify({ squad: SQUAD, deck: WHITE_RED_DECK }));
-    loadStore();
-
-    expect(localStorage.getItem(V2_KEY)).toBeTruthy();
-
-    // With v1 gone the v2 copy is what answers — proof the read is not falling
-    // through to the migration a second time.
-    localStorage.removeItem(V1_KEY);
-    expect(loadLoadout().squad).toEqual(SQUAD);
-  });
-
-  it('falls back per part, so a corrupt v1 deck does not cost the squad', () => {
-    localStorage.setItem(V1_KEY, JSON.stringify({ squad: SQUAD, deck: ['blessing'] }));
-
-    const loadout = loadLoadout();
-
-    expect(loadout.squad).toEqual(SQUAD);
-    expect(loadout.deck).toEqual(defaultDeck());
-  });
-});
-
-describe('loadStore — a hand-edited store', () => {
-  it('degrades an illegal part to the default instead of shipping it', () => {
+  it('carries a v2 squad forward and drops the program with it', () => {
     localStorage.setItem(
       V2_KEY,
       JSON.stringify({
-        loadouts: [{ id: 'x', name: 'X', squad: ['not_a_mage'], deck: WHITE_RED_DECK, strategy: 'nonsense' }],
+        loadouts: [
+          { id: 'x', name: 'X', squad: SQUAD, deck: WHITE_RED_DECK, strategy: { rules: [] } },
+        ],
         activeLoadoutId: 'x',
       }),
     );
 
     const loadout = loadLoadout();
 
+    expect(loadout.id).toBe('x');
+    expect(loadout.squad).toEqual(SQUAD);
+    expect('strategy' in loadout).toBe(false);
+  });
+
+  it('prefers v2 over v1 when a device upgraded through both', () => {
+    localStorage.setItem(V1_KEY, JSON.stringify({ squad: defaultSquad() }));
+    localStorage.setItem(
+      V2_KEY,
+      JSON.stringify({ loadouts: [{ id: 'x', name: 'X', squad: SQUAD }], activeLoadoutId: 'x' }),
+    );
+
+    // v2 is the later of the two, so reading v1 would hand back a squad the
+    // player replaced.
+    expect(loadLoadout().squad).toEqual(SQUAD);
+  });
+
+  it('persists the migration, so the old keys are read exactly once', () => {
+    localStorage.setItem(V1_KEY, JSON.stringify({ squad: SQUAD }));
+    loadStore();
+
+    expect(localStorage.getItem(V3_KEY)).toBeTruthy();
+
+    // With v1 gone the v3 copy is what answers — proof the read is not falling
+    // through to the migration a second time.
+    localStorage.removeItem(V1_KEY);
+    expect(loadLoadout().squad).toEqual(SQUAD);
+  });
+
+  it('falls back per part, so a corrupt v1 squad still yields a profile', () => {
+    localStorage.setItem(V1_KEY, JSON.stringify({ squad: ['not_a_mage'] }));
+
+    expect(loadLoadout().squad).toEqual(defaultSquad());
+  });
+});
+
+describe('loadStore — a hand-edited store', () => {
+  it('degrades an illegal part to the default instead of shipping it', () => {
+    localStorage.setItem(
+      V3_KEY,
+      JSON.stringify({
+        loadouts: [{ id: 'x', name: 'X', squad: ['not_a_mage'], stances: { cleric: 'hold' } }],
+        activeLoadoutId: 'x',
+      }),
+    );
+
+    const loadout = loadLoadout();
+
+    // The squad falls back on its own; the postures beside it are legal and
+    // survive, which is the whole point of cleaning part by part.
     expect(loadout.squad).toEqual(defaultSquad());
-    expect(loadout.deck).toEqual(WHITE_RED_DECK);
-    expect(loadout.strategy.rules.length).toBeGreaterThan(0);
+    expect(loadout.stances).toEqual({ cleric: 'hold' });
+  });
+
+  it('drops only the posture entries it cannot read', () => {
+    localStorage.setItem(
+      V3_KEY,
+      JSON.stringify({
+        loadouts: [
+          {
+            id: 'x',
+            name: 'X',
+            squad: defaultSquad(),
+            stances: { cleric: 'hold', pyromancer: 'berserk', lich_king: 'normal' },
+          },
+        ],
+        activeLoadoutId: 'x',
+      }),
+    );
+
+    // One unreadable key is not a reason to forget every posture the player set.
+    expect(loadLoadout().stances).toEqual({ cleric: 'hold' });
   });
 
   it('survives outright garbage', () => {
-    localStorage.setItem(V2_KEY, '{{{');
-    expect(loadLoadout().deck).toEqual(defaultDeck());
+    localStorage.setItem(V3_KEY, '{{{');
+    expect(loadLoadout().squad).toEqual(defaultSquad());
   });
 
   it('arms the first profile when the active id names none', () => {
     saveStore({
-      loadouts: [
-        { id: 'a', name: 'A', squad: defaultSquad(), deck: defaultDeck(), strategy: loadLoadout().strategy },
-      ],
+      loadouts: [{ id: 'a', name: 'A', squad: defaultSquad(), stances: {} }],
       activeLoadoutId: 'ghost',
     });
 
@@ -139,21 +182,24 @@ describe('loadStore — a hand-edited store', () => {
   });
 });
 
-describe('saveDeck — keeping the program and the deck in agreement', () => {
-  it('drops the rules a new deck orphaned and keeps the ones that still work', () => {
-    const before = loadLoadout();
-    // The default deck is green, so the default program names `plague`; the new
-    // deck holds none. Those rules can never fire again.
-    expect(before.strategy.rules.some((r) => r.card === 'plague')).toBe(true);
+describe('saveStances', () => {
+  it('replaces the postures and leaves the squad alone', () => {
+    saveStore({
+      loadouts: [{ id: 'a', name: 'A', squad: SQUAD as never, stances: { cleric: 'hold' } }],
+      activeLoadoutId: 'a',
+    });
 
-    saveDeck(WHITE_RED_DECK as never);
+    saveStances({ stone_golem: 'aggressive' });
 
     const after = loadLoadout();
-    expect(after.deck).toEqual(WHITE_RED_DECK);
-    for (const rule of after.strategy.rules) expect(WHITE_RED_DECK).toContain(rule.card);
-    // Rules naming cards the new deck still holds survive — editing a deck must
-    // not quietly wipe the program the player wrote.
-    const kept = before.strategy.rules.filter((r) => WHITE_RED_DECK.includes(r.card));
-    expect(after.strategy.rules.map((r) => r.id)).toEqual(kept.map((r) => r.id));
+    expect(after.squad).toEqual(SQUAD);
+    // Replaced wholesale rather than merged: the builder always sends the full
+    // map it is showing, so a merge would resurrect a posture the player cleared.
+    expect(after.stances).toEqual({ stone_golem: 'aggressive' });
+  });
+
+  it('refuses to store a posture it could not read back', () => {
+    saveStances({ cleric: 'berserk' } as never);
+    expect(loadLoadout().stances).toEqual({});
   });
 });

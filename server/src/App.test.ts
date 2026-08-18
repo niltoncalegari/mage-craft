@@ -18,11 +18,11 @@ import type {
   ServerMsg,
   SnapshotMsg,
 } from '../../sim/protocol';
-import { defaultSquad } from '../../sim/cards';
+import { defaultSquad, rosterFor } from '../../sim/cards';
 import { SIM_DT, SQUAD_SIZE } from '../../sim/config';
-import { HAND_SIZE } from '../../sim/Deck';
-import { emptyStrategy, STRATEGY_VERSION } from '../../sim/strategy';
+import type { Team } from '../../sim/entities';
 import { BOT_FALLBACK_SECONDS } from './Matchmaker';
+import type { Session } from './Session';
 import { App, type Transport } from './App';
 
 interface Sent {
@@ -225,7 +225,6 @@ describe('App — match protocol', () => {
       alive: expect.any(Boolean),
       invulnerable: expect.any(Boolean),
     });
-    expect(snap?.mana).toEqual(expect.any(Number));
     expect(snap?.elapsed).toEqual(expect.any(Number));
   });
 
@@ -242,62 +241,64 @@ describe('App — match protocol', () => {
     expect(mage && 'immune' in mage).toBe(false);
   });
 
-  it('sends each player their own hand plus the card queued behind it', () => {
+  it('omits a mage’s charges while its whole kit is ready', () => {
     startedMatch();
     const session = getSession();
     for (let i = 0; i < 3; i++) session.tick();
 
-    const snap = hub.last<SnapshotMsg>('host', 'snapshot');
-    expect(snap?.hand).toEqual(session.deckFor(0)!.hand());
-    expect(snap?.hand).toHaveLength(HAND_SIZE);
-    expect(snap?.next).toBe(session.deckFor(0)!.next());
-    // The preview is a distinct slot in the cycle — its *value* may still
-    // match a card already in hand, since only 4 spells exist so far and the
-    // provisional deck duplicates each one (GDD §9, §16.4).
-    expect(snap?.next).toBeTruthy();
+    // Three ticks in, nobody has reached an evaluation yet. A full kit is the
+    // common case early, and it costs nothing on the wire.
+    const mage = hub.last<SnapshotMsg>('host', 'snapshot')?.mages[0];
+    expect(mage && 'cd' in mage).toBe(false);
   });
 
-  it('cycles the hand on the wire as the seat’s own program casts', () => {
+  it('shows a kit recharging on the wire as the seat’s own mages spend it', () => {
     startedMatch();
     const session = getSession();
-    const handBefore = session.deckFor(0)!.hand();
 
-    // Nobody sends anything. A seat with a program plays itself, which is the
-    // whole claim of the idle pivot — the hand moving with no client message in
-    // between is the smallest end-to-end proof of it.
+    // Nobody sends anything. A squad spends its own kits, which is the whole
+    // claim of the pivot — charges moving with no client message in between is
+    // the smallest end-to-end proof of it.
     tickFor(session, 2);
 
-    const snap = hub.last<SnapshotMsg>('host', 'snapshot');
-    expect(snap?.hand).toHaveLength(HAND_SIZE);
-    // The played slot cycled to the back — the hand as a whole changed, even
-    // though a duplicate of the same spell id may still be in it (GDD §9).
-    expect(snap?.hand).not.toEqual(handBefore);
+    const spent = hub.last<SnapshotMsg>('host', 'snapshot')?.mages.filter((m) => m.cd);
+    expect(spent?.length).toBeGreaterThan(0);
+
+    // One entry per skill in that mage's kit, in the roster's stable order —
+    // that ordering is the whole of what lets the client re-join them to ids.
+    const one = spent![0];
+    expect(one.cd).toHaveLength(rosterFor(one.rosterId as never)!.abilities.length);
+    expect(one.cd!.some((c) => c > 0)).toBe(true);
   });
 
-  it('names the rule that fired, on the caster’s own channel only', () => {
+  it('names the mage that fired, on its own side’s channel only', () => {
     const roomId = startedMatch();
     send('watcher', { type: 'join_room', roomId, name: 'Bob' });
     const session = getSession();
     tickFor(session, 2);
 
-    // The idle player's only account of the match: which of their rules just
-    // spent their mana, and where it aimed.
-    const mine = hub.last<SnapshotMsg>('host', 'snapshot')?.firedRule;
-    expect(mine).toMatchObject({ cardId: expect.any(String), at: expect.any(String) });
-    expect(mine?.index).toBeGreaterThanOrEqual(0);
+    // The idle player's only account of the match: which of their mages just
+    // spent what, and where it aimed.
+    const mine = hub.last<SnapshotMsg>('host', 'snapshot')?.firedAbility;
+    expect(mine).toMatchObject({
+      mageId: expect.any(String),
+      spellId: expect.any(String),
+      at: expect.any(String),
+    });
+    // It names a body that is actually on the field, not a stale id.
+    expect(session.liveWorld?.mage(mine!.mageId)?.team).toBe(0);
 
-    // A spectator has no program, so there is nothing of theirs to report — and
+    // A spectator has no squad, so there is nothing of theirs to report — and
     // the host's must not leak onto their channel.
-    expect(hub.last<SnapshotMsg>('watcher', 'snapshot')?.firedRule).toBeUndefined();
+    expect(hub.last<SnapshotMsg>('watcher', 'snapshot')?.firedAbility).toBeUndefined();
   });
 
   it('refuses a by-hand cast — a match is played by the program now', () => {
     startedMatch();
     const session = getSession();
-    const card = session.deckFor(0)!.hand()[0];
     const mageCountBefore = session.liveWorld?.mages.size;
 
-    send('host', { type: 'cast', cardId: card, position: { x: -10, y: 0 } });
+    send('host', { type: 'cast', cardId: 'blessing', position: { x: -10, y: 0 } });
 
     expect(hub.last('host', 'error')).toMatchObject({
       message: expect.stringContaining('idle_mode'),
@@ -416,21 +417,25 @@ describe('App — matchmaking queue', () => {
     expect(hub.last<SnapshotMsg>('solo', 'snapshot')).toBeTruthy();
   });
 
-  it('plays both queued seats from their own programs, with nobody clicking', () => {
+  it('plays both queued seats from their own kits, with nobody clicking', () => {
     send('c1', { type: 'join_queue', name: 'Alice' });
     send('c2', { type: 'join_queue', name: 'Bob' });
     app.dispose();
 
     const session = getSession();
-    const handsBefore = [session.deckFor(0)!.hand(), session.deckFor(1)!.hand()];
     tickFor(session, 2);
 
     expect(hub.to<ErrorMsg>('c1', 'error')).toEqual([]);
     expect(hub.to<ErrorMsg>('c2', 'error')).toEqual([]);
-    // Neither player sent a thing, and both hands moved — a queued match is
-    // contested on both sides by the programs their players brought.
-    expect(session.deckFor(0)!.hand()).not.toEqual(handsBefore[0]);
-    expect(session.deckFor(1)!.hand()).not.toEqual(handsBefore[1]);
+    // Neither player sent a thing, and both sides spent something — a queued
+    // match is contested on both sides by the squads their players brought.
+    //
+    // Counted off the world rather than off a hand cycling, which is what made
+    // the old version of this test flaky: it needed both *programs* to clear a
+    // shared global cooldown inside the same two seconds, and roughly one run
+    // in three did not. Four independent kits per side have no such shared gate.
+    expect(castsBy(session, 0)).toBeGreaterThan(0);
+    expect(castsBy(session, 1)).toBeGreaterThan(0);
     // Casts never summon anything (GDD §9) — both squads are already full.
     expect(session.liveWorld?.mages.size).toBe(SQUAD_SIZE * 2);
   });
@@ -438,18 +443,6 @@ describe('App — matchmaking queue', () => {
 
 describe('App — loadout', () => {
   const SQUAD = ['ice_sentinel', 'wind_dervish', 'alchemist', 'arcane_bard'];
-  /** A legal two-colour deck that deliberately holds no green — so no `plague`. */
-  const WHITE_RED_DECK = [
-    'blessing',
-    'blessing',
-    'arcane_shield',
-    'arcane_shield',
-    'overload_field',
-    'overload_field',
-    'meteor_shower',
-    'meteor_shower',
-  ];
-
   it('fields the squad a queued player registered before joining the queue', () => {
     send('c1', { type: 'set_loadout', squad: SQUAD });
     send('c1', { type: 'join_queue', name: 'Alice' });
@@ -493,52 +486,50 @@ describe('App — loadout', () => {
     expect(hub.last<QueueStatusMsg>('c1', 'queue_status')).toMatchObject({ position: 1 });
   });
 
-  it('fields the strategy a player registered, and lets it beat an empty one', () => {
-    // Deliberately the AFK baseline: the only program whose effect is legible
-    // from outside without reading the caster is the one that casts nothing.
-    send('c1', { type: 'set_loadout', strategy: emptyStrategy() });
+  it('fields the postures a player registered, and stands the rest at normal', () => {
+    send('c1', {
+      type: 'set_loadout',
+      stances: { stone_golem: 'hold', pyromancer: 'aggressive' },
+    });
     send('c1', { type: 'join_queue', name: 'Alice' });
     send('c2', { type: 'join_queue', name: 'Bob' });
     app.dispose();
-
-    const session = getSession();
-    const mine = session.deckFor(0)!.hand();
-    const theirs = session.deckFor(1)!.hand();
-    tickFor(session, 4);
 
     expect(hub.to<ErrorMsg>('c1', 'error')).toEqual([]);
-    expect(session.deckFor(0)!.hand()).toEqual(mine);
-    // The opponent, who registered nothing, still gets the default program —
-    // an idle match where neither side casts would be a screensaver.
-    expect(session.deckFor(1)!.hand()).not.toEqual(theirs);
+
+    const mine = [...(getSession().liveWorld?.mages.values() ?? [])].filter((m) => m.team === 0);
+    const stanceOf = (id: string): string | undefined => mine.find((m) => m.rosterId === id)?.stance;
+
+    expect(stanceOf('stone_golem')).toBe('hold');
+    expect(stanceOf('pyromancer')).toBe('aggressive');
+    // The two the player never touched keep the default rather than inheriting
+    // whichever posture happened to be sent last.
+    expect(stanceOf('stormcaller')).toBe('normal');
+    expect(stanceOf('cleric')).toBe('normal');
   });
 
-  it('rejects a strategy that names a card the deck does not hold', () => {
-    // A rule on a card you did not bring can never fire. Refusing it is the
-    // difference between a program that is wrong and one that is silently inert.
-    const orphan = {
-      version: STRATEGY_VERSION,
-      name: 'orphan',
-      rules: [
-        { id: 'r1', enabled: true, card: 'plague', when: { kind: 'always' }, at: 'enemy_cluster' },
-      ],
-    };
-    send('c1', { type: 'set_loadout', deck: WHITE_RED_DECK, strategy: orphan });
+  it('rejects a posture nobody can stand in, and a mage nobody can field', () => {
+    // Both halves are untrusted strings off the wire. Letting either through
+    // would put a value the sim indexes on into a `Record` it trusts.
+    send('c1', { type: 'set_loadout', stances: { cleric: 'berserk' } });
+    expect(hub.last<ErrorMsg>('c1', 'error')?.message).toMatch(/invalid stances/);
 
-    expect(hub.last<ErrorMsg>('c1', 'error')?.message).toMatch(/invalid strategy/);
+    hub.clear();
+    send('c1', { type: 'set_loadout', stances: { lich_king: 'hold' } });
+    expect(hub.last<ErrorMsg>('c1', 'error')?.message).toMatch(/invalid stances/);
   });
 
-  it('applies a loadout all at once, so an illegal deck takes the squad down with it', () => {
-    send('c1', { type: 'set_loadout', squad: SQUAD, deck: ['blessing'] });
+  it('applies a loadout all at once, so illegal postures take the squad down with them', () => {
+    send('c1', { type: 'set_loadout', squad: SQUAD, stances: { cleric: 'berserk' } });
 
-    expect(hub.last<ErrorMsg>('c1', 'error')?.message).toMatch(/invalid deck/);
+    expect(hub.last<ErrorMsg>('c1', 'error')?.message).toMatch(/invalid stances/);
 
     send('c1', { type: 'join_queue', name: 'Alice' });
     send('c2', { type: 'join_queue', name: 'Bob' });
     app.dispose();
 
-    // Half-applying would field a squad the player picked alongside a deck they
-    // did not — the message is rejected whole instead.
+    // Half-applying would field a squad the player picked standing in postures
+    // they did not — the message is rejected whole instead.
     const fielded = [...(getSession().liveWorld?.mages.values() ?? [])]
       .filter((m) => m.team === 0)
       .map((m) => m.rosterId)
@@ -579,9 +570,16 @@ describe('App — match result', () => {
 });
 
 /** Reaches into App for the one live session, so tests can tick deterministically. */
+/** How many spells a team has actually put down, off the world's own tally. */
+function castsBy(session: Session, team: Team): number {
+  let n = 0;
+  for (const c of session.liveWorld?.castsBySpell.get(team)?.values() ?? []) n += c;
+  return n;
+}
+
 /**
  * Advances a session by real simulated seconds. Needed since the idle pivot:
- * a caster thinks on its own clock, so "has anything happened yet" is a
+ * a kit is evaluated on its own clock, so "has anything happened yet" is a
  * question about elapsed time rather than about a handful of ticks.
  */
 function tickFor(session: import('./Session').Session, seconds: number): void {
