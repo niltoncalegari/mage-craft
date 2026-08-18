@@ -11,6 +11,19 @@
  * against another, and v1.3 retired both. A mage now spends its own kit, so the
  * unit of comparison is a squad, and the unit of blame is a body and a skill.
  *
+ * **Volta B, passagem 1 — recorded here because a falsified dial is a result,
+ * and the next reader will otherwise try it again.** `arcane_bard` sits at
+ * 31.9% against the pool (n=1080 sides) and `arcane_archer` at 40.6% (n=540);
+ * they are the only two mages carrying a two-skill kit, and they spend ~22
+ * casts a side where three-skill kits spend 26-38. Every skill in the game runs
+ * near its cooldown ceiling (`paranoia` goes off 11.8 times in a 150s match
+ * against a ceiling of ~13), so cooldown is the dial that binds. Cutting the
+ * bard's two — `bond_of_pain` 14→9, `paranoia` 11→7 — raised its throughput 36%
+ * (`paranoia` 12757→16972 casts, `bond_of_pain` 10974→15482) and moved its win
+ * rate from **31.9% to 32.1%**: three matches in 1080. Reverted. Throughput is
+ * not what holds a two-skill kit back, and the next pass should reach for
+ * magnitude or for the body, not for frequency.
+ *
  * Two rules from §5.2 are baked into how the output reads:
  *
  * - **A skill with zero casts is never a balance finding.** It is a `when` /
@@ -269,11 +282,43 @@ function legalQuartets(): RosterId[][] {
   return out;
 }
 
-/** Evenly spaced through the full list, so a smaller `--pool` is still a spread. */
+/**
+ * A subset of the legal quartets chosen to field every mage as evenly as it can.
+ *
+ * Even spacing through the list was the obvious first cut and it is a trap: the
+ * quartets come out in catalog order, so a slice of ten gave `alchemist` a
+ * single appearance against `cleric`'s six. Its 85% then read as a ceiling
+ * breach when it was one quartet's record wearing a mage's name.
+ *
+ * Greedy on the rarest mage instead — repeatedly take the quartet that most
+ * helps whoever is currently least fielded. Deterministic (ties fall to catalog
+ * order), so the same `--pool N` is the same pool run to run, which is what
+ * makes a dial's before and after comparable at all.
+ */
 function samplePool(all: RosterId[][], size: number): RosterId[][] {
   if (size >= all.length) return all;
-  const step = all.length / size;
-  return Array.from({ length: size }, (_, i) => all[Math.floor(i * step)]);
+
+  const seen = new Map<RosterId, number>(ALL_ROSTER.map((r) => [r, 0]));
+  const remaining = [...all];
+  const out: RosterId[][] = [];
+
+  while (out.length < size && remaining.length > 0) {
+    let bestIdx = 0;
+    let bestScore = -Infinity;
+    for (const [i, q] of remaining.entries()) {
+      // Worth of a quartet = how much it helps the mages currently behind.
+      const score = q.reduce((sum, r) => sum - (seen.get(r) ?? 0), 0);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+    const [picked] = remaining.splice(bestIdx, 1);
+    for (const r of picked) seen.set(r, (seen.get(r) ?? 0) + 1);
+    out.push(picked);
+  }
+
+  return out;
 }
 
 /* ---- Sections --------------------------------------------------------------- */
@@ -366,8 +411,19 @@ if (runs('loo')) {
 }
 
 if (runs('pool')) {
-  const pool = samplePool(legalQuartets(), POOL_SIZE);
-  console.log(`— round robin (${pool.length} legal quartets, ${(pool.length * (pool.length - 1)) / 2} pairings) —`);
+  const all = legalQuartets();
+  const pool = samplePool(all, POOL_SIZE);
+  console.log(
+    `— round robin (${pool.length} of ${all.length} legal quartets, ` +
+      `${(pool.length * (pool.length - 1)) / 2} pairings) —`,
+  );
+  // The per-mage cut below is worth exactly what this line says it is: a mage
+  // in one quartet has that quartet's record, not its own.
+  const appearances = new Map<RosterId, number>(ALL_ROSTER.map((r) => [r, 0]));
+  for (const q of pool) for (const r of q) appearances.set(r, (appearances.get(r) ?? 0) + 1);
+  console.log(
+    `  quartets per mage: ${ALL_ROSTER.map((r) => `${r} ${appearances.get(r)}`).join(' · ')}`,
+  );
   inPool = true;
 
   for (let i = 0; i < pool.length; i++) {
