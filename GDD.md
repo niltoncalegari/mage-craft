@@ -832,7 +832,7 @@ o sampler que dá a cada mago 3-6 aparições:
 | arcane_bard | 44.3% | 900 |
 | arcane_archer | 43.9% | 720 |
 | wind_dervish | 21.3% | 540 |
-| alchemist | 20.3% | 720 |
+| alchemist | 20.3% → **23.6%** | 720 |
 
 **Oito dos nove estão fora da banda de 45-55%**, com **55 pontos** entre o melhor
 e o pior. A desigualdade mora no papel de **dano**, não no de suporte: os dois
@@ -848,7 +848,17 @@ continua **0%**, agora como critério de regressão e não como meta.
 > balance sobrevive a um pool que não fielda os magos de forma comparável, e o
 > relatório imprime quartetos-por-mago exatamente para isso não voltar a passar.
 
-> ⚠️ **Uma passagem de volta B já foi feita e falhou — não repetir.** A hipótese
+> ✅ **Volta B, passagem 2 — moveu, mas não consertou.** O `alchemist` gasta
+> `dark_tribute` **24.9 vezes por side**, o maior volume do jogo: custo 1,
+> cooldown 6, e a skill aplica `strike` de 10 **nos próprios aliados** para
+> devolver carga. São ~500 de dano autoinfligido por partida contra corpos de
+> 60-80 HP — o kit estava matando o próprio time. Cortando a magnitude de 10
+> para 4, o `alchemist` foi de **20.3% para 23.6%** (170 vitórias contra 146, em
+> 720 sides). Mantido: direção certa, mas 3.3 pontos contra um vão de 25 até o
+> piso, e o ruído binomial nesse n é de ~1.5 ponto. **É melhora parcial, não
+> conserto** — o resto do problema do `alchemist` está em outro lugar.
+
+> ⚠️ **Volta B, passagem 1 — falhou, não repetir.** A hipótese
 > era que os dois magos de **kit com 2 slots** perdiam por falta de throughput:
 > gastam ~22 casts/side contra 26-38 dos kits de 3, e toda skill roda perto do
 > teto do próprio cooldown (§6). Cortar `bond_of_pain` de 14→9 e `paranoia` de

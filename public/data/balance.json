@@ -603,7 +603,7 @@
       "minTargets": 2,
       "when": {"kind": "ally_cluster", "op": "gte", "value": 2},
       "apply": [
-        { "effect": "strike", "magnitude": 10 },
+        { "effect": "strike", "magnitude": 4 },
         { "effect": "tribute", "magnitude": 1 }
       ]
     },
