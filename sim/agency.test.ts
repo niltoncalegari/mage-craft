@@ -126,7 +126,16 @@ interface HeadToHead {
   rate: number;
 }
 
-/** Plays `seeds` head to head, alternating sides, and returns the left side's record. */
+/**
+ * Plays every seed in **both seats** and returns the left side's record.
+ *
+ * The earlier version alternated seats by seed index, which reads as the same
+ * thing and is not. Giving each seed one arbitrary seat only cancels the map's
+ * bias if the seeds are exchangeable; measured through the Fase 3 sweep, they
+ * are not — a mirror control came out 8-4 for the left *label*, and the same
+ * matchup disagreed with itself depending on argument order. Paired seats make
+ * the cancellation exact, at twice the matches.
+ */
 function headToHead(seeds: readonly number[], left: Side, right: Side): HeadToHead {
   let leftWins = 0;
   let rightWins = 0;
@@ -136,23 +145,24 @@ function headToHead(seeds: readonly number[], left: Side, right: Side): HeadToHe
   let leftLost = 0;
   let rightLost = 0;
 
-  for (const [i, seed] of seeds.entries()) {
-    // Team A and team B do not face a symmetric map, so a fixed assignment
-    // would report the map's bias as the squad's.
-    const leftOnA = i % 2 === 0;
-    const r = runMatch(seed, {
-      [TEAM_A]: leftOnA ? left : right,
-      [TEAM_B]: leftOnA ? right : left,
-    });
+  for (const seed of seeds) {
+    // Team A and team B do not face a symmetric map, so each seed is played
+    // from both seats and the bias cancels within the pair.
+    for (const leftOnA of [true, false]) {
+      const r = runMatch(seed, {
+        [TEAM_A]: leftOnA ? left : right,
+        [TEAM_B]: leftOnA ? right : left,
+      });
 
-    leftCasts += leftOnA ? r.castsByA : r.castsByB;
-    rightCasts += leftOnA ? r.castsByB : r.castsByA;
-    leftLost += leftOnA ? r.structuresLostByA : r.structuresLostByB;
-    rightLost += leftOnA ? r.structuresLostByB : r.structuresLostByA;
+      leftCasts += leftOnA ? r.castsByA : r.castsByB;
+      rightCasts += leftOnA ? r.castsByB : r.castsByA;
+      leftLost += leftOnA ? r.structuresLostByA : r.structuresLostByB;
+      rightLost += leftOnA ? r.structuresLostByB : r.structuresLostByA;
 
-    if (r.winner === null) draws++;
-    else if (r.winner === (leftOnA ? TEAM_A : TEAM_B)) leftWins++;
-    else rightWins++;
+      if (r.winner === null) draws++;
+      else if (r.winner === (leftOnA ? TEAM_A : TEAM_B)) leftWins++;
+      else rightWins++;
+    }
   }
 
   const decided = leftWins + rightWins;
@@ -168,7 +178,10 @@ function headToHead(seeds: readonly number[], left: Side, right: Side): HeadToHe
   };
 }
 
-/** 20 seeds, alternating sides — the sample every threshold below was read off. */
+/**
+ * 20 seeds, each played from both seats — 40 matches, and the sample every
+ * threshold below was read off.
+ */
 const SEEDS = Array.from({ length: 20 }, (_, i) => i * 7 + 3);
 
 describe('agency — the squad you bring is a real choice', () => {
@@ -178,10 +191,14 @@ describe('agency — the squad you bring is a real choice', () => {
    * but a squad with no answer: four support bodies, whose kits heal, shield
    * and buff and cannot take a structure down.
    *
-   * Measured over `SEEDS` (n=20, alternating sides) this is **20-0**, with the
-   * balanced squad losing **0** structures against 60. The floor is set far
+   * Measured over `SEEDS` in both seats (n=40) this is **40-0**, with the
+   * balanced squad losing **0** structures against 119. The floor is set far
    * under that on purpose — it guards the property that must never invert, not
    * the margin of the day.
+   *
+   * The baseline is deliberately a squad `validateSquad` **rejects**: it
+   * doubles two bodies and fields no damage role. A floor has to be
+   * unbuildable, or it is just another matchup.
    */
   it('beats a squad that brought no way to hurt anything, across seeds', { timeout: 600_000 }, () => {
     const balanced = allAt(defaultSquad(), 'normal');
@@ -194,17 +211,24 @@ describe('agency — the squad you bring is a real choice', () => {
   });
 
   /*
-   * **An open balance debt, pinned here so it does not become folklore.**
+   * **A correction to what this comment used to say.**
    *
-   * The same harness run against an all-tank squad (`stone_golem` ×2,
-   * `ice_sentinel` ×2) reports the balanced squad *losing* 3-17 over the same
-   * n=20, 55 structures lost against 17. Durability is currently worth more
-   * than the role rule asks a player to pay for it.
+   * It recorded an open *balance* debt: the balanced squad losing 3-17 to an
+   * all-tank squad (`stone_golem` ×2, `ice_sentinel` ×2), durability worth more
+   * than the role rule charges for it. Re-measured with both seats played
+   * (n=40) the gap is if anything wider — **4-36**, 113 structures lost against
+   * 41.
    *
-   * That is deliberately **not** asserted. It is a number for the kit balance
-   * pass (plano §5 / Fase 3), which owns the per-mage win-rate ceilings; an
-   * assertion here would either freeze the imbalance as correct or fail for a
-   * reason this file cannot fix.
+   * But it is not a balance debt, because that squad cannot exist.
+   * `validateSquad` rejects it twice over — duplicate bodies, and no damage or
+   * support role — and `server/src/App.ts` runs that check before a match
+   * starts. Nobody can field it, so it cannot become anyone's meta.
+   *
+   * What it actually measures is the sim underneath the construction rule:
+   * tanks carry 200-280 HP against a damage mage's 60-80, push structures
+   * (`prefersStructures`) and never retreat (`retreatHealthFraction: 0`). The
+   * role floor is the price already charged for that, and the ceilings that do
+   * bind (§5.1) are read off legal quartets in `scripts/kit-report.mts`.
    */
 });
 
@@ -214,9 +238,9 @@ describe('agency — posture is a throttle the player controls', () => {
    * kit fires only when the guard opens — our core under pressure, this body
    * nearly dead, or an enemy already in our ground.
    *
-   * Over `SEEDS` (n=20, alternating sides) a squad standing at `normal` beats
-   * one standing at `hold` **17-3**, losing 26 structures against 47. The floor
-   * is 0.6 rather than the observed 0.85: what must never regress is the
+   * Over `SEEDS` in both seats (n=40) a squad standing at `normal` beats one
+   * standing at `hold` **33-7**, losing 51 structures against 96. The floor is
+   * 0.6 rather than the observed 0.83: what must never regress is the
    * *direction* — spending your kits cannot be worse than sitting on them.
    */
   it('costs a squad structures to sit on its kits, across seeds', { timeout: 600_000 }, () => {
@@ -239,8 +263,8 @@ describe('agency — posture is a throttle the player controls', () => {
    * health*, or on *an intruder in our ground*. Every one of those becomes
    * true in the ordinary course of a match that is going badly — which is
    * exactly when a held kit is supposed to wake up. Measured, `hold` spends
-   * about four fifths of what `normal` spends (2696 casts against 3382 over
-   * n=20), not nothing.
+   * about four fifths of what `normal` spends (5209 casts against 6683 over
+   * n=40), not nothing.
    *
    * So `hold` is a throttle, and the zero-cast baseline the old file leaned on
    * is gone with the empty program. It is asserted in both directions, because
