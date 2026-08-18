@@ -1,11 +1,19 @@
 import type { JSX } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { isRosterId } from '../../../sim/cards';
+import { isRosterId, rosterFor } from '../../../sim/cards';
 import { isSpellId, spellFor, type SpellId } from '../../../sim/spells';
 import { ApiClient, type CardStat, type ElementStat, type SquadStat } from '../../net/ApiClient';
 import type { UserProfile } from '../auth';
 import { ElementUsageChart } from '../ElementUsageChart';
-import { bestComps, compLabel, loadHistory, mostUsedCards, type CompStat, type MatchRecord } from '../matchHistory';
+import {
+  bestComps,
+  castsByMage,
+  compLabel,
+  loadHistory,
+  mostUsedCards,
+  type CompStat,
+  type MatchRecord,
+} from '../matchHistory';
 import styles from './Builders.module.css';
 import appStyles from '../App.module.css';
 
@@ -14,8 +22,8 @@ const CURSE_COLOR = '#c9853e';
 
 /**
  * What your past matches say about your loadout: which comps convert into wins,
- * which cards you actually spend mana on, and the run of recent results behind
- * both numbers.
+ * which mages actually earn their slot, which spells come out, and the run of
+ * recent results behind all three.
  */
 export function HistoryPanel(props: { user: UserProfile }): JSX.Element {
   const [history, setHistory] = useState<MatchRecord[]>(() => loadHistory());
@@ -68,6 +76,16 @@ export function HistoryPanel(props: { user: UserProfile }): JSX.Element {
 
   const maxCasts = Math.max(...cards.map((c) => c.casts), 1);
 
+  /*
+   * Per mage, and always local. The account aggregates spells, not bodies —
+   * `getUserCardStats` keys on `cardId` because that is what the stored history
+   * has always been keyed on — so this is read off the device's own records,
+   * where `rosterId` rides along and the catalog can answer for the rows that
+   * predate it.
+   */
+  const mages = castsByMage(history);
+  const maxMageCasts = Math.max(...mages.map((m) => m.casts), 1);
+
   if (history.length === 0) {
     return (
       <div>
@@ -111,7 +129,32 @@ export function HistoryPanel(props: { user: UserProfile }): JSX.Element {
       </ul>
 
       <p class={appStyles.panelHint} style={{ margin: '18px 0 10px' }}>
-        Most used cards
+        Who spent the most
+      </p>
+      {mages.length === 0 ? (
+        <p class={appStyles.panelHint}>No match on this device has recorded a cast yet.</p>
+      ) : (
+        <ul class={styles.costCurve}>
+          {mages.map((stat) => (
+            <li class={styles.costRow} key={stat.rosterId}>
+              <span class={styles.costLabel}>{rosterFor(stat.rosterId)?.name ?? stat.rosterId}</span>
+              <div class={styles.track} aria-hidden="true">
+                <div
+                  class={styles.fill}
+                  style={{
+                    width: `${Math.max(4, Math.round((stat.casts / maxMageCasts) * 100))}%`,
+                    background: BUFF_COLOR,
+                  }}
+                />
+              </div>
+              <span class={styles.costValue}>{stat.casts} casts</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p class={appStyles.panelHint} style={{ margin: '18px 0 10px' }}>
+        Most used spells
       </p>
       <ul class={styles.costCurve}>
         {cards.map((stat) => {

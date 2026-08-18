@@ -12,7 +12,7 @@
  */
 
 import type { RosterId } from '../../sim/cards';
-import { rosterFor } from '../../sim/cards';
+import { rosterFor, rosterOwnerOf } from '../../sim/cards';
 import type { CardId } from '../../sim/spells';
 
 const HISTORY_KEY = 'mage-craft.history.v1';
@@ -122,6 +122,39 @@ export function mostUsedCards(records: readonly MatchRecord[]): CardStat[] {
     .map(([cardId, casts]) => ({ cardId, casts }))
     .filter((s) => s.casts > 0)
     .sort((a, b) => b.casts - a.casts);
+}
+
+export interface MageCastStat {
+  rosterId: RosterId;
+  casts: number;
+}
+
+/**
+ * Total casts per *mage* across the stored history, most-cast first.
+ *
+ * `mostUsedCards` answers which spell got spent; this answers which body earned
+ * its slot, which is the question the pivot made askable and the reason a
+ * stored cast carries `rosterId` beside `cardId`.
+ *
+ * The credit falls back to the catalog when the record predates that field —
+ * most stored history does, and the panel would otherwise go blank for exactly
+ * the players who have played most. That fallback is only well-defined because
+ * kits are disjoint and cover the catalog, which `sim/kits.test.ts` holds.
+ * A card no kit claims is dropped rather than credited to anyone.
+ */
+export function castsByMage(records: readonly MatchRecord[]): MageCastStat[] {
+  const totals = new Map<RosterId, number>();
+  for (const record of records) {
+    for (const { cardId, rosterId, casts } of record.cards) {
+      const owner = (rosterId as RosterId | undefined) ?? rosterOwnerOf(cardId);
+      if (!owner || !rosterFor(owner)) continue;
+      totals.set(owner, (totals.get(owner) ?? 0) + casts);
+    }
+  }
+  return [...totals.entries()]
+    .map(([rosterId, casts]) => ({ rosterId, casts }))
+    .filter((s) => s.casts > 0)
+    .sort((a, b) => b.casts - a.casts || a.rosterId.localeCompare(b.rosterId));
 }
 
 /** Display label for a comp — falls back to the raw id for unknown mages. */

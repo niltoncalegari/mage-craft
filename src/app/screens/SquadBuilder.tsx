@@ -1,15 +1,35 @@
 import type { JSX } from 'preact';
 import { useState } from 'preact/hooks';
+import { ALL_STANCES, type Stance } from '../../../sim/abilityPolicy';
 import { ALL_ROSTER, rosterFor, type RosterId } from '../../../sim/cards';
 import { SQUAD_SIZE } from '../../../sim/config';
+import { spellFor, type SpellId } from '../../../sim/spells';
 import { validateSquad } from '../../../sim/squad';
 import { getElement, toCssColor } from '../../game/elements';
-import { loadLoadout, saveSquad } from '../loadout';
+import { loadLoadout, saveSquad, saveStances } from '../loadout';
 import styles from './Builders.module.css';
 import appStyles from '../App.module.css';
 
 const ROLE_FILTERS = ['all', 'tank', 'damage', 'support'] as const;
 type RoleFilter = (typeof ROLE_FILTERS)[number];
+
+/**
+ * What each stance buys, in the player's words rather than the evaluator's.
+ *
+ * Measured over 40 matches a squad at `normal` beats the same squad at `hold`
+ * 33-7, and `hold` still spends about four fifths of what `normal` spends — so
+ * "hold" is honestly a throttle, not an off switch, and the copy says throttle.
+ */
+const STANCE_HINT: Record<Stance, string> = {
+  hold: 'Saves the kit for trouble — your core under pressure, this mage hurt, or an enemy in your ground.',
+  normal: 'Spends a skill when it catches enough targets to be worth it.',
+  aggressive: 'Spends on whatever it can reach, without waiting for a cluster.',
+};
+
+/** The kit is the mage now, so it reads as a list wherever a mage is shown. */
+function kitNames(abilities: readonly SpellId[]): string {
+  return abilities.map((id) => spellFor(id)?.name ?? id).join(' · ');
+}
 
 /**
  * Pick the four mages that fight for you. Every mage is permanent for the whole
@@ -18,6 +38,7 @@ type RoleFilter = (typeof ROLE_FILTERS)[number];
  */
 export function SquadBuilder(props: { onSaved?: () => void } = {}): JSX.Element {
   const [squad, setSquad] = useState<RosterId[]>(() => loadLoadout().squad);
+  const [stances, setStances] = useState<Partial<Record<RosterId, Stance>>>(() => loadLoadout().stances);
   const [filter, setFilter] = useState<RoleFilter>('all');
   const [saved, setSaved] = useState(false);
 
@@ -34,9 +55,18 @@ export function SquadBuilder(props: { onSaved?: () => void } = {}): JSX.Element 
     setSaved(false);
   };
 
+  const setStance = (id: RosterId, stance: Stance): void => {
+    setStances({ ...stances, [id]: stance });
+    setSaved(false);
+  };
+
   const save = (): void => {
     if (!validation.ok) return;
     saveSquad(squad);
+    // Only the four that are going. A stance left behind by a mage the player
+    // dropped would come back the moment they picked it up again, which reads
+    // as the builder remembering something it was never told twice.
+    saveStances(Object.fromEntries(squad.map((id) => [id, stances[id] ?? 'normal'])));
     setSaved(true);
     props.onSaved?.();
   };
@@ -46,7 +76,8 @@ export function SquadBuilder(props: { onSaved?: () => void } = {}): JSX.Element 
   return (
     <div>
       <p class={appStyles.panelHint}>
-        Four mages, all three roles, no duplicates. They hold the lane while your spells decide the fight.
+        Four mages, all three roles, no duplicates. Each one carries its own kit and spends it itself — the
+        stance is how hard you let it.
       </p>
 
       <div class={styles.slots}>
@@ -61,18 +92,35 @@ export function SquadBuilder(props: { onSaved?: () => void } = {}): JSX.Element 
               </div>
             );
           }
+          const stance = stances[entry.id] ?? 'normal';
           return (
-            <button
-              type="button"
+            <div
               key={entry.id}
-              class={`${styles.slot} ${styles.slotFilled}`}
+              class={`${styles.slot} ${styles.slotFilled} ${styles.slotBody}`}
               style={{ '--element-color': toCssColor(getElement(entry.element).color) } as JSX.CSSProperties}
-              onClick={() => removeAt(i)}
             >
-              <span class={styles.slotName}>{entry.name}</span>
-              <span class={styles.slotRole}>{entry.role}</span>
-              <span class={styles.slotRemove}>Remove</span>
-            </button>
+              <div class={styles.slotTop}>
+                <span class={styles.slotName}>{entry.name}</span>
+                <span class={styles.slotRole}>{entry.role}</span>
+              </div>
+              <span class={styles.slotKit}>{kitNames(entry.abilities)}</span>
+              <div class={styles.stances} title={STANCE_HINT[stance]}>
+                {ALL_STANCES.map((s) => (
+                  <button
+                    type="button"
+                    key={s}
+                    class={s === stance ? `${styles.stanceBtn} ${styles.stanceBtnActive}` : styles.stanceBtn}
+                    title={STANCE_HINT[s]}
+                    onClick={() => setStance(entry.id, s)}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+              <button type="button" class={styles.slotDrop} onClick={() => removeAt(i)}>
+                Remove
+              </button>
+            </div>
           );
         })}
       </div>
@@ -115,6 +163,7 @@ export function SquadBuilder(props: { onSaved?: () => void } = {}): JSX.Element 
                 {entry.healPerSecond ? <> · heals {entry.healPerSecond}/s</> : null}
                 {entry.auraChargeBonus ? <> · +{Math.round(entry.auraChargeBonus * 100)}% ally charge</> : null}
               </p>
+              <p class={styles.cardMeta}>{kitNames(entry.abilities)}</p>
             </button>
           );
         })}
