@@ -21,7 +21,7 @@ import { isCore, opponentOf, TEAM_A, type Mage, type Structure, type Team } from
 import { sortedIds } from './ids';
 import type { EffectKind } from './effects';
 import type { SquadPlan } from './bot/Squad';
-import type { StrategyFacts, TargetSelector } from './strategy';
+import type { StrategyFacts, TargetSelector } from './abilityPolicy';
 import { Vec2 } from './Vec2';
 import type { World } from './World';
 

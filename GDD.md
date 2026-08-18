@@ -1,9 +1,9 @@
 # GDD — Mage Craft
 
 **Título:** Mage Craft
-**Versão:** 1.2 — idle: a partida é o programa que você escreveu antes dela
+**Versão:** 1.3 — treinador: a partida é o esquadrão que você montou antes dela
 **Status:** rascunho vivo — base de produto, não especificação de engine
-**Modelo de referência:** Clash Royale para a economia (mana única, baralho, mão, ciclo); auto brawler para o campo (esquadrão permanente e autônomo); idle/gambit para o verbo (o jogador programa, não executa)
+**Modelo de referência:** auto brawler para o campo (esquadrão permanente e autônomo); idle/gambit para o verbo (o jogador monta, não executa). Clash Royale foi o modelo de economia até a v1.2 e **deixou de ser** — não há mana, baralho, mão nem ciclo
 **Idioma do doc:** PT-BR
 
 > **Este documento substitui o GDD 0.1 por inteiro.** O jogo deixou de ser um brawl
@@ -11,62 +11,61 @@
 > WASD + mira) deve ler `design.md` e `multiplayer-plan.md`, que passam a ser
 > **documentos históricos** — descrevem o produto anterior e não devem ser editados.
 
-> ⚠️ **Mudança da v1.1 para a v1.2 (idle).** Na v1.1 o jogador clicava uma carta
-> da mão e depois clicava no chão para conjurar. Na v1.2 **ele não clica em nada
-> durante a partida**: escreve antes um **programa** — uma lista ordenada de
-> regras `SE <situação> ENTÃO <carta> EM <alvo>` — e a partida executa esse
-> programa. O verbo primário deixa de ser Potenciar e passa a ser **Programar**.
+> ⚠️ **Mudança da v1.2 para a v1.3 (treinador).** Na v1.2 o jogador escrevia um
+> **programa** de regras `SE <situação> ENTÃO <carta> EM <alvo>` e o programa
+> conjurava por ele, gastando mana de um baralho. Na v1.3 **nada disso existe**:
+> cada mago carrega um **kit fixo de 2 ou 3 habilidades** e as gasta sozinho, com
+> cooldown por skill no próprio corpo. O que o jogador monta é o **esquadrão** —
+> quatro corpos — e a **postura** de cada um. O verbo primário deixa de ser
+> Programar e passa a ser **Montar**.
 >
-> Reescritas por causa disso: §1, §2, §7, §9, §10, §13, §14, §15, §16, §17 e §18.
+> **Isso não foi gosto, foi medição.** A varredura da §10 mostrou um programa
+> autoral empatando 6-6 com um programa plano, com volume de conjuração dentro de
+> 1%: escrever guardas não comprava nada que a medição visse. A conclusão foi que
+> o limite era o modelo, não o catálogo.
 >
-> **As duas dívidas que a v1.1 deixou em aberto estão pagas**, e é a v1.2 que as
-> paga:
+> Reescritas por causa disso: §1, §2, §6, §7, §9, §10, §12, §13, §14, §16 e §18.
 >
-> - **O teste de agência da §10 fechou de novo, com medição.** A v1.1 o tinha
->   invalidado (um jogador AFK tinha 4 magos lutando por ele, então "AFK perde"
->   deixou de ser verdade por construção). O modelo idle o torna respondível de
->   novo, porque **não jogar virou um estado representável** — um programa sem
->   regras, que conjura exatamente zero vezes — em vez de um jogador ausente que
->   o jogo não conseguia distinguir de um presente.
-> - **O baralho está completo.** Eram 4 cartas para 8 slots; o catálogo da §9
->   agora tem **25 cartas em 5 cores**, com regra de construção (§7).
->
-> A v1.1 registrava a v1.0 como "medida num jogo que não existe mais". A v1.2 não
-> repete isso: as medições da §10 e da §14 foram **refeitas** neste modelo.
+> **O que sobreviveu do modelo antigo:** a *linguagem*. Condições, comparadores,
+> aglomerados, intruso, efeito ativo, os onze seletores de alvo — tudo migrou
+> para `sim/abilityPolicy.ts` e hoje descreve quando uma **skill** sai. Um mago
+> decidindo por si precisa do mesmo vocabulário que uma lista de regras precisava.
+
+---
 
 ---
 
 ## 1. Visão
 
-Dois conjuradores se enfrentam em tempo real numa arena. Nenhum dos dois controla
-um mago diretamente, e nenhum dos dois invoca: cada um tem um **esquadrão de magos
-que já está em campo**, lutando sozinho do primeiro segundo. A mana é gasta
-**potenciando os seus e sabotando os do rival** — buffs, maldições, escudos,
-pragas.
+Dois comandantes se enfrentam em tempo real numa arena. Nenhum dos dois controla
+um mago diretamente, nenhum dos dois invoca, e desde a v1.3 nenhum dos dois
+conjura: cada um tem um **esquadrão de quatro magos que já está em campo**,
+lutando sozinho do primeiro segundo, e **cada mago gasta o próprio kit**.
 
-O que mudou na v1.2 é *quem aperta o botão*: ninguém. Antes da partida o jogador
-escreve um **programa** — uma lista ordenada de regras do tipo
-`SE <situação> ENTÃO <carta> EM <alvo>` — e durante a partida é o programa que
-conjura. O jogador assiste.
+O que mudou na v1.3 é *de onde vem a decisão*. Na v1.2 o jogador escrevia um
+programa de regras e o programa conjurava por ele. A medição da §10 matou esse
+modelo: um programa autoral empatava com um programa plano. A decisão migrou
+para onde ela é legível — **quais quatro corpos você traz**, cada um com um kit
+fixo de 2 ou 3 habilidades, e **com que postura** cada um joga.
 
-A partida é decidida por *que regras você escreveu e em que ordem* — nunca por
-mira, reflexo ou velocidade de clique. Os magos são autônomos o tempo inteiro; o
-jogador nunca dá uma ordem a ninguém, e desde a v1.2 nem uma carta ele joga à mão.
+A partida é decidida por *quem você trouxe* — nunca por mira, reflexo ou
+velocidade de clique.
 
 **Promessa ao jogador:**
-*"Eu escrevi 'se um inimigo passar da metade do campo, joga o pântano nele'.
-Passou. Jogou. Aquela briga virou porque eu previ."*
+*"Eu troquei o Sentinela pelo Golem porque o kit dele segura a linha. Segurou.
+Aquela briga virou porque eu escolhi certo."*
 
 **Sensação-alvo:** tenso, legível, de leitura e resposta — mas a leitura acontece
-**entre** partidas, sobre o que o programa fez, e a resposta é uma edição na lista
-de regras. Partidas de 3 minutos.
+**entre** partidas, sobre o que o esquadrão fez, e a resposta é uma troca de
+mago ou de postura. Partidas de 3 minutos.
 
 > **Por que isto é um jogo e não um screensaver.** A resposta é uma só e é
 > estrutural: o jogador precisa conseguir **atribuir** o que aconteceu a uma
-> regra que ele escreveu. É por isso que o fio carrega `firedRule` e o HUD
-> escreve "Regra 3 · Praga → aglomerado inimigo" (§13, §17). Sem atribuição, um
-> jogo idle é de fato um screensaver — e o item que fecha isso é requisito, não
-> polimento.
+> escolha que ele fez. É por isso que o fio carrega `firedAbility` e o HUD
+> escreve "Erupção Vulcânica → aglomerado inimigo", o `SquadPanel` mostra a
+> carga de cada skill descendo, e o pós-partida diz **qual mago** gastou o quê
+> (§13, §17). Sem atribuição, um jogo idle é de fato um screensaver — e o item
+> que fecha isso é requisito, não polimento.
 
 ---
 
@@ -74,40 +73,42 @@ de regras. Partidas de 3 minutos.
 
 | Campo | Definição |
 | --- | --- |
-| Fantasia | Conjurador que **escreve a doutrina** de um esquadrão de magos elementais e a vê ser executada |
-| Feeling | Antecipação e autoria — prever a situação em vez de reagir a ela |
-| Verbo primário | **Programar** (escrever, ordenar e podar regras `SE → ENTÃO → EM`, fora da partida) |
-| Verbos secundários | Montar baralho e esquadrão, ler o rastro de regras da partida, reordenar prioridades |
-| Loop curto (3–10s) | *Fora da partida:* ler o que a última partida fez → achar a regra que faltou ou que disparou cedo demais → editar e reordenar |
-| Loop de partida (3 min) | Assistir o programa executar, ler o painel de rastro, anotar onde ele erra |
-| Falha / retry | Programa errado perde a partida inteira e **só é corrigível entre partidas** — é o que dá peso à escrita |
-| Skill expression | Ordem das regras, escolha de guardas, orçamento de mana embutido nas condições, montagem de baralho, montagem do esquadrão |
-| Legibilidade | Papel pela silhueta, elemento pela cor, efeitos ativos visíveis no mago, **e a regra que disparou nomeada no HUD** |
-| Non-goals (v1) | **Jogar carta durante a partida**, **invocar unidade com carta**, controle direto, ordens táticas, mira manual, lanes de MOBA com creeps, 5v5, gacha |
+| Fantasia | Treinador que **escolhe e regula** um esquadrão de magos elementais e o vê lutar |
+| Feeling | Autoria e antecipação — montar para a situação em vez de reagir a ela |
+| Verbo primário | **Montar** (escolher quatro corpos e a postura de cada um, fora da partida) |
+| Verbos secundários | Comparar kits, ler quem gastou o quê na última partida, reajustar postura |
+| Loop curto (3–10s) | *Fora da partida:* ler o que o esquadrão fez → achar o mago que não pagou o slot → trocar corpo ou postura |
+| Loop de partida (3 min) | Assistir o esquadrão executar, ler as cargas e o rastro, anotar onde ele erra |
+| Falha / retry | Esquadrão errado perde a partida inteira e **só é corrigível entre partidas** — é o que dá peso à montagem |
+| Skill expression | Escolha dos quatro corpos, mistura de papéis, leitura de kit contra kit, postura por mago |
+| Legibilidade | Papel pela silhueta, elemento pela cor, efeitos ativos visíveis no mago, **carga por skill no painel**, e a habilidade que disparou nomeada no HUD |
+| Non-goals (v1) | **Jogar carta durante a partida**, **invocar unidade com carta**, **escrever programa de regras**, controle direto, ordens táticas, mira manual, lanes de MOBA com creeps, 5v5, gacha |
 
 **Core loop contract:**
 
 ```text
-Antes da partida o jogador escreve um programa: regras SE <situação> ENTÃO <carta> EM <alvo>,
-lidas de cima para baixo, primeira que casa vence;
+Antes da partida o jogador monta um esquadrão: quatro magos, um de cada papel no mínimo,
+sem duplicatas, cada um trazendo o próprio kit de 2 ou 3 habilidades e uma postura;
 o esquadrão de cada lado luta sozinho e avança para as estruturas inimigas;
-o programa gasta a mana pelo jogador, e um programa que lê melhor a situação gera vantagem;
+cada mago gasta o próprio kit quando o cooldown, a condição e o alcance permitem;
+um esquadrão que lê melhor a situação gera vantagem;
 vantagem vira briga ganha, que derruba Torre e depois o Núcleo;
-o jogador lê no rastro qual regra disparou, e edita o programa para a próxima.
+o jogador lê no pós-partida qual mago gastou o quê, e remonta para a próxima.
 ```
 
-> **O que a v1.2 resolveu de graça.** A §16.2 da v1.1 estava aberta com "sem
-> invocação, posicionamento virou *onde centrar um raio*, uma decisão mais rasa".
-> Isso **fechou por outro caminho**: a densidade não voltou para o posicionamento,
-> ela migrou para o programa. Escolher entre `aglomerado inimigo`, `intruso mais
-> profundo` e `linha de frente aliada` — e sob que guarda — é uma decisão bem mais
-> densa que arrastar um círculo, e é tomada com tempo para pensar. Ver §16.2.
+> **O que a v1.3 resolveu, e o que ela custou.** A v1.2 tinha três telas de
+> montagem (esquadrão, baralho, programa) e mediu que só uma delas importava —
+> §10. Cortar duas não empobreceu a decisão, concentrou-a: o kit deixou de ser
+> um pool de 25 cartas compartilhado e passou a ser propriedade de um corpo, o
+> que torna "trocar um mago" uma mudança real no vocabulário da partida em vez
+> de uma troca de estatística. O custo é que **o teto de expressão caiu**: não dá
+> mais para escrever uma guarda específica. Ver §16.
 
-> **O que esta mudança custou.** O jogo perdeu o momento a momento. Não há mais
-> "eu vi e reagi": entre a decisão e a consequência agora existe uma partida
-> inteira. É uma troca deliberada — a decisão ficou mais densa e menos frequente —
-> e o risco que ela abre é de **engajamento**, não de profundidade: um jogador que
-> não entende por que perdeu não tem o que editar. Ver §17 e a §16.9.
+> **O que o pivot idle custou, e continua custando.** O jogo não tem momento a
+> momento. Não há "eu vi e reagi": entre a decisão e a consequência existe uma
+> partida inteira. O risco que isso abre é de **engajamento**, não de
+> profundidade: um jogador que não entende por que perdeu não tem o que editar.
+> Ver §17.
 
 ---
 
@@ -116,13 +117,16 @@ o jogador lê no rastro qual regra disparou, e edita o programa para a próxima.
 ### Copiamos (é o que faz o gênero funcionar)
 
 - **Real-time, simétrico, 1v1.** Os dois jogam ao mesmo tempo, na mesma sim autoritativa.
-- **Mana única que regenera.** Um recurso só, teto baixo, regeneração constante. É o relógio da partida.
-- **Baralho + mão + ciclo.** Você não tem acesso a tudo o tempo todo; a ordem das cartas é parte da decisão.
 - **Unidades autônomas.** O jogador nunca comanda um mago.
 - **Objetivo estrutural.** Ganha quem derruba mais estrutura, não quem mata mais.
 
-### Não copiamos
+### Não copiamos (mais)
 
+- **Mana única que regenera, baralho, mão e ciclo.** Copiados até a v1.2 e
+  **removidos na v1.3**. Eram a economia de um jogador que gasta cartas de uma
+  mão, e não há mão. O que ficou no lugar é cooldown por skill no corpo do mago
+  (§6): o custo deixou de ser um pote disputado durante a partida e passou a ser
+  o kit que você escolheu antes dela.
 - **Invocação por carta.** É a divergência central da v1.1, e a maior. No CR a carta *cria* a unidade; aqui a unidade já existe e a carta a *modifica*. Ver §7 e §9.
 - **Exército descartável.** Unidade de CR é consumível: nasce, empurra, morre, some. Nosso esquadrão é **permanente e ressuscita** — o jogador se apega aos mesmos quatro magos durante a partida inteira, o que muda o vínculo com eles.
 - **Lanes com ponte e rio.** Nossa arena é aberta e tem **cover real** — obstáculos com altura, bloqueio de projétil e line-of-sight, que já existem em [sim/Arena.ts](sim/Arena.ts). Projétil com tempo de voo e cobertura dão profundidade posicional que a grade do CR não tem.
@@ -216,112 +220,105 @@ fora da zona era recusado pelo servidor e o jogador não recebia explicação ne
 
 ---
 
-## 6. Mana — a economia
+## 6. Carga — a economia (v1.3)
 
-| Parâmetro | Valor v1 |
+**Não há mana.** Havia até a v1.2: um pote por time, teto 10, regenerando 1 a
+cada 2.8 s, com custo por carta. Ele saiu inteiro na v1.3 — do sim, do fio, do
+servidor e da tela — porque servia a um jogador que gastava cartas de uma mão, e
+não existe mais mão.
+
+O que ficou no lugar é **carga no corpo do mago**:
+
+| Parâmetro | Valor v1.3 |
 | --- | --- |
-| Teto | 10 |
-| Início da partida | 5 |
-| Regeneração normal | 1 mana / 2.8 s |
-| Regeneração em morte súbita | 1 mana / 1.4 s (dobrada) |
-| Custo das cartas | 2 a 5 (feitiços; ver §9) |
+| Recarga | **cooldown por skill**, 6 a 18 s, declarado em `balance.json` |
+| Freio por mago | GCD de **0.75 s**, para um kit não sair inteiro num quadro |
+| Morte súbita | recarga **acelerada 2×** (`suddenDeathCooldownMultiplier`) |
+| Aceleradores | `attune` acelera a recarga do time; `tribute` devolve carga pagando HP |
 
-Por que teto baixo e regeneração lenta: é o que força a decisão. Com teto 10, um
-escudo de 3 é quase um terço do arsenal — e enquanto você o gasta para salvar uma
-troca, o rival tem mana livre para virar outra do outro lado do campo. **Toda
-vantagem no jogo é, no fundo, vantagem de mana**: gastar 2 para anular um efeito de
-4 é a jogada boa, e é isso que o jogador aprende a fazer.
+Por que a troca não é cosmética. Mana era **um** recurso disputado por quatro
+magos: gastar no Piromante era não gastar no Clérigo, e essa disputa era a
+decisão do jogador. Sem jogador na partida, a disputa não tem quem a arbitre — o
+que sobra é uma fila, e uma fila não é economia. Cooldown por skill move o custo
+para onde a decisão agora mora: **no kit que você escolheu antes da partida**.
+Trazer o Piromante é comprar duas skills de 18 s; trazer o Alquimista é comprar
+uma de 6 s.
 
-> O teto de custo caiu de 7 para 5 na v1.1. As cartas caras da v1.0 eram as
-> unidades pesadas (Golem, 5); sem invocação, sobrou só efeito, e efeito custando 7
-> num teto de 10 travaria a mão inteira.
+Consequência medida: **toda skill do catálogo roda perto do teto do próprio
+cooldown**. `paranoia` (cd 11) dispara ~11.8 vezes numa partida de 150 s contra
+um teto de ~13. Isso torna o cooldown o dial que morde no balance (§14) — e
+significa que um kit de 2 skills tem estruturalmente menos throughput que um de
+3, o que é um problema aberto e não um desenho.
 
-**Não há cooldown por carta** — a carta volta pelo **ciclo do baralho** (§7), o que
-é mais legível e cria a decisão de "ciclar barato agora para ter o contra na mão
-daqui a 20 s".
-
-Mana era o único freio até a v1.1. A v1.2 acrescentou um segundo, e por um motivo
-que só o modelo idle cria: um **cooldown global de conjuração de 0.75 s**, no
-`World`, por onde passam programa, bot e (historicamente) a mão humana. Sem ele o
-programa seria estritamente mais forte que a interface que substituiu — o avaliador
-roda muitas vezes por segundo, e um banco de 10 com carta de 2 sairia como cinco
-conjurações em cinco quadros consecutivos. Ele é frouxo de propósito: os intervalos
-que o bot já usava (1.1 / 1.6 / 2.6 s) nunca encostam nele, então ele limita o
-programa e **não** altera nada do que já existia.
+> **O dial da morte súbita sobreviveu à troca de recurso.** Era
+> `suddenDeathManaMultiplier`, dobrando o recurso que ninguém gasta mais; virou
+> `suddenDeathCooldownMultiplier`, dobrando o que tomou o lugar dele. Mesma
+> alavanca, recurso novo — sem ela a prorrogação seria "igual, só que sem o
+> acelerador".
 
 ---
 
-## 7. As três montagens: esquadrão, baralho e estratégia
+## 7. A montagem: um esquadrão, quatro posturas (v1.3)
 
-Na v1.2 o jogador monta **três coisas separadas** antes da partida, e é importante
-que sejam separadas: uma é quem luta, a outra é o que você tem à disposição, a
-terceira é o que fazer com isso. **Toda a partida está nestas três telas** — depois
-que ela começa não há mais entrada nenhuma.
+Na v1.2 o jogador montava **três coisas**: esquadrão, baralho e um programa de
+regras. A v1.3 aposentou duas delas. O que sobrou é uma tela só, e é a mais
+consequente das três.
 
 ### Esquadrão (quem entra em campo)
 
 - **4 magos**, escolhidos do catálogo de 9 (§9).
-- Regra de construção: **mínimo 1 de cada papel** (tank, dano, suporte). Um esquadrão de 4 danos morre junto; um de 4 tanks não mata nada.
-- Entram em campo no início e ressuscitam ao morrer (§4). Não custam mana — o custo deles foi a escolha.
+- Regra de construção: **mínimo 1 de cada papel** (tank, dano, suporte) e
+  **sem duplicatas**. Quatro cópias de um mago não é composição, é um mago com
+  quatro barras de vida. Validado em `sim/squad.ts` e conferido pelo servidor
+  antes da partida começar.
+- Entram em campo no início e ressuscitam ao morrer (§4).
+- **Cada mago traz o próprio kit**: 2 ou 3 skills, fixas, listadas no
+  `SquadBuilder`. Os kits são **disjuntos e cobrem o catálogo inteiro** — toda
+  skill das 25 pertence a exatamente um mago. É isso que permite creditar um
+  cast a um corpo sem uma segunda tabela para manter em dia.
 
-### Baralho de feitiços (o que você traz)
+### Postura (o quanto você solta a coleira)
 
-- **Baralho:** 8 cartas de efeito, escolhidas das 25 (§9).
-- **Regra de construção (fecha a §16.4):** no máximo **2 cores**, no máximo **2 cópias** de cada carta, no mínimo **3 cartas distintas**.
+Uma por mago, escolhida na mesma tela, default `normal`:
 
-> ✅ **As três regras estão ligadas.** `MAX_COPIES`, `MIN_DISTINCT` e
-> `MAX_COLORS` são todas validadas em `validateDeck`.
->
-> A das cores foi a última a entrar, e **foi adiada de propósito, não esquecida**:
-> enquanto o preto teve uma carta só, nenhum par que o incluísse alcançava 8 cartas
-> dentro do teto de 2 cópias, e ligar a regra teria **removido a Maldição da
-> Lentidão do jogo** em vez de restringir como ela é usada. A terceira carta verde
-> é o que deu ao preto um par viável, e esse é o commit que pôde bancar a regra.
->
-> O teste-armadilha (`colorLimitIsPlayable()`) que guardava isso **continua de pé,
-> invertido**: agora ele falha se uma edição de catálogo voltar a encalhar uma cor,
-> tornando alguma carta immontável em silêncio. É a mesma guarda, apontando para o
-> outro lado.
-- **Mão:** 4 cartas visíveis + **1 próxima** em preview.
-- **Ciclo:** jogou uma carta, ela vai para o fim da fila e a próxima entra na mão.
-- **Sem aleatoriedade oculta:** a próxima carta é sempre visível.
+| Postura | O que muda |
+| --- | --- |
+| `hold` | Além do `when` da skill, exige a guarda: nosso Núcleo sob pressão, **este** mago ferido, ou intruso na nossa metade |
+| `normal` | Exige que o alvo pegue `minTargets` corpos — o "vale a pena" da skill |
+| `aggressive` | Ignora `minTargets`: gasta no que alcançar |
 
-> **Por que duas cores.** Uma cor são 5 cartas para 8 slots — duplicata forçada,
-> escolha nenhuma. Livre entre 25 torna a cor cosmética e transforma a paleta do
-> editor de estratégia num scroll de 25 itens. Duas cores dão um pool de 10 para 8
-> slots: corte real, identidade legível, e um seletor que cabe num telefone em
-> landscape. **Máximo 2 cópias** preserva o desenho do ciclo — com mão de 4, duas
-> cópias é "volta a cada duas mãos", enquanto 8 cópias de uma carta colapsariam
-> todo programa a uma regra só.
+> **`hold` é acelerador, não interruptor.** O plano previa "≈ 0 casts" e a
+> medição desmentiu: a guarda abre com core sob pressão, corpo ferido ou
+> intruso, e isso acontece em qualquer partida indo mal — que é exatamente
+> quando um kit guardado deve acordar. Medido sobre 40 partidas, `hold` gasta
+> **5209 casts contra 6683** do `normal`, ~78%. A escada de vitória é monotônica
+> (`aggressive` > `normal` > `hold`), mas o degrau de cima é raso: `aggressive`
+> bate `normal` 22-18.
 
-### Estratégia (o que fazer com isso) — **novo na v1.2**
+### O que morreu, e por quê
 
-- **Programa:** até **12 regras**, ordenadas, editadas numa tela própria (`StrategyBuilder`).
-- **Uma regra:** `SE <condição> ENTÃO <carta> EM <alvo>`, mais um interruptor liga/desliga.
-- **Condição:** mana, tempo, morte súbita, postura do esquadrão, contagem/vida/aglomeração de aliados e inimigos, intruso na nossa metade, vida de Núcleo e Torres, efeito ativo em alguém. Combináveis com `E`/`OU` e negáveis com `não`.
-- **Alvo:** `aglomerado inimigo`, `aglomerado aliado`, `intruso mais profundo`, `aliado mais ferido`, `inimigo mais forte`, `linha de frente` (aliada ou inimiga), `nosso Núcleo`, `Núcleo inimigo`, `nosso objetivo`, `ponto de reunião`.
+- **Baralho de 8 cartas, mão de 4, ciclo, `next` em preview.** Todos existiam
+  para dar ao jogador uma sequência de escolhas *durante* a partida. O pivot idle
+  tirou o jogador da partida; o baralho virou uma fila que se esvazia sozinha.
+- **Programa de até 12 regras (`SE ... ENTÃO ... EM ...`).** Aposentado pela
+  medição da §10, não por gosto: um programa autoral empatava 6-6 com um
+  programa plano. O limite era o modelo, não o catálogo.
+- A **linguagem** dos dois sobreviveu inteira. `when`, `at`, comparadores,
+  aglomerados, intruso, efeito ativo — tudo migrou para `sim/abilityPolicy.ts` e
+  hoje descreve quando uma **skill** sai, em vez de quando uma **carta** saía.
+  Um mago decidindo por si precisa do mesmo vocabulário que uma lista de regras
+  precisava.
 
-**Semântica: primeira que casa vence, de cima para baixo.** Uma regra é elegível se
-está ligada, a carta está na mão, a mana paga, a condição é verdadeira e o alvo
-resolve para um ponto. Qualquer falha **pula para a próxima regra** — nunca espera.
+**Semântica de disparo: nunca espera.** Um mago avalia o kit 4×/s; uma skill que
+não pode sair é pulada, não enfileirada. É a mesma regra que o avaliador de
+regras tinha, e pelo mesmo motivo — senão a skill mais cara de um kit faz negação
+de serviço sobre as duas abaixo dela. Empate de escolha resolve por maior custo e
+depois por ordem do kit, ambos fixos antes da partida.
 
-> **Por que pular e não esperar.** Se uma regra inelegível bloqueasse as de baixo,
-> a regra do topo faria negação de serviço sobre o resto do programa do próprio
-> jogador, e a seta de "senão" do editor seria mentira. Esperar continua
-> perfeitamente expressável, só que **explicitamente**: guarde as regras baratas
-> sob `SE mana >= 7` para poupar para a cara. É o idioma de Gambit que o gênero já
-> conhece, e custa zero de engine.
-
-> **Por que 12 e não ilimitado.** Doze regras é o que ainda se lê de relance numa
-> coluna, e o que um jogador consegue segurar na cabeça ao explicar por que perdeu.
-> O teto também é o que mantém a avaliação barata o bastante para rodar 4×/s por
-> time sem entrar no orçamento de frame.
-
-**Cadência.** O programa é avaliado 4×/s, mas conjurar tem um **cooldown global de
-0.75 s** que vale para todo mundo (§6). Sem ele o programa seria estritamente mais
-forte que a mão humana que substituiu — um banco de 10 de mana com carta de 2 sairia
-como cinco conjurações em cinco quadros consecutivos, coisa que nenhuma mão faz.
-**Não existe botão de dificuldade:** a qualidade do programa é o programa.
+**A escolha do kit não sorteia nada.** `chooseAbility` não recebe `Rng`, de
+propósito: o `Brain` entrega um único `Rng` para o movimento e a mira de todos os
+magos, e uma escolha que sacasse dele faria **trocar um mago do esquadrão**
+re-sortear como todos os outros andam. Asserido em `sim/agency.test.ts`.
 
 ---
 
@@ -399,7 +396,7 @@ que servidor, cliente e Vitest nunca discordem sobre quanto dói uma bola de fog
 
 ---
 
-## 9. Catálogo (v1.2)
+## 9. Catálogo
 
 Duas listas, com papéis diferentes: **os 9 magos** são o que você pode levar em
 campo, **as cartas** são o que você joga durante a partida. Números são **direção
@@ -530,119 +527,82 @@ Distribuição atual: 🔴 4 · 🟢 4 · ⚪ 3 · 🔵 2 · ⚫ 1.
 > **Uma partida com o jogador AFK e a mesma partida jogada bem precisam terminar
 > diferente, de forma visível.**
 
-Este era o risco número um do pivot. A v1.0 o tinha fechado, a v1.1 **reabriu**, e a
-v1.2 **fecha de novo — com medição, não com argumento.**
+Este era o risco número um do pivot. A v1.0 o tinha fechado, a v1.1 **reabriu**, a
+v1.2 fechou de novo com medição — e a v1.3 **mudou o eixo do que é medido**,
+porque o que o jogador traz mudou.
 
 ### Por que a v1.1 tinha invalidado a prova da v1.0
 
-Na v1.0 a alegação se resolvia por construção: o jogador AFK não invocava nada,
-não tinha nada em campo, e qualquer push mínimo derrubava tudo. O esquadrão
-permanente destruiu essa premissa — **o jogador AFK passou a ter 4 magos lutando e
-ressuscitando por ele**, com o mesmo `Brain` do adversário. Os dois lados ficaram
-com exatamente a mesma força em campo, e "AFK perde" deixou de ser verdade por
-construção.
+Na v1.0 a alegação se resolvia por construção: o jogador AFK não invocava nada e
+qualquer push mínimo derrubava tudo. O esquadrão permanente destruiu essa
+premissa — **o AFK passou a ter 4 magos lutando e ressuscitando por ele**, com o
+mesmo `Brain` do adversário. Os dois lados ficaram com a mesma força em campo.
 
-Pior que isso: **o jogo não conseguia mais nem representar o AFK.** Um jogador que
-não clica é indistinguível de um que clica mal, e uma alegação que não tem linha de
-base não é mensurável.
+### O que a v1.2 mediu, e por que esse resultado matou o modelo dela
 
-### O que o modelo idle mudou — e é uma mudança de *estrutura*, não de balance
+A v1.2 respondia com um programa de regras, e a linha de base era um programa
+vazio — zero conjurações por construção. A agência contra o AFK fechou com
+folga. Mas o mesmo experimento entregou o achado que aposentou o modelo:
 
-O pivot da v1.2 devolve a linha de base, e essa é a razão de design mais forte para
-tê-lo feito. **Não jogar virou um estado representável:** um programa sem regras
-(`emptyStrategy()`) que conjura exatamente **zero** vezes, e que o teste afirma ser
-zero em vez de supor. Não é um jogador ausente que o jogo tenta adivinhar — é um
-dado.
+- **`responsiva` contra `plana` deu 6-6, exatamente 50%.** Escrever guardas de
+  situação não ganhava mais partidas do que não escrever nenhuma.
+- O que separava programas era **quantas cartas distintas eles nomeavam**, não
+  quando as jogavam. Um programa de uma regra era estatisticamente
+  indistinguível de um programa vazio, porque uma carta jogada some no fim de
+  uma fila de oito.
 
-### A remedição (v1.2)
+A conclusão da varredura foi que **o limite era o modelo, não o catálogo** — e é
+dela que sai o pivot da v1.3.
 
-Feita em `sim/agency.test.ts` e na varredura de `scripts/ai-report.mts`, sobre
-`defaultDeck()` e o esquadrão padrão, alternando os lados a cada seed porque o mapa
-não é simétrico. **120 partidas, 5 programas, todos contra todos.**
+### O eixo da v1.3
 
-> ⚠️ **Limite do experimento, e ele é mais estreito do que parece.** A varredura
-> monta os dois lados com `defaultDeck()`, que tem **quatro cartas distintas**
-> (Bênção, Escudo Arcano, Praga, Pântano), e os programas de referência nomeiam
-> exatamente essas quatro por id. Logo **nenhuma outra carta do catálogo pode
-> aparecer em nenhuma partida da varredura** — hoje são 18 cartas e 14 delas são
-> inalcançáveis por esta medição, incluindo o Campo de Sobrecarga.
->
-> Isso não invalida os números abaixo, mas define do que eles falam: são um
-> resultado sobre **este baralho de quatro cartas**, não sobre o jogo inteiro.
-> Em particular, **rodar `ai-report` depois de acrescentar cartas não testa as
-> cartas novas** — elas não entram no baralho. Medir o efeito do Tier 2/3 exige um
-> baralho e programas construídos sobre elas; enquanto isso não existir, um "50% de
-> novo" quer dizer "a medição não viu as cartas novas", e não "as cartas novas não
-> ajudaram".
+Não há programa, então "programa autoral contra programa vazio" não é mais uma
+pergunta que exista. O que o jogador traz agora são **quatro corpos e uma
+postura para cada**, e é nesses dois eixos que `sim/agency.test.ts` mede.
 
-| Programa | O que é | V-D-E | % das decididas | Conjurações |
-| --- | --- | --- | --- | --- |
-| **responsiva** | 4 regras, com guardas de situação | 33-15-0 | **69%** | 1185 |
-| **plana** | as mesmas 4 cartas, `sempre`, sem guarda nenhuma | 33-15-0 | **69%** | 1177 |
-| **padrão** | o que `defaultStrategy` abre no editor | 31-17-0 | **65%** | 1181 |
-| **ingênua** | 1 regra, 1 carta, `sempre` | 12-36-0 | **25%** | **45** |
-| **vazia** | nenhuma regra — a linha de base AFK | 11-37-0 | **23%** | **0** |
+Todas as medições abaixo são **n=40**: 20 seeds, cada uma jogada **nos dois
+assentos**.
 
-**A alegação da §10 fecha:** um programa autoral vence um programa vazio em **83%
-das partidas decididas**, perde estritamente menos estrutura, e a linha de base é
-zero conjurações por construção. Nenhuma partida empatou.
+| Eixo | Confronto | Resultado |
+| --- | --- | --- |
+| Composição | esquadrão balanceado × esquadrão sem dano nenhum | **40-0**, 0 estruturas perdidas contra 119 |
+| Postura | `normal` × `hold` | **33-7**, 51 estruturas contra 96 |
+| Postura | `aggressive` × `normal` | **22-18** |
+| Volume | casts de `hold` contra casts de `normal` | **5209 contra 6683** (~78%) |
 
-### Os dois achados que a medição entregou, e um deles é desconfortável
+**A alegação da §10 fecha nos dois eixos.** Um esquadrão que pode machucar vence
+um que não pode, e soltar a coleira custa estrutura para quem não solta.
 
-> ⚠️ **1. Ler a situação ainda não paga.** `responsiva` contra `plana` deu
-> **6-6, exatamente 50%** — com volume de conjuração dentro de 1% um do outro. Ou
-> seja: as guardas não custam nada e também **não compram nada** que esta medição
-> consiga ver. O que decide a partida hoje é *conjurar*, não *conjurar na hora
-> certa*. Isso é o mesmo sintoma que a §14 registrava para dificuldade de bot,
-> reaparecendo no eixo novo: **indiferenciado, não invertido.**
->
-> Isso não invalida o pivot — a agência contra o AFK fechou com folga. Mas é
-> preciso ser exato sobre **do que** este 50% é evidência, porque a primeira versão
-> desta seção não foi e afirmou demais.
->
-> O que está medido: com **estas quatro cartas** (Bênção, Escudo, Praga, Pântano),
-> escrever guardas não ganha mais partidas do que não escrever. Todas as quatro são
-> "buff de área" ou "maldição de área" aplicadas sobre o próprio aglomerado, e para
-> cartas assim quase todo momento é um momento aceitável — não há o que a guarda
-> possa acertar melhor.
->
-> O que **não** está medido, e a primeira redação tratou como se estivesse: se as
-> cartas condicionais mudam isso. A hipótese continua sendo que sim — Petrificar,
-> Marca do Carrasco, Clarão Nulo e sobretudo o **Campo de Sobrecarga**, que acerta
-> os dois lados e portanto pune quem não escreve guarda, são cartas em que *quando*
-> deveria importar. Mas o Campo de Sobrecarga **existe desde o Tier 1 e nunca
-> esteve no baralho da medição**, então nem a versão fraca dessa hipótese foi
-> testada. Chamar as cartas de "genéricas demais" era uma explicação para um
-> resultado que o experimento não tinha isolado.
->
-> A direção do trabalho não muda — é **design de carta**, não vocabulário de regra,
-> e não é dial de HP de estrutura. O que muda é o que vem antes: **primeiro um
-> baralho e programas de referência que contenham as cartas condicionais**, senão
-> a medição seguinte responde a mesma coisa que esta.
+> ⚠️ **A linha de base zero morreu junto com o programa vazio.** O plano previa
+> que um esquadrão todo em `hold` fosse o equivalente v1.3 de um programa sem
+> regras — "≈ 0 casts". Não é, e não pode ser: a guarda do `hold` abre com nosso
+> core sob pressão, com o corpo ferido ou com um intruso na nossa metade, e isso
+> acontece em qualquer partida indo mal — que é exatamente quando um kit
+> guardado deve acordar. `hold` é acelerador, não interruptor, e o teste afirma
+> isso **nas duas direções**: um `hold` que parasse de disparar seria tão errado
+> quanto um que ignorasse a guarda.
 
-> ⚠️ **2. Um programa com uma regra é quase um programa vazio — e isso não é
-> óbvio de lugar nenhum.** `ingênua` conjurou **45 vezes em 48 partidas** (≈1 por
-> partida) e ficou **6-6 contra `vazia`**, estatisticamente indistinguível de não
-> jogar. A causa é mecânica e vale a pena estar escrita: **uma carta só sai da mão
-> sendo jogada, e o baralho só cicla quando alguma carta é jogada.** Um programa
-> que nomeia uma carta a joga uma vez, vê ela ir para o fim de uma fila de oito, e
-> nunca mais a encontra.
->
-> Consequência de produto: **8 slots de baralho e 1 regra é um baralho morto**, e
-> nada na tela avisa. É por isso que `defaultStrategy` gasta uma regra por carta
-> que consegue (§7) e que o editor abre num programa que funciona em vez de numa
-> lista vazia. O `plana` contra `vazia` — mesmas ausências de guarda, só mais
-> cartas nomeadas — dá **92%**. **A variedade de cartas nomeadas é, hoje, a
-> variável mais forte do jogo inteiro.**
+> ⚠️ **A régua estava torta até a Fase 3, e isso é parte do registro.** O
+> harness alternava assento **por índice de seed** — cada seed jogava uma vez, do
+> assento que sua posição na lista desse. Parece cancelar a assimetria do mapa e
+> não cancela: só cancelaria se as seeds fossem intercambiáveis. Dois controles
+> derrubaram o desenho — um espelho com esquadrões idênticos deu **8-4 para o
+> rótulo da esquerda**, e o mesmo confronto rodado nas duas ordens de argumento
+> discordou de si mesmo (8-4 contra 11-1). Todo número de esquadrão lido naquele
+> desenho tinha a geometria de spawn dentro. Hoje cada seed é jogada nos dois
+> assentos e o espelho dá 5-5.
 
-Tudo isso é reprodutível: a sim é determinística (`sim/rng.ts`, mulberry32 semeado)
-e roda headless. O `Tactician` **não sorteia nada**, o que está preso por teste — dois
-programas diferentes que não conjuram deixam a partida byte-idêntica.
+Tudo isso é reprodutível: a sim é determinística (`sim/rng.ts`, mulberry32
+semeado) e roda headless. **`chooseAbility` não sorteia nada** — não recebe
+`Rng`, e o teste confirma que o fluxo compartilhado fica no mesmo ponto depois de
+duas posturas diferentes. Sem isso, trocar um mago do esquadrão re-sortearia como
+todos os outros andam.
 
 > ✅ **Status honesto: o risco número um está fechado, com evidência.** O que
-> continua aberto não é mais "as decisões do jogador importam?", e sim **"quais
-> decisões importam?"** — hoje a resposta é "quais cartas você nomeia", e ainda não
-> é "quando você as joga". Ver §14 e §16.9.
+> continua aberto não é "as decisões do jogador importam?", e sim **"as decisões
+> estão bem precificadas?"** — oito dos nove magos estão fora da banda de 45-55%
+> de vitória contra o pool de quartetos legais, com 55 pontos entre o melhor e o
+> pior. Ver §14.
 
 ---
 
@@ -688,8 +648,8 @@ Bênção de Ímpeto continua planejando como se estivesse lento.
 A `api/` já existe (contas, `MatchLog`, ranking, agregação de stats) e no modelo
 novo ela fica **mais** central, não menos.
 
-- **Progressão é de acesso, não de poder.** Jogar desbloqueia cartas novas para o pool. Uma carta desbloqueada nunca é mais forte que uma inicial — é uma opção diferente.
-- **Cartas não sobem de nível.** Esta é a divergência deliberada do Clash Royale e é uma decisão de produto: um jogador novo e um veterano jogam com números idênticos. O ranking mede jogador, não coleção.
+- **Progressão é de acesso, não de poder.** Jogar desbloqueia **magos** novos para o pool. Um mago desbloqueado nunca é mais forte que um inicial — traz um kit diferente.
+- **Magos não sobem de nível, e kits não são editáveis.** Esta é a divergência deliberada do Clash Royale e é uma decisão de produto: um jogador novo e um veterano jogam com números idênticos. O ranking mede jogador, não coleção. É também o que mantém o balance mensurável — um kit fixo por corpo é o que torna "este mago está forte demais" uma frase com significado (§14).
 - **Monetização (fora do escopo v1): apenas cosmético.** Skin de mago, efeito de conjuração, emote. Nada que altere um número da §9.
 - **Ranking:** ELO por vitória, já suportado pelo que existe em `api/src/routes/ranking.ts`.
 
@@ -720,13 +680,13 @@ lista `onHit` de efeitos, e os números todos saíram do TypeScript para
 Isto **não** é trabalho a fazer — está no repo, com teste:
 
 1. **Entidade `Structure`** (Núcleo, Torre) na sim, com imunidade do Núcleo, torre que atira, e vitória por estrutura + morte súbita.
-2. **Sistema de mana** autoritativo por time, com regeneração e dobra na morte súbita.
-3. **Baralho / mão / ciclo** (`sim/Deck.ts`) e a mão no fio (`hand`/`next` no snapshot, por destinatário).
+2. ~~**Sistema de mana** autoritativo por time.~~ **Removido na v1.3** (§6).
+3. ~~**Baralho / mão / ciclo** (`sim/Deck.ts`) e a mão no fio.~~ **Removido na v1.3** (§7).
 4. **Catálogo como dado** (`sim/cards.ts`, `sim/roles.ts`).
 5. **`CastMsg`** no lugar do `InputMsg`; câmera fixa; sem avatar do jogador.
 6. **Ajustes do `Brain`**: ação `siege`, alvo estrutural, comportamento por papel.
 7. **Fila de matchmaking** com fallback para bot (`server/src/Matchmaker.ts`).
-8. **UI de partida**: mão de 4 cartas clicável, barra de mana, preview da próxima, relógio com morte súbita, HP das estruturas, Núcleo e Torres em 3D.
+8. **UI de partida**: relógio com morte súbita, HP das estruturas, Núcleo e Torres em 3D. (A mão, a barra de mana e o preview saíram na v1.3; a carga por skill entrou no lugar.)
 9. **Mapa de estruturas** (`public/maps/siege1.json`).
 
 ### O que a v1.1 muda
@@ -749,106 +709,163 @@ Isto **não** é trabalho a fazer — está no repo, com teste:
 4. **Feedback de efeito na tela**: sem isso o jogador não vê o que a carta dele fez, e o jogo inteiro depende de ele ver.
 5. ~~**Remedição do teste de agência** (§10)~~ **Feita na v1.2** (§10).
 
-### O que a v1.2 muda — o pivot idle
+### O que a v1.2 mudou — o pivot idle
 
-| Antes (v1.1) | Vira (v1.2) |
+| Antes (v1.1) | Virou (v1.2) |
 | --- | --- |
-| O jogador clica carta na mão e depois clica o chão (`MatchHUD`, `OnlineMatch`) | **Não há entrada durante a partida.** A mão fica visível e `pointerEvents: 'none'` |
-| `CastMsg` chega do cliente e o servidor conjura | `CastMsg` marcada `@deprecated` e o roteamento responde `cast rejected: idle_mode`. A mensagem **fica** — é o seam de um futuro modo override |
-| `Commander` joga a mão dos dois assentos | Assento humano recebe **`Tactician`**; assento de bot continua com `Commander` |
-| Sem cadência mínima: 5 conjurações em 5 quadros são possíveis | **Cooldown global de 0.75 s** no `World`, por onde passam humano, `Commander` e `Tactician` |
-| `applySpellEffect` com um `case` por carta | Orientado a dados: `target` + lista `apply` no balance, com `sim/spellRiders.ts` para o que não é `EffectKind` |
-| Baralho de 4 cartas, sem regra | Catálogo em expansão, com `MAX_COPIES`, `MIN_DISTINCT` e `MAX_COLORS` validadas (§7) |
-| Nada no fio explica o que aconteceu | `SnapshotMsg.firedRule` por destinatário, e o HUD nomeia a regra |
+| O jogador clica carta na mão e depois clica o chão | **Não há entrada durante a partida** |
+| `CastMsg` chega do cliente e o servidor conjura | `CastMsg` marcada `@deprecated`; a mensagem **fica** como seam de um futuro modo override |
+| `Commander` joga a mão dos dois assentos | Assento humano recebe `Tactician` |
+| `applySpellEffect` com um `case` por carta | Orientado a dados: `target` + lista `apply` no balance, com `sim/spellRiders.ts` |
+| Nada no fio explica o que aconteceu | `SnapshotMsg.firedRule`, e o HUD nomeia a regra |
 
-### Novo na v1.2
+### O que a v1.3 muda — o pivot do treinador
 
-1. **`sim/strategy.ts`** — o modelo e o avaliador. JSON-serializável, determinístico, headless, **zero `Rng`**. `Condition`, `TargetSelector`, `StrategyRule`, `evaluateStrategy`, `validateStrategy`, `defaultStrategy(deck)`, `emptyStrategy()`.
-2. **`sim/strategyFacts.ts`** — `buildFacts(w, team, plan?)`, construído **uma vez por avaliação** e nunca por regra: 12 regras × 8 magos × 60 Hz é o que tornaria a sim quadrática. Desempate por id de mago, sempre.
-3. **`sim/bot/Tactician.ts`** — implementa exatamente a assinatura de `Commander.step`. É o que torna o pivot barato: `Session` e `LocalSession` já dirigiam um caster com essa forma.
-4. **`sim/spellRiders.ts`** — efeitos que não são `EffectKind` (poça, e o que o Tier 2/3 trouxer). **Nenhum `case` novo em `World.ts` daqui em diante.**
-5. **`sim/strategyPresets.ts`** — os programas de referência contra os quais o jogo é medido (§10, §14), compartilhados entre o teste e o relatório para que um não pare de corroborar o outro.
-6. **`src/app/screens/strategy/**`** — o editor: paleta, lista de regras, editor de condição recursivo, editor de seletor, e o hook de arrasto por pointer events (não HTML5 DnD, que não dispara em toque).
-7. **Persistência de perfil** — `loadouts` no `api/`, com o `when` de cada regra como `Mixed` de propósito: a API impõe só limites estruturais e **o servidor de jogo continua sendo a autoridade de regras**.
-8. **VFX/SFX por carta** — `shape` no descritor, `EFFECT_VFX` por `EffectKind`, telegraph preso por teste ao `delay` da sim, `ShakeRig`, e som procedural por carta com teto de vozes (§17).
+A medição da §10 mostrou que o programa não pagava o que custava. O que a v1.3
+fez **não** foi trocar o avaliador: foi mover a decisão do programa para o corpo.
 
-> **A regra de ouro do pivot: o `Tactician` não sorteia nada.** O servidor
-> compartilha um `Rng` entre `Brain`, os dois embaralhamentos e o `Commander`. Um
-> caster que sorteasse faria **editar uma regra mudar como todos os magos lutam** —
-> o jogador mexeria no programa e veria uma briga sem relação acontecer diferente.
-> Está preso por teste em `agency.test.ts`.
+| Antes (v1.2) | Vira (v1.3) |
+| --- | --- |
+| Mana por time, teto 10, custo por carta | **Cooldown por skill** no corpo do mago + GCD de 0.75 s por mago (§6) |
+| Baralho de 8, mão de 4, `next` em preview | **Nada disso.** O kit é do mago, fixo, 2 ou 3 skills |
+| Programa de até 12 regras, editado numa tela | **Postura por mago** (`hold`/`normal`/`aggressive`), escolhida no `SquadBuilder` |
+| `Tactician` (humano) e `Commander` (bot) conjuram por time | **Nenhum dos dois existe.** `Brain.step` chama `w.castAbility` por mago |
+| `World.castSpell(team, …)` é a porta de jogo, com economia | `World.castAbility(mageId, spellId, pos)` é a porta de jogo; `castSpell` sobrevive `@internal` como porta de **efeito** |
+| `SnapshotMsg` carrega `mana`, `hand`, `next`, `firedRule` | Carrega `firedAbility { mageId, spellId, at }` e `cd[]` por mago |
+| `set_loadout` leva `deck` + `strategy` | Leva `squad` + `stances` |
+| `squadPetrified` trava o time inteiro | Petrify tranca **um corpo** |
+| Esquadrão podia duplicar mago | **Duplicata é ilegal** — quatro cópias de um mago é um mago com quatro barras de vida |
+
+### Novo na v1.3
+
+1. **`sim/abilityPolicy.ts`** — o vocabulário e o avaliador, herdados inteiros do
+   programa que morreu. `Condition`, `TargetSelector`, `AbilityPolicy`
+   (`cooldown`/`range`/`when`/`at`/`minTargets`), `Stance`, `holds`. O `when` de
+   cada skill é dado em `balance.json`, não código.
+2. **`sim/bot/kit.ts`** — `chooseAbility(mage, facts, self)`: pura, **sem `Rng`**,
+   nunca espera. Escolhe entre as skills prontas a mais cara, com ordem de kit
+   como desempate.
+3. **`sim/kits.test.ts`** — o teste de catálogo: kits disjuntos, todo `SpellId`
+   com exatamente um dono, todo `cooldown`/`range` positivo, todo `when` válido,
+   e nenhum kit com duas skills do mesmo `(kind, target)`.
+4. **`sim/kitUsage.test.ts`** — o piso da volta A: toda skill do catálogo é gasta
+   ao menos uma vez, em quartetos que `validateSquad` aceita.
+5. **`scripts/kit-report.mts`** — a varredura de balance por esquadrão (§14).
+6. **`rosterOwnerOf(spellId)`** — bem definido porque os kits são disjuntos e
+   cobrem o catálogo, o que é o que permite creditar um cast a um corpo sem uma
+   segunda tabela.
+7. **UI** — `SquadBuilder` mostra kit e postura; `SquadPanel` mostra a carga de
+   cada skill; o pós-partida diz qual mago gastou o quê.
+
+### Enterrado na v1.3
+
+`sim/Deck.ts`, `sim/strategy.ts`, `sim/strategyPresets.ts`, `sim/bot/Tactician.ts`,
+`sim/bot/Commander.ts`, `DeckBuilder`, `StrategyBuilder`, `src/app/screens/strategy/**`,
+o kind `mana` do vocabulário e as constantes de mana em `config.ts` e
+`balance.json`. O que sobreviveu deles foi a **linguagem** — que hoje descreve
+quando uma skill sai — e `strategyFacts.ts`, que constrói os fatos uma vez por
+time por avaliação.
+
+> **A regra de ouro do pivot sobreviveu, apontada para o alvo novo: a escolha de
+> habilidade não sorteia nada.** O servidor compartilha um `Rng` entre o `Brain`
+> e os embaralhamentos. Uma escolha que sorteasse faria **trocar um mago do
+> esquadrão** mudar como todos os outros lutam — o jogador mexeria num slot e
+> veria uma briga sem relação acontecer diferente. `chooseAbility` não recebe
+> `Rng`, e `agency.test.ts` confirma que o fluxo compartilhado fica no mesmo
+> ponto depois de duas posturas diferentes.
 
 ---
 
 ## 14. Balance IA-vs-IA — o risco técnico restante
 
-O `Brain` foi afinado contra um humano que erra e desvia. **Espelho de IA boa tende
-a empatar ou virar coinflip**, e num jogo onde o jogador não controla a unidade,
-isso apareceria como "minhas decisões não importam" — o mesmo sintoma do risco de
-agência, por outra causa.
+O `Brain` foi afinado contra um humano que erra e desvia. **Espelho de IA boa
+tende a empatar ou virar coinflip**, e num jogo onde o jogador não controla a
+unidade isso apareceria como "minhas decisões não importam" — o mesmo sintoma do
+risco de agência, por outra causa.
 
-E foi exatamente o que a primeira medição encontrou. O harness existe
-(`sim/agency.test.ts`), e o que ele revelou até agora:
+### O histórico, em uma linha cada
 
-1. **Empate era o resultado padrão.** Com estruturas a 1400/900, `hard` vs
-   `easy` empatava em **6/6** partidas no timeout da morte súbita. Ninguém
-   conseguia derrubar torre contra defesa. Corrigido baixando estrutura para
-   900/400 e o dano de torre de 14 para 10.
-2. **A dificuldade estava invertida.** `hard` perdia **0/6** para `easy`, porque
-   guardava 3 de mana de reserva e acabava invocando *menos*. Os dois lados são
-   limitados por mana, não por velocidade de decisão — então cadência quase não
-   separa nada (30 casts contra 27 numa partida inteira). A dificuldade foi
-   movida para eixos que a economia não anula: **responder a ameaça** e
-   **escolher a carta certa para a situação**.
-3. **Estado atual: hard 2, easy 1, 3 empates.** Melhor que invertido, longe de
-   resolvido. Empate ainda é o resultado mais comum entre dois comandantes.
+- **v1.1:** empate era o resultado padrão (6 em 6), e a dificuldade estava
+  **invertida** — `hard` guardava mana e acabava conjurando menos. Corrigido
+  baixando estrutura de 1400/900 para 900/400 e dano de torre de 14 para 10.
+- **v1.2:** com programas conjurando ~1180 vezes por partida em vez de ~30, a
+  **taxa de empate foi a zero em 120 partidas** e nunca mais voltou. Mas a
+  varredura media só as quatro cartas de `defaultDeck()`, então respondia sempre
+  a mesma pergunta — acrescentar cartas ao jogo devolvia números idênticos, até
+  nas contagens de conjuração. Isso media o harness, não o catálogo.
+- **v1.3:** a varredura passou a ser **esquadrão contra esquadrão**
+  (`scripts/kit-report.mts`), que é o que a partida virou. O problema do
+  baralho-fixo desapareceu por construção: todo mago fielda o próprio kit, então
+  varrer quartetos varre o catálogo.
 
-> ⚠️ **A v1.1 invalidou os três achados acima.** Todos foram medidos num jogo em que
-> a mana comprava unidade. Com esquadrão fixo, a mana não compra presença em campo,
-> e o eixo de dificuldade ("escolher a carta certa") passa a significar outra coisa.
+### O que a varredura da v1.3 reporta
 
-### Remedido na v1.2 — e o empate **acabou**
+`npm run report:kit` roda os cortes da §5 do plano: espelho (viés de mapa),
+postura, leave-one-out, e um round robin sobre **quartetos legais** — perguntando
+a legalidade à `validateSquad`, a mesma função que o servidor roda antes da
+partida, em vez de reimplementar a regra.
 
-A varredura de `scripts/ai-report.mts` agora roda **programa contra programa**, que
-é o que a partida de verdade virou, e não mais bot contra bot. Sobre **120 partidas**
-(5 programas, todos contra todos, 12 seeds, lados alternados):
+**Volta A — a IA consegue gastar: fechada.** Nenhuma skill do catálogo é muda, e
+normalizando por side os volumes ficam dentro de uma ordem de grandeza no mesmo
+tier de custo (custo 3 roda 10-16 casts/side; custo 4 roda 6-15). O piso está em
+CI (`sim/kitUsage.test.ts`), em quartetos que a regra de construção aceita —
+legalidade importa: uma janela deslizante sobre o catálogo é mais curta, mas
+metade dos quartetos dela é immontável, e skill que só dispara ali é muda em toda
+partida real.
 
-> ⚠️ **Medido sobre `defaultDeck()` — quatro cartas — e não sobre o catálogo.**
-> Acrescentar cartas ao jogo **não muda estes números**, porque as cartas novas não
-> entram no baralho da varredura (§10). Já foi confirmado na prática: com o Tier 2
-> fechado, a varredura devolveu resultado idêntico, **até nas contagens de
-> conjuração**. Isso mede o harness, não as cartas.
->
-> Consequência para quem for usar isto como teste de aceite: **construa primeiro um
-> baralho e programas de referência sobre as cartas novas.** Sem isso, `ai-report`
-> responde sempre a mesma pergunta.
+**Volta B — o número: aberta.** Sobre 900 partidas em dez quartetos legais, com
+o sampler que dá a cada mago 3-6 aparições:
 
-| Métrica | v1.1 | v1.2 |
+| Mago | Vitória contra o pool | n (sides) |
 | --- | --- | --- |
-| **Taxa de empate** | 3 em 6, e antes 6 em 6 | **0 em 120 — 0%** |
-| Separação do melhor programa contra o pior | invertida, depois indiferenciada | **69% contra 23%** |
-| Duração típica | quase sempre até a morte súbita | decidida antes do timeout |
+| pyromancer | 75.1% | 720 |
+| stormcaller | 69.7% | 720 |
+| ice_sentinel | 55.7% | 900 |
+| cleric | 55.7% | 900 |
+| stone_golem | 53.6% | 1080 |
+| arcane_bard | 44.3% | 900 |
+| arcane_archer | 43.9% | 720 |
+| wind_dervish | 21.3% | 540 |
+| alchemist | 20.3% | 720 |
 
-> ✅ **O problema aberto número um da §14 fechou.** "Um jogo em que dois jogadores
-> bons empatam metade das vezes não é jogável" era o critério; a taxa de empate é
-> **zero**. Vale dizer *por que*, para não se creditar mérito indevido: parte é o
-> pivot (programas conjuram muito mais que os comandantes conservadores mediam —
-> ~1180 conjurações por programa contra ~30 na medição antiga), e parte é o Tier 1,
-> que trouxe cartas de dano de verdade. Não foi um dial de HP de estrutura.
+**Oito dos nove estão fora da banda de 45-55%**, com **55 pontos** entre o melhor
+e o pior. A desigualdade mora no papel de **dano**, não no de suporte: os dois
+suportes ficam a 11 pontos um do outro, e os dois tanks a 2. Taxa de empate
+continua **0%**, agora como critério de regressão e não como meta.
 
-**O que a v1.2 abriu no lugar**, e é o próximo trabalho de balance:
+> ⚠️ **Como esta tabela corrigiu a anterior, e por que isso é a lição.** A
+> primeira leitura desta varredura, com um pool espaçado uniformemente pela lista
+> de quartetos (que sai em ordem de catálogo), dizia `cleric` 68.1%, `alchemist`
+> 85.0% e `stormcaller` 40.9%. Com cobertura equilibrada os mesmos magos dão
+> **55.7%, 20.3% e 69.7%**. O `alchemist` aparecia em **um** quarteto: os 85%
+> eram o recorde daquele quarteto usando o nome de um mago. Nenhuma conclusão de
+> balance sobrevive a um pool que não fielda os magos de forma comparável, e o
+> relatório imprime quartetos-por-mago exatamente para isso não voltar a passar.
 
-1. ⚠️ **Timing não separa nada — nas quatro cartas em que foi medido.** `responsiva` × `plana` = **50%** (§10). O eixo em que a dificuldade foi colocada na v1.1 — "escolher a carta certa para a situação" — continua indiferenciado, agora medido no jogador em vez do bot. **Isto é o item nº 1 do balance da v1.2**, e o primeiro passo dele não é desenhar carta: é **dar ao experimento um baralho que contenha as cartas condicionais**, para saber se o problema é o material ou o modelo.
-2. ⚠️ **A variedade de cartas domina tudo.** É a única variável com efeito grande hoje (25% → 92%). Um jogo em que a decisão dominante é "nomeie mais cartas" é raso, mesmo que não empate.
-3. **Nenhuma carta foi medida individualmente.** Nada de win rate por carta ainda.
+> ⚠️ **Uma passagem de volta B já foi feita e falhou — não repetir.** A hipótese
+> era que os dois magos de **kit com 2 slots** perdiam por falta de throughput:
+> gastam ~22 casts/side contra 26-38 dos kits de 3, e toda skill roda perto do
+> teto do próprio cooldown (§6). Cortar `bond_of_pain` de 14→9 e `paranoia` de
+> 11→7 levantou o throughput do bard em **36%** e moveu a vitória dele de 31.9%
+> para 32.1% — três partidas em 1080. Revertido. **Frequência não é o que segura
+> um kit de 2 slots.**
 
-Próximos passos do balance (§13):
+### Critérios de saúde (herdados e atualizados)
 
-- Rodar milhares de partidas **carta-contra-carta** e programa-contra-programa, não 120, e reportar taxa de vitória e mana trocada por carta.
-- **Critério de saúde: nenhuma carta acima de ~55% de vitória contra o pool**, e nenhum par carta-contra-carta em 100/0.
-- ✅ ~~Taxa de empate precisa cair muito.~~ **Feito: 0%.** Vira critério de regressão, não meta.
-- **Critério novo:** um programa com guardas tem que separar de um sem guardas. Enquanto `responsiva` × `plana` estiver em 50%, o vocabulário de regras está sendo pago e não usado (§16.10).
-- Rodar em CI com seed fixa, tratando desvio como regressão.
+- Nenhum mago acima de **~55%** nem abaixo de **~45%** contra o pool.
+- Nenhuma skill em **100/0** no recorte em que ela é gasta.
+- Skill com 0 casts **não se nerfa** — conserta-se o `when`, o alcance ou o `at`.
+- Taxa de empate continua critério de **regressão**.
+- **Tetos são relatados, nunca asseridos.** O piso mora em CI
+  (`sim/agency.test.ts`, `sim/kitUsage.test.ts`); volume mora no script. Um teto
+  lido em doze seeds deixaria um flake escrever um nerf.
+
+> ⚠️ **A amostra do relatório é 10 de 60 quartetos legais**, e o sampler é guloso
+> na cobertura para dar a cada mago 3-6 aparições. Antes disso ele espaçava
+> uniformemente a lista, que sai em ordem de catálogo — e o `alchemist` aparecia
+> em **um** quarteto, o que fez os 85% dele parecerem teto quando eram o recorde
+> daquele quarteto. O relatório imprime quartetos-por-mago para essa ressalva não
+> ficar invisível.
 
 ---
 
@@ -874,23 +891,45 @@ Próximos passos do balance (§13):
 
 ## 16. Perguntas em aberto
 
-As duas primeiras eram as mais graves da v1.1 e **fecharam na v1.2**.
+1. ✅ **O AFK ainda perde? — RESPONDIDA, com medição.** Sim. O eixo mudou na
+   v1.3 (não há mais programa vazio para servir de linha de base), mas a resposta
+   segue: um esquadrão balanceado vence um sem dano nenhum **40-0**, e soltar a
+   coleira bate segurá-la **33-7**. Ver §10.
+2. ✅ **Posicionamento ainda é decisão densa? — RESPONDIDA por outro caminho.** A
+   densidade não voltou para o posicionamento; migrou primeiro para o programa e
+   agora para a **composição**. Ninguém centra raio nenhum: o jogador escolhe
+   quatro kits e quatro posturas, com tempo para pensar.
+3. **Quatro magos é o número certo?** Ainda aberta, e agora mais carregada: com
+   kit por corpo, quatro magos são 8-12 skills, e é isso que define o vocabulário
+   inteiro de uma partida.
+4. ✅ **Qual a regra de construção do esquadrão? — RESPONDIDA e em vigor.** Quatro
+   magos, mínimo um de cada papel, **sem duplicatas**. Ver §7.
+5. **Assíncrono depois?** Continua possível sem retrabalho — a sim é
+   determinística e headless, e um loadout v1.3 (quatro ids e quatro posturas) é
+   um dado ainda menor que o programa era.
+6. **Duas Torres ou uma?** Inalterada.
+7. **O Suporte é legível?** Inalterada como pergunta de leitura. Deixou de ser
+   também um problema de balance: com pool equilibrado os dois suportes ficam a
+   11 pontos um do outro (§14).
+8. **Practice mode.** Continua congelado em `src/systems/**` com o modelo antigo.
 
-1. ✅ **O AFK ainda perde? — RESPONDIDA, com medição.** Sim, e por larga margem. O modelo idle tornou a pergunta respondível ao dar a ela uma linha de base representável: um programa sem regras conjura exatamente zero vezes. Medido, o programa padrão vence o programa vazio em **83% das partidas decididas**, e perde estritamente menos estrutura. Ver §10.
-2. ✅ **Posicionamento ainda é decisão densa? — RESPONDIDA por outro caminho.** A densidade **não** voltou para o posicionamento; ela migrou para o programa. "Onde centrar um raio" continua raso — mas ninguém centra raio nenhum: o jogador escolhe entre onze seletores nomeados, sob guardas que ele escreve, com tempo para pensar. A saída que a v1.1 temia precisar (dar influência sobre para onde o esquadrão empurra, encostando no non-goal de ordens táticas) **não foi necessária**.
-3. **Quatro magos é o número certo?** Ainda aberta. Escolhido por parecer legível (4 cabem na tela e na cabeça), não por medição. Interage com o raio dos feitiços: esquadrão pequeno e espalhado torna buff de área difícil de acertar; esquadrão grande e junto torna todo buff um acerto garantido, e a decisão desaparece.
-4. ✅ **Qual a regra de construção do baralho? — RESPONDIDA e em vigor.** 8 cartas, no máximo 2 cópias, no mínimo 3 distintas, no máximo 2 cores — as três validadas. Ver §7.
-5. **Assíncrono depois?** Real-time foi escolhido e é o que está sendo construído. Assíncrono continua possível *sem retrabalho*: a sim é determinística e headless, então "lutar contra o esquadrão e o baralho gravados de outro jogador" é rodar o mesmo `World` sem socket. Decisão adiada de propósito, não esquecida.
-6. **Duas Torres ou uma?** A §5 propõe duas + imunidade do Núcleo, e o mapa `siege1.json` foi construído assim. Duas dão forma de flanco à partida; uma é mais simples de balancear.
-7. **O Suporte é legível?** É o papel com maior risco de o jogador não perceber o efeito. Piora na v1.1: agora o Clérigo cura *e* o jogador joga cura, e os dois precisam ser distinguíveis na tela. **Atacado, não fechado:** o suporte agora tem ataque próprio (§9), anel de área no chão marcando o alcance real e feixe do Clérigo até quem ele curou (`SupportRenderer`). Falta medir se o jogador atribui o efeito ao mago certo quando uma Bênção jogada e um Clérigo agem no mesmo aglomerado.
-8. **Practice mode.** Continua congelado em `src/systems/**` com o modelo antigo. Descreve um jogo que não existe mais há duas versões — decidir se vira tutorial do modelo novo ou se sai.
+Novas na v1.3:
 
-As três seguintes são **novas na v1.2** e são todas sobre o mesmo eixo: um jogo em
-que o jogador não age durante a partida vive ou morre pelo que ele entende depois.
-
-9. **O jogador consegue narrar por que perdeu?** É o risco nº 1 da v1.2, e o único que nenhum teste verde responde. O painel de rastro nomeia a regra que disparou, mas nomear não é explicar: "Regra 4 · Bênção → linha de frente aliada" não diz *por que a regra 2 não disparou*, que é quase sempre a pergunta real. O candidato natural é um resumo pós-partida — quantas vezes cada regra disparou, e quantas vezes cada uma foi pulada e por qual gate (mana, carta fora da mão, condição falsa, alvo não resolvido). **Não construído.** O teste de aceitação continua sendo humano: montar duas estratégias visivelmente diferentes, jogar as duas, e conseguir narrar em voz alta por que uma ganhou.
-10. **Doze regras é liberdade suficiente ou já é uma linguagem de programação?** O vocabulário atual (condições combináveis com `E`/`OU`/`não`, aninhamento de um nível) parou num ponto escolhido por legibilidade, não por medição. Se os programas bons convergirem todos para a mesma forma, o vocabulário é pequeno demais; se a maioria dos jogadores nunca passar de 4 regras, é grande demais e a complexidade está sendo paga sem ser usada.
-11. **Um jogo idle precisa da partida em tempo real?** Nada no modelo v1.2 exige que as duas partes assistam ao mesmo tempo — a sim é determinística e headless, e o programa é um dado pequeno. Isso torna o assíncrono (§16.5) mais barato do que era, e ao mesmo tempo levanta a pergunta desconfortável de para que serve o tempo real aqui. Decisão adiada de propósito: real-time é o que está construído e funciona.
+9. **O jogador consegue narrar por que perdeu?** Continua sendo o risco nº 1, e o
+   único que nenhum teste verde responde. A v1.3 melhorou o material: o HUD nomeia
+   a habilidade que disparou, o `SquadPanel` mostra a carga de cada skill descendo,
+   e o pós-partida diz qual mago gastou o quê. O que ainda falta é o negativo —
+   *por que a skill que eu esperava não saiu* (cooldown? `when` falso? fora de
+   alcance? `minTargets`?). O teste de aceitação continua humano.
+10. **Kit fixo ou 2-de-3?** O plano deixou fixo como default e a decisão para
+    depois do balance. A medição da §14 dá o argumento mais forte até agora **a
+    favor de mexer**: os dois magos de kit com 2 slots são os dois piores do pool,
+    e não é por frequência — cortar os cooldowns deles 36% não moveu nada.
+11. **Postura é decisão suficiente?** A escada é monotônica mas o degrau de cima é
+    raso: `aggressive` bate `normal` 22-18 em n=40. Se ficar assim, postura é
+    tempero e a decisão real é só a composição.
+12. **Um jogo idle precisa da partida em tempo real?** Inalterada, e mais barata
+    de responder do que era.
 
 ---
 
@@ -961,10 +1000,13 @@ primitiva, em vez de todo feitiço ser a mesma batida recolorida:
 ## 18. Estado do repo relevante a este GDD
 
 - `sim/**` e `server/src/**` são a fundação deste design. **Não deletar.**
-- A suíte da raiz: **628 testes verdes em 55 arquivos**, medidos no fim da Fase 12 da v1.2 (a nota anterior dizia 273, número de duas versões atrás). A `api/` tem suíte própria, **50 verdes**, com `mongodb-memory-server`.
+- A suíte da raiz: **verde**, ~810 testes em 69 arquivos ao fim da v1.3 Fase 5. A `api/` tem suíte própria, **51 verdes**, com `mongodb-memory-server`. Tudo exige **Node 22**.
 - **`sim/agency.test.ts` é lento de propósito** — joga partidas inteiras headless, e o `testTimeout` de 30 s no `vite.config.ts` existe por causa dele. Não é teste para rodar em loop de edição; é a medição da §10.
 - ⚠️ **`npm run lint` está poluído**: reporta centenas de erros de parsing vindos **inteiramente** de `.cursor/worktrees/**`, uma worktree aninhada dentro do repo que confunde o `tsconfigRootDir` do eslint. O código real fica limpo com `npx eslint sim server src api/src`. É problema de infra, não de código.
 - Containers Docker **estão atualizados** para o servidor Node (`server/Dockerfile` builda da raiz, porque o servidor importa `sim/` e `public/maps/`; `nginx.conf` faz proxy de `/ws` com upgrade). A nota anterior de "desatualizados" ficou obsoleta. Não verificado com build real recente — o daemon estava desligado.
-- Existe smoke de browser de ponta a ponta: `node scripts/siege.mjs`. **Reescrito na v1.2** — registra conta descartável, entra na fila, e afirma o que o modelo idle exige: que **regras disparam sozinhas** no fio e que **clicar na arena não envia cast nenhum**. Precisa da API e do Mongo no ar.
-- Existe varredura headless de balance: `npx tsx scripts/ai-report.mts` — mix de ações do `Brain` e a varredura programa-contra-programa da §14. É onde a taxa de empate é medida.
-- `AGENTS.md` marca `sim/**` como zona de coordenação obrigatória — a v1.2 toca essa zona inteira de novo, incluindo `World`, `Deck`, `protocol`, `snapshot`, `bot/` e os arquivos novos de estratégia.
+- Existe smoke de browser de ponta a ponta: `node scripts/siege.mjs`. Registra conta descartável, entra na fila, e afirma o que o modelo idle exige: que **habilidades disparam sozinhas** no fio e que **clicar na arena não envia cast nenhum**. Precisa da API e do Mongo no ar.
+- Existem **duas** varreduras headless: `npm run report:ai` (mix de ações do
+  `Brain`, profundidade de push, objetivos — sobre movimento, que o pivot não
+  tocou) e `npm run report:kit` (a varredura de balance por esquadrão da §14). A
+  seção programa-contra-programa do `ai-report` foi removida com o programa.
+- `AGENTS.md` marca `sim/**` como zona de coordenação obrigatória — a v1.3 tocou essa zona inteira de novo, incluindo `World`, `entities`, `protocol`, `snapshot`, `bot/`, e apagou `Deck.ts` e `strategy*.ts`.

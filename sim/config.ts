@@ -87,15 +87,6 @@ export const RESPAWN_IMMUNITY = S.respawnImmunity;
 /** Mages per team, fixed at match start and permanent for the whole match. */
 export const SQUAD_SIZE = S.squadSize;
 
-/* ---- Mana economy (GDD §6) ----------------------------------------------- */
-
-export const MANA_MAX = S.manaMax;
-export const MANA_START = S.manaStart;
-/** Seconds to regenerate one mana during normal time. */
-export const MANA_REGEN_INTERVAL = S.manaRegenInterval;
-/** Sudden death doubles the rate (GDD §4, §6). */
-export const SUDDEN_DEATH_MANA_MULTIPLIER = S.suddenDeathManaMultiplier;
-
 /* ---- Match structure (GDD §4) -------------------------------------------- */
 
 /** Normal time, in seconds. */
@@ -222,8 +213,8 @@ export const ABILITY_GCD = S.abilityGcd;
 /**
  * How much faster kits recharge once normal time runs out (§3.3).
  *
- * The replacement for {@link SUDDEN_DEATH_MANA_MULTIPLIER}, which accelerated
- * overtime by doubling the resource nobody spends any more. Same lever, moved
+ * The replacement for the old `suddenDeathManaMultiplier`, which accelerated
+ * overtime by doubling a resource nobody spends any more. Same lever, moved
  * onto the resource that took its place — without it the overtime overlay is
  * the plan's "igual, só que sem o acelerador".
  */

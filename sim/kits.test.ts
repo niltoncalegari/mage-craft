@@ -110,23 +110,6 @@ describe('ability policy — the Brain has something to read', () => {
   });
 
   /**
-   * Mana is gone (§3.3), so a policy that still reads it would be a condition
-   * that can never be true — a skill that silently never fires.
-   */
-  it('never guards a trigger on mana', () => {
-    const mentionsMana = (c: unknown): boolean => {
-      if (typeof c !== 'object' || c === null) return false;
-      const node = c as { kind?: unknown; of?: unknown };
-      if (node.kind === 'mana') return true;
-      if (Array.isArray(node.of)) return node.of.some(mentionsMana);
-      return mentionsMana(node.of);
-    };
-    for (const id of ALL_SPELLS) {
-      expect(mentionsMana(abilityPolicyFor(id)!.when), `${id} reads mana`).toBe(false);
-    }
-  });
-
-  /**
    * A `minTargets` above 1 is a promise that the selector can point at a crowd,
    * and only the two cluster selectors can — everything else resolves to one
    * body, one structure or one point. Asking two of a selector that can only

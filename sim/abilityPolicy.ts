@@ -2,26 +2,27 @@
  * The firing policy a mage reads before spending one of its own abilities
  * (plano v1.3 §3.4) — and the vocabulary that policy is written in.
  *
- * This module exists because of a sequencing problem. The v1.3 pivot deletes
- * the player-authored program (`strategy.ts`) but keeps the *language* it was
- * written in: "when the enemy is bunched up, at the enemy cluster" is exactly
- * as useful to a mage deciding for itself as it was to a rule list. So the
- * language moves here first, and `strategy.ts` re-exports it for as long as the
- * editor still ships. When the editor goes, this file is what is left standing
- * — the deletion is then a deletion rather than a rewrite.
+ * The module exists because the v1.3 pivot deleted the player-authored program
+ * (`strategy.ts`) but kept the *language* it was written in: "when the enemy is
+ * bunched up, at the enemy cluster" is exactly as useful to a mage deciding for
+ * itself as it was to a rule list. The language moved here, `strategy.ts`
+ * re-exported it while the editor still shipped, and now that the editor is
+ * gone this file is simply what was left standing.
  *
- * Two deliberate differences from the program's vocabulary:
+ * Two ways the vocabulary differs from the program's:
  *
- * - **`mana` is not an ability condition.** Team mana is gone (§3.3); a policy
- *   guarded on it would be a skill that can never fire, which the balance sweep
- *   of §5 would read as "weak" and nerf. `kits.test.ts` refuses one.
+ * - **`mana` is gone.** Team mana went in §3.3, and a policy guarded on it
+ *   would be a skill that can never fire — which the balance sweep of §5 would
+ *   read as "weak" and nerf. It survived one phase as an inert kind so saved
+ *   programs still parsed; there are no saved programs now, so it is deleted
+ *   rather than answered with a zero.
  * - **`self_health` is new.** It is the only fact that belongs to a body rather
  *   than to a side, and it is what "the Pyromancer panics when *it* is nearly
  *   dead" needs. A team-scoped `ally_health` cannot say that.
  */
 
 import { isEffectKind, type EffectKind } from './effects';
-import { MANA_MAX, SQUAD_SIZE } from './config';
+import { SQUAD_SIZE } from './config';
 import { BALANCE } from './balance';
 import { ALL_SPELLS, type SpellId } from './spells';
 import type { Posture } from './bot/Squad';
@@ -38,7 +39,6 @@ export const COMPARATORS: readonly Comparator[] = ['lt', 'lte', 'gt', 'gte', 'eq
  * fact, so a reader (and, while it lasted, the editor) handles them uniformly.
  */
 export type NumericConditionKind =
-  | 'mana'
   | 'elapsed'
   | 'ally_count'
   | 'enemy_count'
@@ -54,7 +54,6 @@ export type NumericConditionKind =
 
 /** Inclusive bounds an authored value must fall in, per fact. */
 export const NUMERIC_RANGE: Readonly<Record<NumericConditionKind, readonly [number, number]>> = {
-  mana: [0, MANA_MAX],
   elapsed: [0, 600],
   ally_count: [0, SQUAD_SIZE],
   enemy_count: [0, SQUAD_SIZE],
@@ -70,26 +69,6 @@ export const NUMERIC_RANGE: Readonly<Record<NumericConditionKind, readonly [numb
 };
 
 export const ALL_NUMERIC_CONDITIONS = Object.keys(NUMERIC_RANGE) as readonly NumericConditionKind[];
-
-/**
- * The union above is the *superset* both readers share, and each side is
- * missing one fact from it.
- *
- * `mana` has had no source since §3.3 took team mana out, so an ability guarded
- * on it could never fire — and a skill that never fires reads as "weak" to the
- * balance sweep of §5, which is the "nerf cego" failure the plan warns about.
- * `self_health` runs the other way: it belongs to a body, and the player's
- * program is evaluated once per team, so a rule reading it would have no self
- * to ask about.
- */
-export const PROGRAM_ONLY_CONDITIONS: readonly NumericConditionKind[] = ['mana'];
-export const ABILITY_ONLY_CONDITIONS: readonly NumericConditionKind[] = ['self_health'];
-
-export const ABILITY_NUMERIC_CONDITIONS: readonly NumericConditionKind[] =
-  ALL_NUMERIC_CONDITIONS.filter((k) => !PROGRAM_ONLY_CONDITIONS.includes(k));
-
-export const PROGRAM_NUMERIC_CONDITIONS: readonly NumericConditionKind[] =
-  ALL_NUMERIC_CONDITIONS.filter((k) => !ABILITY_ONLY_CONDITIONS.includes(k));
 
 export type Condition =
   | { readonly kind: 'always' }
@@ -259,12 +238,6 @@ export function holds(condition: Condition, facts: StrategyFacts, self?: MageFac
 
 function numericFact(kind: NumericConditionKind, f: StrategyFacts, self?: MageFacts): number {
   switch (kind) {
-    // Inert, not absent: `mana` stays in the vocabulary so the player's saved
-    // programs still parse until §5 deletes the reader, but there has been no
-    // bar to read since §3.3. Zero is the honest answer — every `mana >= N`
-    // guard reads false, which is what "this rule can no longer fire" means.
-    case 'mana':
-      return 0;
     case 'elapsed':
       return f.elapsed;
     case 'ally_count':
@@ -341,18 +314,6 @@ export function isCondition(value: unknown): boolean {
   return c.value >= lo && c.value <= hi;
 }
 
-/** Whether a condition is legal in an *ability* policy specifically. */
-export function isAbilityCondition(value: unknown): boolean {
-  if (!isCondition(value)) return false;
-  const c = value as Record<string, unknown>;
-  if (PROGRAM_ONLY_CONDITIONS.includes(c.kind as NumericConditionKind)) return false;
-  if (c.kind === 'not') return isAbilityCondition(c.of);
-  if (c.kind === 'all' || c.kind === 'any') {
-    return (c.of as readonly unknown[]).every(isAbilityCondition);
-  }
-  return true;
-}
-
 /* ---- The catalog ----------------------------------------------------------- */
 
 /**
@@ -381,8 +342,8 @@ function build(): Readonly<Record<SpellId, AbilityPolicy>> {
     if (!(ALL_TARGET_SELECTORS as readonly unknown[]).includes(raw.at)) {
       throw new Error(`${where}: unknown selector ${JSON.stringify(raw.at)}`);
     }
-    if (!isAbilityCondition(raw.when)) {
-      throw new Error(`${where}: \`when\` is not a legal ability condition`);
+    if (!isCondition(raw.when)) {
+      throw new Error(`${where}: \`when\` is not a legal condition`);
     }
 
     out[id] = {

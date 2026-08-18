@@ -208,10 +208,6 @@ export interface Balance {
     readonly respawnDelay: number;
     readonly respawnImmunity: number;
     readonly squadSize: number;
-    readonly manaMax: number;
-    readonly manaStart: number;
-    readonly manaRegenInterval: number;
-    readonly suddenDeathManaMultiplier: number;
     readonly matchDuration: number;
     readonly suddenDeathDuration: number;
     readonly spellCastFxDuration: number;

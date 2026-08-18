@@ -15,7 +15,7 @@ import { TEAM_A, TEAM_B, type Mage } from '../entities';
 import { Vec2 } from '../Vec2';
 import { World } from '../World';
 import { buildFacts } from '../strategyFacts';
-import { isAbilityCondition } from '../abilityPolicy';
+import { isCondition } from '../abilityPolicy';
 import { chooseAbility, HOLD_GUARD, selfFacts } from './kit';
 
 describe('chooseAbility — spending the kit', () => {
@@ -168,7 +168,7 @@ describe('chooseAbility — what a stance buys', () => {
    * never casts at all.
    */
   it('writes its guard in a vocabulary a mage can actually read', () => {
-    expect(isAbilityCondition(HOLD_GUARD)).toBe(true);
+    expect(isCondition(HOLD_GUARD)).toBe(true);
   });
 
   it('lets an aggressive mage spend a skill on a target normal would not', () => {

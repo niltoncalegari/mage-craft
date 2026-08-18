@@ -1,9 +1,9 @@
 import { SIM_DT } from '../../sim/config';
 import { emptyInput, TEAM_A, TEAM_B, type Team } from '../../sim/entities';
 import { Arena } from '../../sim/Arena';
-import type { RosterId } from '../../sim/cards';
+import { ALL_ROSTER, rosterFor, type RosterId } from '../../sim/cards';
 import { buildSnapshot, SNAPSHOT_EVERY_N_TICKS, toSnapshotMsg } from '../../sim/snapshot';
-import { ALL_SPELLS, type SpellId } from '../../sim/spells';
+import type { SpellId } from '../../sim/spells';
 import { Vec2 } from '../../sim/Vec2';
 import { World } from '../../sim/World';
 import type { SnapshotMsg } from '../net/protocol';
@@ -23,10 +23,29 @@ import { spellRangeMap, STAGE_X, STAGE_Y } from './spellRangeMap';
  * you answer it by seeing two of them land in the same place a few seconds
  * apart, not by hunting for the difference between two distant patches.
  *
- * Everything here goes through the real `World.castSpell`: the real cooldown,
- * the real mana, the real effects, the real snapshot path. Nothing is faked, so
- * what you are looking at is what a match will show you.
+ * Everything here goes through the real `World.castSpell`: the real effects,
+ * the real snapshot path. Nothing is faked, so what you are looking at is what
+ * a match will show you.
+ *
+ * The running order is **by mage, kit by kit**, not the flat catalog. Since the
+ * pivot a spell is not a card a player holds but a thing a particular body
+ * does, so the useful comparison is "here is everything the Pyromancer brings",
+ * landing back to back — and the sharpest contrast in the whole catalog is
+ * between two kits, not between two spells picked out of a list.
  */
+
+/**
+ * Every spell in the catalog, grouped under the mage whose kit holds it.
+ *
+ * A permutation of `ALL_SPELLS` rather than a subset — kits are disjoint and
+ * cover the catalog, which `sim/kits.test.ts` holds, so grouping loses nothing
+ * and repeats nothing. The lap length therefore stays odd (25), which is what
+ * lets the caster flip after every cast and give each spell the opposite side
+ * on the next lap without a control to toggle.
+ */
+const RUNNING_ORDER: readonly { rosterId: RosterId; spellId: SpellId }[] = ALL_ROSTER.flatMap(
+  (rosterId) => (rosterFor(rosterId)?.abilities ?? []).map((spellId) => ({ rosterId, spellId })),
+);
 
 /** Where the cards land; the map is built around this point. */
 const STAGE = new Vec2(STAGE_X, STAGE_Y);
@@ -58,8 +77,10 @@ const CLOCK_LOOP = 60;
 /** What the screen shows about the cast that just landed. */
 export interface SpellRangeNowPlaying {
   readonly spellId: SpellId;
+  /** The body whose kit this spell belongs to — the range's unit of grouping. */
+  readonly rosterId: RosterId;
   readonly team: Team;
-  /** Index in {@link ALL_SPELLS}, for the screen's running order. */
+  /** Index in {@link RUNNING_ORDER}, for the screen's running order. */
   readonly index: number;
 }
 
@@ -69,6 +90,8 @@ export interface SpellRangeSessionOptions {
   onCast?(now: SpellRangeNowPlaying): void;
 }
 
+export { RUNNING_ORDER };
+
 export class SpellRangeSession {
   private readonly world: World;
   private readonly dummies: { id: string; home: Vec2 }[] = [];
@@ -76,8 +99,8 @@ export class SpellRangeSession {
   /** Which card the carousel is trying to land next. */
   private next = 0;
   /**
-   * Which side casts it. Flipped after every card, and `ALL_SPELLS.length` is
-   * odd, so each card alternates sides from one lap to the next for free — a
+   * Which side casts it. Flipped after every card, and the lap length is odd,
+   * so each card alternates sides from one lap to the next for free — a
    * lap tells you what your own cast looks like, the next tells you what
    * theirs does, without a control to toggle.
    */
@@ -167,11 +190,11 @@ export class SpellRangeSession {
    * takes longer to come round.
    */
   private advanceCarousel(): void {
-    const spellId = ALL_SPELLS[this.next];
+    const { spellId, rosterId } = RUNNING_ORDER[this.next];
     if (this.world.castSpell(this.caster, spellId, STAGE).ok !== true) return;
 
-    this.opts.onCast?.({ spellId, team: this.caster, index: this.next });
-    this.next = (this.next + 1) % ALL_SPELLS.length;
+    this.opts.onCast?.({ spellId, rosterId, team: this.caster, index: this.next });
+    this.next = (this.next + 1) % RUNNING_ORDER.length;
     this.caster = this.caster === TEAM_A ? TEAM_B : TEAM_A;
   }
 

@@ -32,11 +32,6 @@
 
     "squadSize": 4,
 
-    "manaMax": 10,
-    "manaStart": 5,
-    "manaRegenInterval": 2.8,
-    "suddenDeathManaMultiplier": 2,
-
     "matchDuration": 180,
     "suddenDeathDuration": 60,
 
