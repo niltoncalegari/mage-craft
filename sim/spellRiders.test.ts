@@ -9,7 +9,6 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { MANA_MAX } from './config';
 import { applyEffect, hasEffect, magnitudeOf } from './effects';
 import { TEAM_A, TEAM_B, type Mage, type Team } from './entities';
 import { isSpellRider } from './spellRiders';
@@ -29,64 +28,65 @@ describe('spell riders', () => {
   });
 
   /**
-   * Fluxo de Mana. Tributo Obscuro buys mana with health, all at once; this
-   * buys it with *time*, which is the other half of the same idea and the
-   * reason blue and black both get an economy card instead of one of them
-   * getting the only one.
+   * Fluxo de Mana, re-pointed (plano v1.3 §3.3). Tributo Obscuro buys tempo
+   * with health, all at once; this buys it with *time*, which is the other half
+   * of the same idea and the reason blue and black both get an economy card
+   * instead of one of them getting the only one.
    *
-   * The two are opposites to play. The tribute is a spike — you are poorer in
-   * health and richer this second. This is an investment that has to survive
-   * long enough to pay, which means it is the one card in the catalog that is
-   * worse the later in a fight it is cast.
+   * What it buys changed, not what it is: the team bar is gone, so the card now
+   * turns the whole side's kits around faster for as long as it lasts. It is
+   * still the one card in the catalog that is worse the later it is cast.
    */
   describe('attune', () => {
-    /**
-     * Ticks to get back to a full bar after paying for `spell`.
-     *
-     * Measured as a refill *time* rather than as mana held after N seconds,
-     * because the ceiling would otherwise do the measuring: with nothing being
-     * spent, both worlds park at {@link MANA_MAX} and a doubled rate looks
-     * exactly like a normal one. A real match spends constantly, so the honest
-     * question is how fast the bar comes back, not how full it gets.
-     */
-    function ticksToFull(spell: string, at = new Vec2(0, 0)): number {
+    /** Seconds of charge a Stormcaller burns off Sobrecarga in one second. */
+    function rechargedInOneSecond(cast: (w: World, caster: Mage) => void): number {
       const w = new World();
-      w.summon(TEAM_A, 'pyromancer', new Vec2(0, 0));
-      w.castSpell(TEAM_A, spell, at);
+      const caster = w.summon(TEAM_A, 'stormcaller', new Vec2(0, 0));
+      w.summon(TEAM_A, 'pyromancer', new Vec2(0, 1));
+      expect(w.castAbility(caster.id, 'overload_field', new Vec2(0, 0.5)).ok).toBe(true);
+      const spent = w.abilityCooldownOf(caster.id, 'overload_field');
 
-      let ticks = 0;
-      while (w.manaOf(TEAM_A) < MANA_MAX && ticks < 60 * 120) {
-        w.step(1 / 60);
-        ticks++;
-      }
-      return ticks;
+      cast(w, caster);
+      w.step(1);
+
+      return spent - w.abilityCooldownOf(caster.id, 'overload_field');
     }
 
-    // Maldição da Lentidão is the control: the same three mana spent on a card
-    // that does nothing for the economy, so what is compared is the flow and
-    // not the price.
-    it('refills the bar faster than the same mana spent elsewhere', () => {
-      expect(ticksToFull('mana_flow')).toBeLessThan(ticksToFull('slow_curse'));
-    });
+    it('turns the side’s kits around faster than ordinary time', () => {
+      const flowing = rechargedInOneSecond((w, caster) => {
+        w.castSpell(caster.team, 'mana_flow', new Vec2(0, 0.5));
+      });
 
-    /**
-     * The expiry, tested through the only thing it changes: how much of the
-     * refill happens at the raised rate. A flow that never ran out would finish
-     * in less than half the control's time, since it would carry the whole
-     * refill; this one carries the first few seconds and hands the rest back.
-     */
-    it('lets go, so the tail of the refill is at the ordinary rate', () => {
-      const plain = ticksToFull('slow_curse');
-      expect(ticksToFull('mana_flow')).toBeGreaterThan(plain / 2);
+      expect(flowing).toBeGreaterThan(1);
     });
 
     /**
      * A card cast where none of your squad is standing does nothing at all,
-     * which is what keeps an economy card on the map. Without it, a rule could
-     * fire at a fixed spot for a whole match and never look at the field.
+     * which is what keeps an economy card on the map. Without it, a mage could
+     * fire it at a fixed spot for a whole match and never look at the field.
      */
     it('needs somebody to channel through', () => {
-      expect(ticksToFull('mana_flow', new Vec2(0, 14))).toBe(ticksToFull('slow_curse'));
+      const nobody = rechargedInOneSecond((w, caster) => {
+        w.castSpell(caster.team, 'mana_flow', new Vec2(0, 14));
+      });
+
+      expect(nobody).toBeCloseTo(1, 5);
+    });
+
+    it('lets go when the flow runs out', () => {
+      const w = new World();
+      const caster = w.summon(TEAM_A, 'stormcaller', new Vec2(0, 0));
+      w.summon(TEAM_A, 'pyromancer', new Vec2(0, 1));
+      w.castSpell(TEAM_A, 'mana_flow', new Vec2(0, 0.5));
+
+      // Fluxo runs 6s. Step well past it before spending anything, so the
+      // charge measured below has only ever seen ordinary time.
+      for (let t = 0; t < 8; t += 0.5) w.step(0.5);
+      expect(w.castAbility(caster.id, 'overload_field', new Vec2(0, 0.5)).ok).toBe(true);
+      const spent = w.abilityCooldownOf(caster.id, 'overload_field');
+      w.step(1);
+
+      expect(spent - w.abilityCooldownOf(caster.id, 'overload_field')).toBeCloseTo(1, 5);
     });
   });
 
@@ -149,73 +149,71 @@ describe('spell riders', () => {
   });
 
   /**
-   * Tributo Obscuro, and black's whole argument in one card: the only mana in
-   * the game that does not come from waiting.
+   * Tributo Obscuro, re-pointed the same way, and black's whole argument in one
+   * card: the only tempo in the game that does not come from waiting.
    *
-   * Mana regenerates on a fixed clock for both sides (GDD §7), so until now no
-   * program could ever be *ahead* on tempo — only better at spending. This one
-   * buys a cast out of turn and pays for it in its own squad's health, which is
-   * the first resource in the game a player can trade for another.
+   * Charges come back on a fixed clock for both sides (§3.3), so no squad can
+   * be *ahead* on tempo — only better at spending it. This one buys a cast out
+   * of turn and pays for it in its own squad's health.
+   *
+   * It pays the *body* that cast it rather than the side, which is the one real
+   * difference from the mana version: a bar could be filled by anyone, and a
+   * charge belongs to whoever is waiting on it.
    */
   describe('tribute', () => {
-    it('pays the caster in mana and the squad in blood', () => {
+    it('pays the caster in charge and the squad in blood', () => {
       const w = new World();
-      const a = w.summon(TEAM_A, 'pyromancer', new Vec2(0, 0));
-      const b = w.summon(TEAM_A, 'pyromancer', new Vec2(0, 1));
-      const before = w.manaOf(TEAM_A);
+      const alchemist = w.summon(TEAM_A, 'alchemist', new Vec2(0, 0));
+      const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(0, 1));
+      expect(w.castAbility(alchemist.id, 'plague', new Vec2(0, 0.5)).ok).toBe(true);
+      const spent = w.abilityCooldownOf(alchemist.id, 'plague');
+      w.step(1);
 
-      w.castSpell(TEAM_A, 'dark_tribute', new Vec2(0, 0.5));
+      expect(w.castAbility(alchemist.id, 'dark_tribute', new Vec2(0, 0.5)).ok).toBe(true);
 
-      expect(a.health).toBeLessThan(a.maxHealth);
-      expect(b.health).toBeLessThan(b.maxHealth);
-      // Net of the card's own cost: two bodies bled is worth more than the one
-      // mana it took to ask, or the card is a worse way to do nothing.
-      expect(w.manaOf(TEAM_A)).toBeGreaterThan(before);
+      expect(alchemist.health).toBeLessThan(alchemist.maxHealth);
+      expect(ally.health).toBeLessThan(ally.maxHealth);
+      // A second of ordinary decay plus the refund the two bodies bled for.
+      expect(w.abilityCooldownOf(alchemist.id, 'plague')).toBeLessThan(spent - 1);
     });
 
     it('pays per body, so a scattered squad is a bad trade', () => {
-      const one = new World();
-      one.summon(TEAM_A, 'pyromancer', new Vec2(0, 0));
-      one.castSpell(TEAM_A, 'dark_tribute', new Vec2(0, 0));
+      const refund = (allies: number): number => {
+        const w = new World();
+        const alchemist = w.summon(TEAM_A, 'alchemist', new Vec2(0, 0));
+        for (let i = 1; i < allies; i++) w.summon(TEAM_A, 'pyromancer', new Vec2(0, i * 0.6));
+        expect(w.castAbility(alchemist.id, 'plague', new Vec2(0, 0.3)).ok).toBe(true);
+        const spent = w.abilityCooldownOf(alchemist.id, 'plague');
+        w.step(1);
+        expect(w.castAbility(alchemist.id, 'dark_tribute', new Vec2(0, 0.3)).ok).toBe(true);
+        return spent - w.abilityCooldownOf(alchemist.id, 'plague');
+      };
 
-      const two = new World();
-      two.summon(TEAM_A, 'pyromancer', new Vec2(0, 0));
-      two.summon(TEAM_A, 'pyromancer', new Vec2(0, 1));
-      two.castSpell(TEAM_A, 'dark_tribute', new Vec2(0, 0.5));
-
-      expect(two.manaOf(TEAM_A)).toBeGreaterThan(one.manaOf(TEAM_A));
+      expect(refund(3)).toBeGreaterThan(refund(1));
     });
 
-    /**
-     * The bargain has to stop at the ceiling, or a clustered squad turns the
-     * card into a free reset of the mana bar — and the ceiling is the only
-     * thing in the economy stopping a program from banking a whole match and
-     * spending it in four seconds.
-     */
-    it('never fills past what the economy allows', () => {
+    it('never pushes a charge past ready', () => {
       const w = new World();
-      for (let i = 0; i < 4; i++) w.summon(TEAM_A, 'pyromancer', new Vec2(0, i * 0.6));
-      // Wait out a full bar first: nothing clamps mana on the way *down* from
-      // an overfill, so an unclamped grant would leave a team banking more than
-      // the economy has a ceiling for, for the rest of the match.
-      for (let t = 0; t < 15; t += 1 / 60) w.step(1 / 60);
-      expect(w.manaOf(TEAM_A)).toBe(MANA_MAX);
+      const alchemist = w.summon(TEAM_A, 'alchemist', new Vec2(0, 0));
+      for (let i = 1; i < 4; i++) w.summon(TEAM_A, 'pyromancer', new Vec2(0, i * 0.6));
 
-      w.castSpell(TEAM_A, 'dark_tribute', new Vec2(0, 1));
+      expect(w.castAbility(alchemist.id, 'dark_tribute', new Vec2(0, 0.9)).ok).toBe(true);
 
-      expect(w.manaOf(TEAM_A)).toBeLessThanOrEqual(MANA_MAX);
+      expect(w.abilityCooldownOf(alchemist.id, 'plague')).toBe(0);
     });
 
     it('takes nothing from the other squad, in either direction', () => {
       const w = new World();
-      const enemy = w.summon(TEAM_B, 'pyromancer', new Vec2(0, 0));
-      w.summon(TEAM_A, 'pyromancer', new Vec2(0, 0.5));
-      const enemyMana = w.manaOf(TEAM_B);
+      const enemy = w.summon(TEAM_B, 'alchemist', new Vec2(0, 0));
+      expect(w.castAbility(enemy.id, 'plague', new Vec2(0, 0)).ok).toBe(true);
+      const theirs = w.abilityCooldownOf(enemy.id, 'plague');
 
-      w.castSpell(TEAM_A, 'dark_tribute', new Vec2(0, 0.25));
+      const alchemist = w.summon(TEAM_A, 'alchemist', new Vec2(0, 0.5));
+      w.summon(TEAM_A, 'pyromancer', new Vec2(0, 0.6));
+      expect(w.castAbility(alchemist.id, 'dark_tribute', new Vec2(0, 0.55)).ok).toBe(true);
 
       expect(enemy.health).toBe(enemy.maxHealth);
-      expect(w.manaOf(TEAM_B)).toBe(enemyMana);
+      expect(w.abilityCooldownOf(enemy.id, 'plague')).toBe(theirs);
     });
   });
 

@@ -165,6 +165,8 @@ export interface SpellCastFx {
  */
 interface PendingApplication {
   readonly team: Team;
+  /** Carried through the delay so a rider still knows who paid for the cast. */
+  readonly casterId: string | null;
   readonly spell: SpellCard;
   readonly app: SpellApplication;
   readonly position: Vec2;
@@ -564,7 +566,7 @@ export class World {
 
     m.abilityCooldowns[slot] = policy?.cooldown ?? 0;
     m.abilityGcd = ABILITY_GCD;
-    this.applySpellEffect(m.team, spell, position);
+    this.applySpellEffect(m.team, spell, position, m.id);
     this.recordCastFx(m.team, spell, position);
     this.recordCast(m.team, spell.id, m.id);
     return { ok: true };
@@ -656,7 +658,7 @@ export class World {
 
     this.castCooldown.set(team, SPELL_GLOBAL_COOLDOWN);
     this.spendMana(team, spell.cost);
-    this.applySpellEffect(team, spell, position);
+    this.applySpellEffect(team, spell, position, null);
     this.recordCastFx(team, spell, position);
     this.recordCast(team, spell.id);
     return { ok: true };
@@ -741,14 +743,19 @@ export class World {
    * touch the world rather than a mage. Adding a card is a `balance.json`
    * edit, and only a new *kind* of behaviour reaches code.
    */
-  private applySpellEffect(team: Team, spell: SpellCard, position: Vec2): void {
+  private applySpellEffect(
+    team: Team,
+    spell: SpellCard,
+    position: Vec2,
+    casterId: string | null,
+  ): void {
     for (const app of spell.apply) {
       const delay = app.delay ?? 0;
       if (delay > 0) {
-        this.pendingApplications.push({ team, spell, app, position, remaining: delay });
+        this.pendingApplications.push({ team, casterId, spell, app, position, remaining: delay });
         continue;
       }
-      this.applyOneApplication(team, spell, app, position);
+      this.applyOneApplication(team, spell, app, position, casterId);
     }
   }
 
@@ -773,12 +780,24 @@ export class World {
       if (pending.remaining > 0) continue;
 
       this.pendingApplications.splice(i, 1);
-      this.applyOneApplication(pending.team, pending.spell, pending.app, pending.position);
+      this.applyOneApplication(
+        pending.team,
+        pending.spell,
+        pending.app,
+        pending.position,
+        pending.casterId,
+      );
     }
   }
 
   /** One entry of a card's `apply` list, against whoever it catches right now. */
-  private applyOneApplication(team: Team, spell: SpellCard, app: SpellApplication, position: Vec2): void {
+  private applyOneApplication(
+    team: Team,
+    spell: SpellCard,
+    app: SpellApplication,
+    position: Vec2,
+    casterId: string | null,
+  ): void {
     const targets = this.spellTargets(team, spell, position);
 
     if (isEffectKind(app.effect)) {
@@ -803,7 +822,7 @@ export class World {
       }
       return;
     }
-    spellRiderFor(app.effect)?.(this, { team, spell, app, position, targets });
+    spellRiderFor(app.effect)?.(this, { team, casterId, spell, app, position, targets });
   }
 
   /**
