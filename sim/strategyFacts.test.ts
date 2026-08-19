@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { applyEffect } from './effects';
-import type { StrategyFacts } from './strategy';
+import type { StrategyFacts } from './abilityPolicy';
 import { CLUSTER_RADIUS, buildFacts } from './strategyFacts';
 import { SIM_DT } from './config';
 import { TEAM_A, TEAM_B } from './entities';
@@ -215,7 +215,6 @@ describe('buildFacts — structures and the clock', () => {
 
     expect(f.elapsed).toBeCloseTo(SIM_DT);
     expect(f.suddenDeath).toBe(false);
-    expect(f.mana).toBe(w.manaOf(TEAM_A));
   });
 });
 

@@ -152,7 +152,7 @@ export class RangeSession {
 
     if (this.tickCount % SNAPSHOT_EVERY_N_TICKS === 0) {
       const snap = buildSnapshot(this.world, this.tickCount);
-      this.opts.onSnapshot(toSnapshotMsg(snap, { mana: 0, hand: [], next: null }));
+      this.opts.onSnapshot(toSnapshotMsg(snap, {}));
     }
   }
 

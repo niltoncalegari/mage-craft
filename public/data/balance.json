@@ -32,16 +32,13 @@
 
     "squadSize": 4,
 
-    "manaMax": 10,
-    "manaStart": 5,
-    "manaRegenInterval": 2.8,
-    "suddenDeathManaMultiplier": 2,
-
     "matchDuration": 180,
     "suddenDeathDuration": 60,
 
     "spellCastFxDuration": 1,
     "spellGlobalCooldown": 0.75,
+    "abilityGcd": 0.75,
+    "suddenDeathCooldownMultiplier": 2,
     "executeThreshold": 0.4,
 
     "obstacleTopHeight": {
@@ -105,49 +102,56 @@
       "role": "tank",
       "health": 280,
       "moveSpeed": 3.5,
-      "element": "stone"
+      "element": "stone",
+      "abilities": ["arcane_shield", "bond_of_solidarity", "call_to_battle"]
     },
     "ice_sentinel": {
       "name": "Ice Sentinel",
       "role": "tank",
       "health": 200,
       "moveSpeed": 4.0,
-      "element": "ice"
+      "element": "ice",
+      "abilities": ["sticky_swamp", "petrify", "slow_curse"]
     },
     "pyromancer": {
       "name": "Pyromancer",
       "role": "damage",
       "health": 80,
       "moveSpeed": 5.0,
-      "element": "fire"
+      "element": "fire",
+      "abilities": ["volcanic_eruption", "meteor_shower", "blood_frenzy"]
     },
     "stormcaller": {
       "name": "Stormcaller",
       "role": "damage",
       "health": 60,
       "moveSpeed": 5.0,
-      "element": "lightning"
+      "element": "lightning",
+      "abilities": ["thunderstrike", "overload_field", "mana_flow"]
     },
     "arcane_archer": {
       "name": "Arcane Archer",
       "role": "damage",
       "health": 70,
       "moveSpeed": 5.5,
-      "element": "arcane"
+      "element": "arcane",
+      "abilities": ["executioners_mark", "null_flash"]
     },
     "alchemist": {
       "name": "Alchemist",
       "role": "damage",
       "health": 70,
       "moveSpeed": 5.0,
-      "element": "poison"
+      "element": "poison",
+      "abilities": ["plague", "entangling_roots", "dark_tribute"]
     },
     "wind_dervish": {
       "name": "Wind Dervish",
       "role": "damage",
       "health": 65,
       "moveSpeed": 7.0,
-      "element": "wind"
+      "element": "wind",
+      "abilities": ["spatial_fold", "gravity_well", "crystal_rift"]
     },
     "cleric": {
       "name": "Cleric",
@@ -156,7 +160,8 @@
       "moveSpeed": 5.0,
       "element": "holy",
       "healPerSecond": 8,
-      "healRange": 5
+      "healRange": 5,
+      "abilities": ["blessing", "consecrated_ground", "rejuvenating_breeze"]
     },
     "arcane_bard": {
       "name": "Arcane Bard",
@@ -165,7 +170,8 @@
       "moveSpeed": 5.0,
       "element": "sonic",
       "auraChargeBonus": 0.25,
-      "auraRadius": 4
+      "auraRadius": 4,
+      "abilities": ["bond_of_pain", "paranoia"]
     }
   },
 
@@ -347,6 +353,11 @@
       "radius": 4,
       "duration": 5,
       "target": "allies",
+      "cooldown": 8,
+      "range": 12,
+      "at": "ally_cluster",
+      "minTargets": 2,
+      "when": {"kind": "always"},
       "apply": [
         { "effect": "haste", "magnitude": 0.4 },
         { "effect": "cast_haste", "magnitude": 0.25 }
@@ -360,6 +371,11 @@
       "radius": 4,
       "duration": 4,
       "target": "enemies",
+      "cooldown": 11,
+      "range": 14,
+      "at": "enemy_cluster",
+      "minTargets": 2,
+      "when": {"kind": "always"},
       "apply": [{ "effect": "slow", "magnitude": 0.5 }]
     },
     "arcane_shield": {
@@ -370,6 +386,11 @@
       "radius": 4,
       "duration": 6,
       "target": "allies",
+      "cooldown": 11,
+      "range": 12,
+      "at": "ally_cluster",
+      "minTargets": 2,
+      "when": {"kind": "ally_health", "op": "lt", "value": 0.7},
       "apply": [{ "effect": "shield", "magnitude": 60 }]
     },
     "plague": {
@@ -380,6 +401,11 @@
       "radius": 3.5,
       "duration": 5,
       "target": "ground",
+      "cooldown": 14,
+      "range": 14,
+      "at": "enemy_cluster",
+      "minTargets": 2,
+      "when": {"kind": "enemy_cluster", "op": "gte", "value": 2},
       "apply": [{ "effect": "puddle", "tickDamage": 10, "tickInterval": 1, "bypassShield": true }]
     },
     "sticky_swamp": {
@@ -390,6 +416,11 @@
       "radius": 4,
       "duration": 5,
       "target": "enemies",
+      "cooldown": 11,
+      "range": 14,
+      "at": "enemy_cluster",
+      "minTargets": 2,
+      "when": {"kind": "enemy_cluster", "op": "gte", "value": 2},
       "apply": [
         { "effect": "slow", "magnitude": 0.35 },
         { "effect": "cast_slow", "magnitude": 0.35 }
@@ -403,6 +434,11 @@
       "radius": 3,
       "duration": 2,
       "target": "enemies",
+      "cooldown": 14,
+      "range": 12,
+      "at": "enemy_cluster",
+      "minTargets": 2,
+      "when": {"kind": "enemy_cluster", "op": "gte", "value": 2},
       "apply": [{ "effect": "root" }]
     },
     "rejuvenating_breeze": {
@@ -413,6 +449,11 @@
       "radius": 4,
       "duration": 4,
       "target": "allies",
+      "cooldown": 11,
+      "range": 12,
+      "at": "weakest_ally",
+      "minTargets": 1,
+      "when": {"kind": "ally_health", "op": "lt", "value": 0.6},
       "apply": [{ "effect": "regen", "tickInterval": 1, "tickHeal": 8 }]
     },
     "consecrated_ground": {
@@ -423,6 +464,11 @@
       "radius": 4,
       "duration": 4,
       "target": "allies",
+      "cooldown": 14,
+      "range": 12,
+      "at": "ally_cluster",
+      "minTargets": 2,
+      "when": {"kind": "ally_health", "op": "lt", "value": 0.7},
       "apply": [
         { "effect": "regen", "tickInterval": 1, "tickHeal": 5 },
         { "effect": "fortify", "magnitude": 0.3 }
@@ -436,6 +482,11 @@
       "radius": 3.5,
       "duration": 4,
       "target": "allies",
+      "cooldown": 14,
+      "range": 12,
+      "at": "ally_cluster",
+      "minTargets": 2,
+      "when": {"kind": "enemy_count", "op": "gte", "value": 2},
       "apply": [{ "effect": "empower", "magnitude": 0.4 }]
     },
     "executioners_mark": {
@@ -446,6 +497,11 @@
       "radius": 3.5,
       "duration": 6,
       "target": "enemies",
+      "cooldown": 11,
+      "range": 14,
+      "at": "strongest_enemy",
+      "minTargets": 1,
+      "when": {"kind": "always"},
       "apply": [{ "effect": "marked", "magnitude": 0.5 }]
     },
     "petrify": {
@@ -456,6 +512,11 @@
       "radius": 3.5,
       "duration": 2.5,
       "target": "enemies",
+      "cooldown": 14,
+      "range": 12,
+      "at": "enemy_cluster",
+      "minTargets": 3,
+      "when": {"kind": "enemy_cluster", "op": "gte", "value": 3},
       "apply": [{ "effect": "petrify" }]
     },
     "thunderstrike": {
@@ -466,6 +527,11 @@
       "radius": 2.5,
       "duration": 0.9,
       "target": "enemies",
+      "cooldown": 14,
+      "range": 12,
+      "at": "enemy_cluster",
+      "minTargets": 2,
+      "when": {"kind": "enemy_cluster", "op": "gte", "value": 2},
       "apply": [
         { "effect": "strike", "magnitude": 26 },
         { "effect": "stun" }
@@ -479,6 +545,11 @@
       "radius": 3.5,
       "duration": 4,
       "target": "all",
+      "cooldown": 14,
+      "range": 13,
+      "at": "enemy_cluster",
+      "minTargets": 2,
+      "when": {"kind": "enemy_cluster", "op": "gte", "value": 2},
       "apply": [
         { "effect": "vulnerable", "magnitude": 0.5 },
         { "effect": "cast_haste", "magnitude": 0.5 }
@@ -492,6 +563,11 @@
       "radius": 3.5,
       "duration": 0.5,
       "target": "all",
+      "cooldown": 11,
+      "range": 13,
+      "at": "enemy_cluster",
+      "minTargets": 1,
+      "when": {"kind": "any", "of": [{"kind": "enemy_has_effect", "effect": "shield"}, {"kind": "enemy_has_effect", "effect": "haste"}, {"kind": "enemy_has_effect", "effect": "regen"}, {"kind": "enemy_has_effect", "effect": "empower"}, {"kind": "enemy_has_effect", "effect": "fortify"}]},
       "apply": [{ "effect": "dispel" }]
     },
     "volcanic_eruption": {
@@ -502,6 +578,11 @@
       "radius": 4,
       "duration": 0.7,
       "target": "enemies",
+      "cooldown": 18,
+      "range": 14,
+      "at": "enemy_cluster",
+      "minTargets": 2,
+      "when": {"kind": "enemy_cluster", "op": "gte", "value": 2},
       "apply": [
         { "effect": "strike", "magnitude": 24, "delay": 0.7 },
         { "effect": "knockback", "magnitude": 9, "delay": 0.7 },
@@ -516,8 +597,13 @@
       "radius": 3,
       "duration": 0.6,
       "target": "allies",
+      "cooldown": 6,
+      "range": 10,
+      "at": "ally_cluster",
+      "minTargets": 2,
+      "when": {"kind": "ally_cluster", "op": "gte", "value": 2},
       "apply": [
-        { "effect": "strike", "magnitude": 10 },
+        { "effect": "strike", "magnitude": 4 },
         { "effect": "tribute", "magnitude": 1 }
       ]
     },
@@ -529,6 +615,11 @@
       "radius": 5,
       "duration": 4,
       "target": "allies",
+      "cooldown": 14,
+      "range": 14,
+      "at": "ally_cluster",
+      "minTargets": 1,
+      "when": {"kind": "ally_count", "op": "lte", "value": 3},
       "apply": [
         { "effect": "haste", "magnitude": 0.35 },
         { "effect": "rally", "magnitude": 3 }
@@ -542,6 +633,11 @@
       "radius": 3.5,
       "duration": 6,
       "target": "allies",
+      "cooldown": 11,
+      "range": 12,
+      "at": "ally_cluster",
+      "minTargets": 2,
+      "when": {"kind": "elapsed", "op": "lt", "value": 120},
       "apply": [{ "effect": "attune", "magnitude": 2.5 }]
     },
     "bond_of_pain": {
@@ -552,6 +648,11 @@
       "radius": 3,
       "duration": 6,
       "target": "enemies",
+      "cooldown": 14,
+      "range": 13,
+      "at": "enemy_cluster",
+      "minTargets": 2,
+      "when": {"kind": "enemy_cluster", "op": "gte", "value": 2},
       "apply": [{ "effect": "linked", "magnitude": 0.3 }]
     },
     "bond_of_solidarity": {
@@ -562,6 +663,11 @@
       "radius": 3.5,
       "duration": 5,
       "target": "allies",
+      "cooldown": 14,
+      "range": 12,
+      "at": "ally_cluster",
+      "minTargets": 2,
+      "when": {"kind": "ally_health", "op": "lt", "value": 0.5},
       "apply": [{ "effect": "bonded", "magnitude": 0.5 }]
     },
     "spatial_fold": {
@@ -572,6 +678,11 @@
       "radius": 3,
       "duration": 0.5,
       "target": "allies",
+      "cooldown": 14,
+      "range": 20,
+      "at": "squad_rally",
+      "minTargets": 1,
+      "when": {"kind": "ally_count", "op": "gte", "value": 3},
       "apply": [{ "effect": "fold" }]
     },
     "gravity_well": {
@@ -582,6 +693,11 @@
       "radius": 4,
       "duration": 3,
       "target": "ground",
+      "cooldown": 14,
+      "range": 14,
+      "at": "enemy_cluster",
+      "minTargets": 2,
+      "when": {"kind": "enemy_cluster", "op": "gte", "value": 2},
       "apply": [{ "effect": "vortex", "magnitude": 2.2 }]
     },
     "crystal_rift": {
@@ -592,6 +708,11 @@
       "radius": 2,
       "duration": 5,
       "target": "ground",
+      "cooldown": 14,
+      "range": 14,
+      "at": "enemy_frontline",
+      "minTargets": 1,
+      "when": {"kind": "intruder"},
       "apply": [{ "effect": "barrier" }]
     },
     "paranoia": {
@@ -602,6 +723,11 @@
       "radius": 3.5,
       "duration": 4,
       "target": "enemies",
+      "cooldown": 11,
+      "range": 13,
+      "at": "enemy_cluster",
+      "minTargets": 2,
+      "when": {"kind": "enemy_cluster", "op": "gte", "value": 2},
       "apply": [{ "effect": "confused" }]
     },
     "meteor_shower": {
@@ -612,6 +738,11 @@
       "radius": 5,
       "duration": 1.5,
       "target": "ground",
+      "cooldown": 18,
+      "range": 20,
+      "at": "enemy_cluster",
+      "minTargets": 2,
+      "when": {"kind": "enemy_cluster", "op": "gte", "value": 2},
       "apply": [{ "effect": "puddle", "tickDamage": 18, "tickInterval": 0.5 }]
     }
   }

@@ -11,6 +11,7 @@
 import { BALANCE } from './balance';
 import { ROLE_BEHAVIOR, type Role } from './roles';
 import type { ElementId } from './elements';
+import type { SpellId } from './spells';
 
 export type RosterId =
   | 'stone_golem'
@@ -36,6 +37,15 @@ export interface RosterEntry {
    * multiplying whoever stands next to them, per GDD §8.
    */
   readonly element: ElementId;
+  /**
+   * The spells this mage may spend, in a stable order (plano v1.3 §3.1).
+   *
+   * The kit is what the player is really choosing when they field this mage:
+   * the catalog is partitioned across the nine of them, so a squad is a hand of
+   * abilities that happens to be carried by bodies. A mage that dies takes its
+   * two or three off the board until it respawns.
+   */
+  readonly abilities: readonly SpellId[];
   /** Support only: heals the most-hurt ally in range, HP per second. */
   readonly healPerSecond?: number;
   readonly healRange?: number;
@@ -54,6 +64,7 @@ const CATALOG: Readonly<Record<RosterId, RosterEntry>> = Object.fromEntries(
       health: r.health,
       moveSpeed: r.moveSpeed,
       element: r.element as ElementId,
+      abilities: r.abilities as readonly SpellId[],
       ...(r.healPerSecond !== undefined ? { healPerSecond: r.healPerSecond } : {}),
       ...(r.healRange !== undefined ? { healRange: r.healRange } : {}),
       ...(r.auraChargeBonus !== undefined ? { auraChargeBonus: r.auraChargeBonus } : {}),
@@ -77,6 +88,25 @@ export const ALL_ROSTER: readonly RosterId[] = [
 
 export function rosterFor(id: RosterId): RosterEntry | undefined {
   return CATALOG[id];
+}
+
+/**
+ * The one mage that carries a spell, or undefined for an id no kit holds.
+ *
+ * Well-defined only because kits are disjoint and cover the whole catalog —
+ * both asserted in `kits.test.ts`, and both load-bearing for the pivot. That is
+ * what lets a per-team tally of spell ids be credited back to a body without a
+ * second table to keep in step with this one.
+ *
+ * Built once at module load rather than searched per call: the post-match
+ * summary walks every spell a side cast, and the catalog never changes shape.
+ */
+const OWNER_BY_SPELL: ReadonlyMap<SpellId, RosterId> = new Map(
+  ALL_ROSTER.flatMap((id) => (CATALOG[id]?.abilities ?? []).map((s) => [s, id] as const)),
+);
+
+export function rosterOwnerOf(spellId: SpellId): RosterId | undefined {
+  return OWNER_BY_SPELL.get(spellId);
 }
 
 export function isRosterId(value: string): value is RosterId {

@@ -1,6 +1,8 @@
 /** Simulation entity types (GDD §5, §8, §9). */
 
 import type { RosterId } from './cards';
+import type { SpellId } from './spells';
+import type { Stance } from './abilityPolicy';
 import type { ActiveEffect } from './effects';
 import type { ElementId } from './elements';
 import type { Role } from './roles';
@@ -55,6 +57,28 @@ export interface Mage {
   readonly rosterId: RosterId | null;
   /** Per-unit, from the roster entry — no longer the global MOVE_SPEED. */
   readonly moveSpeed: number;
+
+  /**
+   * The spells this body is allowed to spend, in the roster's stable order
+   * (plano v1.3 §3.1). Empty for a bare mage with no roster entry.
+   *
+   * This is where the pivot actually lives. Permission used to belong to the
+   * team — anyone could cast anything the shared bar could pay for — and it now
+   * belongs to a body, which is what makes killing that body worth something
+   * beyond the six seconds it is away.
+   */
+  readonly abilities: readonly SpellId[];
+  /**
+   * Seconds until each ability is ready again, parallel to {@link abilities}.
+   *
+   * Only ticks while the mage is alive and unpetrified: a kit that recharged
+   * through a death would make dying cheaper the longer you stayed down.
+   */
+  abilityCooldowns: number[];
+  /** Seconds until this mage may cast anything at all; see `ABILITY_GCD`. */
+  abilityGcd: number;
+  /** How eagerly the Brain spends this kit (§3.4). Authored before the match. */
+  stance: Stance;
 
   position: Vec2;
   facing: Vec2;

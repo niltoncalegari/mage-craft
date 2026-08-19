@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultSquad } from '../../sim/cards';
 import { SIM_DT } from '../../sim/config';
-import { defaultDeck } from '../../sim/Deck';
 import type { MatchSummary } from '../../sim/matchStats';
 import type { SnapshotMsg } from './protocol';
 import { LocalSession } from './LocalSession';
@@ -17,7 +16,6 @@ function run(seconds: number, opts: { seed?: number } = {}): {
 
   const session = new LocalSession({
     squad: defaultSquad(),
-    deck: defaultDeck(),
     difficulty: 'normal',
     seed: opts.seed ?? 42,
     onSnapshot: (msg) => snapshots.push(msg),
@@ -49,9 +47,9 @@ describe('LocalSession', () => {
     const first = snapshots[0];
     expect(first.type).toBe('snapshot');
     expect(first.mages).toHaveLength(defaultSquad().length * 2);
-    // The player's own hand and bar ride along, exactly as the server sends them.
-    expect(first.hand).toHaveLength(4);
-    expect(first.mana).toBeGreaterThan(0);
+    // Every mage carries the kit its roster entry gives it, and nothing on this
+    // first snapshot has been spent yet — so the charges are omitted entirely.
+    expect(first.mages.every((m) => !('cd' in m))).toBe(true);
   });
 
   // Two full matches back to back; well past the default per-test budget.
@@ -78,33 +76,32 @@ describe('LocalSession', () => {
     expect(session.connected).toBe(false);
   });
 
-  it('plays the player’s hand from their program, with nobody clicking', () => {
+  it('spends the player’s kits with nobody clicking', () => {
     const snaps: SnapshotMsg[] = [];
     const session = new LocalSession({
       squad: defaultSquad(),
-      deck: defaultDeck(),
       difficulty: 'normal',
       seed: 1,
       onSnapshot: (msg) => snaps.push(msg),
       onMatchResult: () => {},
     });
 
-    // A practice match is the same idle match the server runs: the hand moves
-    // and the trace names a rule, without a single call into the session.
+    // A practice match is the same idle match the server runs: charges move and
+    // the trace names a cast, without a single call into the session.
     for (let i = 0; i < 2 / SIM_DT; i++) session.tick(SIM_DT);
 
-    expect(snaps.at(-1)?.hand).not.toEqual(snaps[0]?.hand);
-    expect(snaps.at(-1)?.firedRule).toMatchObject({
-      ruleId: expect.any(String),
+    expect(snaps.at(-1)?.mages.some((m) => m.cd?.some((c) => c > 0))).toBe(true);
+    expect(snaps.at(-1)?.firedAbility).toMatchObject({
+      mageId: expect.any(String),
+      spellId: expect.any(String),
       at: expect.any(String),
     });
     session.dispose();
   });
 
-  it('ignores a by-hand cast — a seat is played by its program now', () => {
+  it('ignores a by-hand cast — a spell belongs to the mage carrying it now', () => {
     const session = new LocalSession({
       squad: defaultSquad(),
-      deck: defaultDeck(),
       difficulty: 'normal',
       seed: 1,
       onSnapshot: () => {},

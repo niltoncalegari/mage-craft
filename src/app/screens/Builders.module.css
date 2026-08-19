@@ -58,6 +58,82 @@
   text-transform: uppercase;
 }
 
+/* A filled slot stops being one big button once it carries a stance control:
+   a button inside a button is invalid, and the two clicks mean different
+   things — one drops the mage, the other only changes how it plays. */
+.slotBody {
+  align-items: stretch;
+  gap: 6px;
+  justify-content: flex-start;
+  min-height: 84px;
+}
+
+.slotKit {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.stances {
+  display: grid;
+  gap: 3px;
+  grid-template-columns: repeat(3, 1fr);
+  margin-top: auto;
+}
+
+.stanceBtn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  padding: 3px 2px;
+  text-transform: uppercase;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.stanceBtn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.stanceBtnActive {
+  background: var(--element-color, var(--copper));
+  border-color: var(--element-color, var(--copper));
+  color: #10131a;
+  font-weight: 700;
+}
+
+.slotDrop {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  padding: 0;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.slotDrop:hover {
+  color: var(--ink);
+}
+
+.slotTop {
+  align-items: baseline;
+  display: flex;
+  gap: 6px;
+  justify-content: space-between;
+}
+
 .pool {
   display: grid;
   gap: 10px;

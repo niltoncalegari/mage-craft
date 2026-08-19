@@ -1,7 +1,8 @@
-import type { JSX } from 'preact';
+import { Fragment, type JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { ALL_SPELLS, spellFor } from '../../../sim/spells';
-import { SpellRangeSession, type SpellRangeNowPlaying } from '../../dev/SpellRangeSession';
+import { rosterFor } from '../../../sim/cards';
+import { spellFor } from '../../../sim/spells';
+import { RUNNING_ORDER, SpellRangeSession, type SpellRangeNowPlaying } from '../../dev/SpellRangeSession';
 import { spellRangeMap } from '../../dev/spellRangeMap';
 import type { MapData } from '../../game/types';
 import { LOCAL_PLAYER_TEAM } from '../../net/LocalSession';
@@ -103,15 +104,31 @@ function RunningOrder(props: { now: SpellRangeNowPlaying | null }): JSX.Element 
       }}
     >
       <strong style={{ display: 'block', marginBottom: '6px', letterSpacing: '0.08em' }}>
-        CARD RANGE
+        KIT RANGE
       </strong>
-      {ALL_SPELLS.map((id, i) => {
+      {RUNNING_ORDER.map(({ spellId: id, rosterId }, i) => {
         const card = spellFor(id);
         if (!card) return null;
         const live = now?.index === i;
+        // The order runs kit by kit, so the mage's name heads its own block
+        // rather than repeating on every row.
+        const opensKit = i === 0 || RUNNING_ORDER[i - 1].rosterId !== rosterId;
         return (
+          <Fragment key={id}>
+            {opensKit ? (
+              <div
+                style={{
+                  marginTop: i === 0 ? 0 : '5px',
+                  opacity: now?.rosterId === rosterId ? 0.95 : 0.55,
+                  fontSize: '10px',
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                {rosterFor(rosterId)?.name ?? rosterId}
+              </div>
+            ) : null}
           <div
-            key={id}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -133,11 +150,12 @@ function RunningOrder(props: { now: SpellRangeNowPlaying | null }): JSX.Element 
               <em style={{ opacity: 0.72 }}>{spellVfxFor(id).shape}</em>
             </span>
           </div>
+          </Fragment>
         );
       })}
       <div style={{ marginTop: '6px', opacity: 0.72 }}>
         {now === null
-          ? 'waiting for mana…'
+          ? 'waiting for the first cast…'
           : /*
              * Which side cast it is the third question a beat has to answer,
              * and the only one you cannot check by looking at one cast alone —

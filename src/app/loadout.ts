@@ -1,6 +1,6 @@
 /**
- * What the player brings to a match: a 4-mage squad, an 8-card spell deck, and
- * the strategy program that plays the deck (GDD §7).
+ * What the player brings to a match: a 4-mage squad and a posture for each of
+ * them (plano v1.3 §3.1, §3.4).
  *
  * Read synchronously from localStorage, and only from localStorage. That is not
  * an accident of history: `App.tsx` needs a loadout before it can send
@@ -8,23 +8,21 @@
  * Battle button. The account copy is reconciled around this store rather than
  * in front of it — see `syncLoadoutFromServer` / `pushLoadoutToServer`.
  *
- * The server is still the authority. It re-validates all three parts in
- * `resolveDeck`/`resolveSquad`/`resolveStrategy`; this store only decides what
- * we *offer*.
+ * The server is still the authority. It re-validates both parts in
+ * `resolveSquad`/`resolveStances`; this store only decides what we *offer*.
  *
  * Validation happens on read, not just on write, so a hand-edited localStorage
  * degrades to the defaults instead of shipping something illegal at the wire.
  */
 
-import { defaultSquad, type RosterId } from '../../sim/cards';
-import { defaultDeck, validateDeck } from '../../sim/Deck';
+import { isStance, type Stance } from '../../sim/abilityPolicy';
+import { defaultSquad, isRosterId, type RosterId } from '../../sim/cards';
 import { validateSquad } from '../../sim/squad';
-import type { CardId } from '../../sim/spells';
-import { defaultStrategy, validateStrategy, type Strategy, type StrategyRule } from '../../sim/strategy';
 import { ApiClient } from '../net/ApiClient';
 
 const LOADOUT_KEY_V1 = 'mage-craft.loadout.v1';
-const LOADOUT_KEY = 'mage-craft.loadout.v2';
+const LOADOUT_KEY_V2 = 'mage-craft.loadout.v2';
+const LOADOUT_KEY = 'mage-craft.loadout.v3';
 
 /** The id the single shipped profile carries. The shape holds more; the UI offers one. */
 export const DEFAULT_LOADOUT_ID = 'default';
@@ -33,8 +31,12 @@ export interface Loadout {
   id: string;
   name: string;
   squad: RosterId[];
-  deck: CardId[];
-  strategy: Strategy;
+  /**
+   * Keyed by roster id rather than by squad slot, so re-ordering the squad or
+   * benching a mage and bringing it back does not shuffle the postures the
+   * player set. A mage with no entry stands at the sim's default posture.
+   */
+  stances: Partial<Record<RosterId, Stance>>;
 }
 
 /**
@@ -50,13 +52,11 @@ export interface LoadoutStore {
 }
 
 export function defaultLoadout(): Loadout {
-  const deck = defaultDeck();
   return {
     id: DEFAULT_LOADOUT_ID,
     name: 'Padrão',
     squad: defaultSquad(),
-    deck,
-    strategy: defaultStrategy(deck),
+    stances: {},
   };
 }
 
@@ -68,7 +68,7 @@ function defaultStore(): LoadoutStore {
  * Cleans one stored profile into something legal, part by part.
  *
  * Each part falls back on its own rather than the profile being thrown away
- * whole: a corrupt deck is no reason to lose the squad next to it.
+ * whole: a corrupt posture map is no reason to lose the squad next to it.
  */
 function sanitize(raw: unknown, index: number): Loadout {
   const fallback = defaultLoadout();
@@ -76,55 +76,62 @@ function sanitize(raw: unknown, index: number): Loadout {
   const l = raw as Partial<Loadout>;
 
   const squad = Array.isArray(l.squad) && validateSquad(l.squad).ok ? (l.squad as RosterId[]) : fallback.squad;
-  const deck = Array.isArray(l.deck) && validateDeck(l.deck).ok ? (l.deck as CardId[]) : fallback.deck;
 
   return {
     id: typeof l.id === 'string' && l.id.length > 0 && l.id.length <= 32 ? l.id : `loadout-${index}`,
     name: typeof l.name === 'string' && l.name.length > 0 && l.name.length <= 24 ? l.name : fallback.name,
     squad,
-    deck,
-    strategy: sanitizeStrategy(l.strategy, deck),
+    stances: sanitizeStances(l.stances),
   };
 }
 
 /**
- * Cleans a program against the deck it will be played with.
+ * Keeps the entries that name a real mage and a real posture, and drops the
+ * rest.
  *
- * Orphan rules are dropped before the program is judged, rather than the whole
- * program being reset because of them. A rule naming a card the player no
- * longer brings is already inert — `evaluateStrategy` skips it, because it can
- * never be in hand — so dropping it costs nothing and keeps every rule that
- * still works. Resetting instead would mean editing your deck quietly wiped the
- * program you wrote, which is data loss dressed as validation.
- *
- * Anything still illegal after that is not a deck edit, it is a hand-edited
- * store, and that does fall back to the default.
+ * Dropped entry by entry rather than reset whole, for the reason orphan rules
+ * used to be: one unreadable key is not a reason to forget every posture the
+ * player set. An entry for a mage that is not currently in the squad is *kept*
+ * — benching someone and bringing them back should not silently reset them.
  */
-function sanitizeStrategy(raw: unknown, deck: readonly CardId[]): Strategy {
-  if (typeof raw !== 'object' || raw === null) return defaultStrategy(deck);
+function sanitizeStances(raw: unknown): Partial<Record<RosterId, Stance>> {
+  if (typeof raw !== 'object' || raw === null) return {};
 
-  const s = raw as Partial<Strategy>;
-  const kept = Array.isArray(s.rules)
-    ? (s.rules as StrategyRule[]).filter((r) => typeof r?.card === 'string' && deck.includes(r.card))
-    : [];
-  const trimmed = { ...s, rules: kept } as Strategy;
-
-  return validateStrategy(trimmed, deck).ok ? trimmed : defaultStrategy(deck);
+  const out: Partial<Record<RosterId, Stance>> = {};
+  for (const [id, stance] of Object.entries(raw as Record<string, unknown>)) {
+    if (isRosterId(id) && isStance(stance)) out[id] = stance;
+  }
+  return out;
 }
 
 /**
- * Turns the v1 `{ squad, deck }` into a v2 profile.
+ * Carries a v1 `{ squad, deck }` or a v2 `{ loadouts: [{ squad, deck, strategy }] }`
+ * forward to v3.
  *
- * v1 predates programs entirely, so the one thing it cannot carry is the only
- * thing that plays the match now. It gets `defaultStrategy(deck)` — the
- * heuristics written out as editable rules — because the alternative for
- * someone who upgrades mid-season is a seat that casts nothing.
+ * Both older shapes are read for exactly one thing — the squad — because that
+ * is the only part of them v1.3 still fields. The deck and the program are
+ * dropped rather than translated: there is no hand to play and no rule to fire,
+ * so nothing they said has a v3 meaning to be preserved into. Postures come out
+ * empty, which reads as every mage at `normal` — the right default for someone
+ * upgrading mid-season, who never chose one.
  */
-function migrateV1(): LoadoutStore | null {
+function migrateOlder(): LoadoutStore | null {
   try {
-    const raw = localStorage.getItem(LOADOUT_KEY_V1);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { squad?: unknown; deck?: unknown } | null;
+    const v2 = localStorage.getItem(LOADOUT_KEY_V2);
+    if (v2) {
+      const parsed = JSON.parse(v2) as Partial<LoadoutStore> | null;
+      if (parsed && Array.isArray(parsed.loadouts) && parsed.loadouts.length > 0) {
+        const loadouts = parsed.loadouts.map(sanitize);
+        const active = loadouts.some((l) => l.id === parsed.activeLoadoutId)
+          ? (parsed.activeLoadoutId as string)
+          : loadouts[0].id;
+        return { loadouts, activeLoadoutId: active };
+      }
+    }
+
+    const v1 = localStorage.getItem(LOADOUT_KEY_V1);
+    if (!v1) return null;
+    const parsed = JSON.parse(v1) as { squad?: unknown } | null;
     if (!parsed || typeof parsed !== 'object') return null;
 
     const migrated = sanitize({ ...parsed, id: DEFAULT_LOADOUT_ID, name: 'Padrão' }, 0);
@@ -139,7 +146,7 @@ export function loadStore(): LoadoutStore {
   try {
     const raw = localStorage.getItem(LOADOUT_KEY);
     if (!raw) {
-      const migrated = migrateV1();
+      const migrated = migrateOlder();
       if (migrated) {
         saveStore(migrated);
         return migrated;
@@ -189,21 +196,9 @@ export function saveSquad(squad: RosterId[]): void {
   saveLoadout({ ...loadLoadout(), squad });
 }
 
-/**
- * Replaces the deck, and re-checks the program against it.
- *
- * Editing a deck can orphan rules that name a card it no longer holds. Running
- * the same cleaning here as on read means the store never *holds* a program
- * that disagrees with its own deck, so the wire and the editor see the same
- * thing the next time either looks.
- */
-export function saveDeck(deck: CardId[]): void {
-  const current = loadLoadout();
-  saveLoadout({ ...current, deck, strategy: sanitizeStrategy(current.strategy, deck) });
-}
-
-export function saveStrategy(strategy: Strategy): void {
-  saveLoadout({ ...loadLoadout(), strategy });
+/** Replaces the postures, leaving the squad and everything else as stored. */
+export function saveStances(stances: Partial<Record<RosterId, Stance>>): void {
+  saveLoadout({ ...loadLoadout(), stances: sanitizeStances(stances) });
 }
 
 /* ---- the account copy ------------------------------------------------------ */

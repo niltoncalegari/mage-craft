@@ -189,6 +189,37 @@
   width: 0;
 }
 
+/* One track per skill in the kit, in the kit's own order. Kits hold two or
+   three, so three exist and the spare hides — the panel's DOM shape is fixed
+   for the life of the match by design. */
+.charges {
+  display: flex;
+  gap: 3px;
+  width: 100%;
+}
+
+.charge {
+  background: var(--glass-track);
+  border-radius: 999px;
+  display: block;
+  flex: 1;
+  height: 3px;
+  overflow: hidden;
+}
+
+.chargeFill {
+  background: var(--copper, #d08b4f);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  transition: width 120ms linear;
+  width: 0;
+}
+
+.chargeReady .chargeFill {
+  background: #63d29b;
+}
+
 .rowBottom {
   align-items: center;
   display: flex;

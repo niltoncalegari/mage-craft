@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { defaultSquad } from '../../sim/cards';
 import { SIM_DT, SQUAD_SIZE } from '../../sim/config';
-import { defaultDeck } from '../../sim/Deck';
-import { TEAM_A, TEAM_B } from '../../sim/entities';
+import { TEAM_A, TEAM_B, type Team } from '../../sim/entities';
 import type { MatchSummary } from '../../sim/matchStats';
 import { Rng } from '../../sim/rng';
-import { emptyStrategy } from '../../sim/strategy';
 import { Vec2 } from '../../sim/Vec2';
 import { RoomManager } from './RoomManager';
 import { Session, SNAPSHOT_EVERY_N_TICKS, type SessionCallbacks, type Snapshot } from './Session';
@@ -28,6 +26,13 @@ function startedSession(cb: SessionCallbacks = {}): Session {
 }
 
 /** Advances a session by real simulated seconds — a caster thinks on its own clock. */
+/** How many spells a team has actually put down, off the world's own tally. */
+function castsBy(s: Session, team: Team): number {
+  let n = 0;
+  for (const c of s.liveWorld?.castsBySpell.get(team)?.values() ?? []) n += c;
+  return n;
+}
+
 function tickFor(s: Session, seconds: number): void {
   for (let i = 0; i < Math.round(seconds / SIM_DT); i++) s.tick();
 }
@@ -58,10 +63,16 @@ describe('Session — start', () => {
     expect((s.liveWorld?.structures.size ?? 0)).toBeGreaterThan(0);
   });
 
-  it('deals each team a hand from its deck', () => {
+  it('gives every mage on both sides the kit its roster entry carries', () => {
     const s = startedSession();
-    expect(s.deckFor(TEAM_A)?.hand()).toHaveLength(4);
-    expect(s.deckFor(TEAM_B)?.next()).toBeTruthy();
+    const mages = [...(s.liveWorld?.mages.values() ?? [])];
+
+    expect(mages).toHaveLength(SQUAD_SIZE * 2);
+    for (const m of mages) {
+      expect(m.abilities.length).toBeGreaterThan(0);
+      // Parallel arrays, and the sim indexes one by the other's slot.
+      expect(m.abilityCooldowns).toHaveLength(m.abilities.length);
+    }
   });
 
   it('rejects a cast before the match starts', () => {
@@ -83,38 +94,31 @@ describe('Session — start', () => {
 });
 
 describe('Session — ticking', () => {
-  it('casts a spell from hand and spends mana for it', () => {
+  it('lands a spell for a side through the effect door', () => {
     const s = startedSession();
-    const card = s.deckFor(TEAM_A)!.hand()[0];
-    const handBefore = s.deckFor(TEAM_A)!.hand();
-    const manaBefore = s.manaFor(TEAM_A);
     const mageCountBefore = s.liveWorld?.mages.size;
 
-    const result = s.submitCast('p1', card, new Vec2(-10, 0));
+    const result = s.submitCast('p1', 'blessing', new Vec2(-10, 0));
 
     expect(result.ok).toBe(true);
     // Spells never summon anything (GDD §9) — the squad stays the same size.
     expect(s.liveWorld?.mages.size).toBe(mageCountBefore);
-    expect(s.manaFor(TEAM_A)).toBeLessThan(manaBefore);
-    // The cast cycled the played slot to the back of the deck.
-    expect(s.deckFor(TEAM_A)!.hand()).not.toEqual(handBefore);
   });
 
-  it('refuses a card that is not in hand', () => {
+  it('refuses a card that does not exist', () => {
     const s = startedSession();
     const mageCountBefore = s.liveWorld?.mages.size;
 
     const result = s.submitCast('p1', 'not_a_real_spell', new Vec2(-10, 0));
 
-    expect(result).toEqual({ ok: false, reason: 'not_in_hand' });
+    expect(result).toEqual({ ok: false, reason: 'unknown_card' });
     expect(s.liveWorld?.mages.size).toBe(mageCountBefore);
   });
 
   it('refuses a cast outside the arena — there is no deploy zone since the pivot (GDD §5)', () => {
     const s = startedSession();
-    const card = s.deckFor(TEAM_A)!.hand()[0];
 
-    const result = s.submitCast('p1', card, new Vec2(9999, 9999));
+    const result = s.submitCast('p1', 'blessing', new Vec2(9999, 9999));
 
     expect(result).toEqual({ ok: false, reason: 'out_of_bounds' });
   });
@@ -137,7 +141,6 @@ describe('Session — ticking', () => {
         expect(Array.isArray(snap.puddles)).toBe(true);
         expect(snap.structures.length).toBeGreaterThan(0);
         expect(snap.mages.length).toBe(SQUAD_SIZE * 2);
-        expect(snap.mana[TEAM_A]).toBeGreaterThan(0);
       },
     });
     for (let i = 0; i < SNAPSHOT_EVERY_N_TICKS; i++) s.tick();
@@ -284,65 +287,78 @@ describe('Session — match result', () => {
     const summaries: MatchSummary[] = [];
     const s = startedSession({ onMatchResult: (summary) => summaries.push(summary) });
 
-    const card = s.deckFor(TEAM_A)?.hand()[0] ?? 'blessing';
-    expect(s.submitCast('p1', card, new Vec2(0, 0)).ok).toBe(true);
+    expect(s.submitCast('p1', 'blessing', new Vec2(0, 0)).ok).toBe(true);
 
     eliminate(s, TEAM_B);
     s.tick();
 
-    expect(summaries[0].perTeam[TEAM_A].casts).toContainEqual({ cardId: card, casts: 1 });
+    // The owning body rides along with the team tally since v1.3 — `blessing`
+    // is the Cleric's, even when it was put down through the effect door.
+    expect(summaries[0].perTeam[TEAM_A].casts).toContainEqual({
+      cardId: 'blessing',
+      rosterId: 'cleric',
+      casts: 1,
+    });
   });
 });
 
 /*
- * Every seat is played by something since the idle pivot: a human seat by the
- * program its player wrote, a bot or empty seat by the AI commander. These are
- * the tests that a seat gets the *right* one, and that the strategy handed to
- * `setStrategy` is the one that actually runs.
+ * Since v1.3 nothing plays a *seat*: every mage spends its own kit, and the
+ * only thing a player still authors is how eagerly each of them does it. These
+ * are the tests that a squad plays itself, that the postures handed to
+ * `setStances` are the ones that actually stand, and that the session can say
+ * which body just spent what.
  */
-describe('Session — the caster on each seat', () => {
+describe('Session — the squad on each seat', () => {
   it('plays a human seat with nobody sending anything', () => {
     const s = startedSession();
-    const before = s.deckFor(TEAM_A)!.hand();
 
     tickFor(s, 2);
 
-    expect(s.deckFor(TEAM_A)!.hand()).not.toEqual(before);
+    expect(castsBy(s, TEAM_A)).toBeGreaterThan(0);
   });
 
-  it('honours the strategy the player registered — an empty one casts nothing', () => {
+  it('honours the postures the player registered', () => {
     const s = newSession();
     s.join('p1', 'Alice');
     s.selectTeam('p1', TEAM_A);
     s.selectElement('p1', 'fire');
     s.addBot(TEAM_B, 'normal');
-    // The AFK baseline is a representable program, not a missing one: this is
-    // what `agency.test.ts` measures authored play against.
-    s.setStrategy('p1', emptyStrategy());
+    s.setStances('p1', { stone_golem: 'hold', cleric: 'aggressive' });
     s.startMatch();
 
-    const mine = s.deckFor(TEAM_A)!.hand();
-    const theirs = s.deckFor(TEAM_B)!.hand();
-    tickFor(s, 4);
+    const mine = [...(s.liveWorld?.mages.values() ?? [])].filter((m) => m.team === TEAM_A);
+    const stanceOf = (id: string): string | undefined =>
+      mine.find((m) => m.rosterId === id)?.stance;
 
-    expect(s.deckFor(TEAM_A)!.hand()).toEqual(mine);
-    expect(s.firedRuleFor(TEAM_A)).toBeNull();
-    // The bot seat still has its Commander, so the match is contested even
-    // when one side brought no program at all.
-    expect(s.deckFor(TEAM_B)!.hand()).not.toEqual(theirs);
+    expect(stanceOf('stone_golem')).toBe('hold');
+    expect(stanceOf('cleric')).toBe('aggressive');
+
+    // The bot seat nobody authored stands at the default and still spends its
+    // kits, so a match is contested even when one side brought no choices.
+    const theirs = [...(s.liveWorld?.mages.values() ?? [])].filter((m) => m.team === TEAM_B);
+    expect(theirs.every((m) => m.stance === 'normal')).toBe(true);
+    tickFor(s, 2);
+    expect(castsBy(s, TEAM_B)).toBeGreaterThan(0);
   });
 
-  it('reports the rule behind a cast, and only once one has actually cast', () => {
+  it('reports the mage behind a cast, and only once one has actually cast', () => {
     const s = startedSession();
-    expect(s.firedRuleFor(TEAM_A)).toBeNull();
+    expect(s.firedAbilityFor(TEAM_A)).toBeNull();
 
     tickFor(s, 2);
 
-    const fired = s.firedRuleFor(TEAM_A);
-    expect(fired).toMatchObject({ ruleId: expect.any(String), at: expect.any(String) });
-    // It names a card the deck was actually holding — a rule cannot fire a card
-    // the player never brought.
-    expect(defaultDeck()).toContain(fired!.cardId);
+    const fired = s.firedAbilityFor(TEAM_A);
+    expect(fired).toMatchObject({
+      mageId: expect.any(String),
+      spellId: expect.any(String),
+      at: expect.any(String),
+    });
+    // It names a body on that side actually carrying the skill it spent — a
+    // mage cannot fire something that is not in its own kit.
+    const caster = s.liveWorld?.mage(fired!.mageId);
+    expect(caster?.team).toBe(TEAM_A);
+    expect(caster?.abilities).toContain(fired!.spellId);
   });
 });
 

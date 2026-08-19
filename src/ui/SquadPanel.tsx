@@ -5,6 +5,7 @@ import { teamInk } from './teamInk';
 import type { SquadMemberView } from '../net/SnapshotSync';
 import { SQUAD_SIZE } from '../../sim/config';
 import { isRosterId, rosterFor } from '../../sim/cards';
+import { abilityPolicyFor } from '../../sim/abilityPolicy';
 import styles from './SquadPanel.module.css';
 
 /** What a mage's role means to someone reading the panel (GDD §8). */
@@ -38,6 +39,14 @@ interface ChipRefs {
   immune: HTMLElement;
 }
 
+/** The widest kit the catalog holds; the panel's DOM is sized for it once. */
+const MAX_KIT = 3;
+
+interface ChargeRefs {
+  track: HTMLElement;
+  fill: HTMLElement;
+}
+
 interface RowRefs {
   root: HTMLButtonElement;
   name: HTMLElement;
@@ -47,6 +56,7 @@ interface RowRefs {
   healthText: HTMLElement;
   respawn: HTMLElement;
   chips: ChipRefs;
+  charges: ChargeRefs[];
 }
 
 interface SideRefs {
@@ -84,6 +94,8 @@ function healthColor(fraction: number): string {
 function RowView({ refs }: { refs: RowRefs }): JSX.Element {
   const chips = {} as ChipRefs;
   refs.chips = chips;
+  const charges: ChargeRefs[] = [];
+  refs.charges = charges;
 
   return (
     <button type="button" class={styles.row} ref={keep(refs, 'root')}>
@@ -94,6 +106,17 @@ function RowView({ refs }: { refs: RowRefs }): JSX.Element {
       </span>
       <span class={styles.healthMeter}>
         <span class={styles.healthFill} ref={keep(refs, 'healthFill')} />
+      </span>
+      <span class={styles.charges}>
+        {Array.from({ length: MAX_KIT }, (_, i) => {
+          const chargeRefs = {} as ChargeRefs;
+          charges[i] = chargeRefs;
+          return (
+            <span class={styles.charge} key={i} ref={keep(chargeRefs, 'track')}>
+              <span class={styles.chargeFill} ref={keep(chargeRefs, 'fill')} />
+            </span>
+          );
+        })}
       </span>
       <span class={styles.rowBottom}>
         <span class={styles.healthText} ref={keep(refs, 'healthText')} />
@@ -277,10 +300,40 @@ export class SquadPanel implements GameRenderer {
     // Ceil so a 20Hz feed counts 6 → 5 → 4 instead of flickering on fractions.
     refs.respawn.textContent = `Volta em ${Math.max(1, Math.ceil(member.respawnRemaining))}s`;
 
+    this.updateCharges(refs, member);
+
     refs.chips.shield.hidden = !member.shielded;
     refs.chips.haste.hidden = !member.hasted;
     refs.chips.slow.hidden = !member.slowed;
     // Spawn protection only reads as information while the mage is back up.
     refs.chips.immune.hidden = !member.immune || !member.alive;
+  }
+
+  /**
+   * How close each skill in this mage's kit is to being spendable.
+   *
+   * The wire sends *seconds remaining*, and omits the array entirely while
+   * nothing is recharging — so an empty `cooldowns` means a full kit, not an
+   * unknown one. The denominator is the skill's own cooldown out of the
+   * catalog, which is why the tracks fill at visibly different speeds: that
+   * difference is the kit, and it is the thing the player is being shown.
+   */
+  private updateCharges(refs: RowRefs, member: SquadMemberView): void {
+    const abilities = member.rosterId && isRosterId(member.rosterId)
+      ? (rosterFor(member.rosterId)?.abilities ?? [])
+      : [];
+
+    for (const [i, charge] of refs.charges.entries()) {
+      const spellId = abilities[i];
+      charge.track.hidden = spellId === undefined || !member.alive;
+      if (spellId === undefined) continue;
+
+      const total = abilityPolicyFor(spellId)?.cooldown ?? 0;
+      const remaining = member.cooldowns[i] ?? 0;
+      const ready = total <= 0 || remaining <= 0;
+      const fraction = ready ? 1 : clamp01(1 - remaining / total);
+      charge.fill.style.width = `${Math.round(fraction * 100)}%`;
+      charge.track.classList.toggle(styles.chargeReady, ready);
+    }
   }
 }

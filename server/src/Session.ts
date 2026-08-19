@@ -9,20 +9,15 @@
  * locking is simply gone rather than translated.
  */
 
+import { abilityPolicyFor, type Stance } from '../../sim/abilityPolicy';
 import { Brain, type Difficulty } from '../../sim/bot/Brain';
-import { Commander, type CastIntent } from '../../sim/bot/Commander';
-import type { SquadPlan } from '../../sim/bot/Squad';
-import { Tactician } from '../../sim/bot/Tactician';
 import { defaultSquad, type RosterId } from '../../sim/cards';
 import { SIM_DT } from '../../sim/config';
-import { Deck, defaultDeck } from '../../sim/Deck';
 import { TEAM_A, TEAM_B, type Team } from '../../sim/entities';
 import { summarize, type MatchSummary } from '../../sim/matchStats';
-import type { FiredRuleDTO } from '../../sim/protocol';
+import type { FiredAbilityDTO } from '../../sim/protocol';
 import { Rng } from '../../sim/rng';
 import { buildSnapshot, SNAPSHOT_EVERY_N_TICKS, type Snapshot } from '../../sim/snapshot';
-import type { CardId } from '../../sim/spells';
-import { defaultStrategy, type Strategy, type StrategyDecision } from '../../sim/strategy';
 import { Vec2 } from '../../sim/Vec2';
 import type { CastRejection, World } from '../../sim/World';
 import type { Room, RoomState, RoomSummary, Slot, Spectator } from './Room';
@@ -39,22 +34,6 @@ export type {
   SpellCastSnapshotState,
   StructureSnapshotState,
 } from '../../sim/snapshot';
-
-/**
- * Whatever plays a team's hand.
- *
- * The idle pivot is cheap precisely because this shape already existed: a bot
- * seat's `Commander` and a player's `Tactician` answer the same question — which
- * card, and where — and neither touches the world. Session drives one map of
- * these rather than branching on who is seated.
- *
- * `plan` is passed to everyone and read by whoever cares; `lastDecision` is only
- * a Tactician's, which is why it is optional rather than a second interface.
- */
-interface Caster {
-  step(w: World, team: Team, deck: Deck, dt: number, plan?: SquadPlan): CastIntent | null;
-  readonly lastDecision?: StrategyDecision | null;
-}
 
 export interface SessionCallbacks {
   onSnapshot?: (snap: Snapshot) => void;
@@ -75,19 +54,10 @@ export class Session {
   private matchEnded = false;
   private loop: ReturnType<typeof setInterval> | null = null;
 
-  /** One deck per team; a 1v1 match has exactly two (GDD §7). */
-  private decks = new Map<Team, Deck>();
-  /**
-   * Who plays each team's hand: a `Tactician` running a player's program, or a
-   * `Commander` on a bot or empty seat (GDD §10). Every team has one since the
-   * idle pivot — there is no longer a seat that waits for a human to click.
-   */
-  private casters = new Map<Team, Caster>();
-  /** The rule that last actually cast, per team; feeds that player's snapshot. */
-  private lastRuleByTeam = new Map<Team, FiredRuleDTO>();
-  private playerDecks = new Map<string, CardId[]>();
+  /** The ability that last actually cast, per team; feeds that player's snapshot. */
+  private lastAbilityByTeam = new Map<Team, FiredAbilityDTO>();
   private playerSquads = new Map<string, RosterId[]>();
-  private playerStrategies = new Map<string, Strategy>();
+  private playerStances = new Map<string, Partial<Record<RosterId, Stance>>>();
   private unitDifficulty: Difficulty = 'normal';
 
   constructor(
@@ -201,42 +171,36 @@ export class Session {
     this.tickCount = 0;
     this.matchEnded = false;
 
-    this.decks = new Map();
-    this.casters = new Map();
-    this.lastRuleByTeam = new Map();
+    this.lastAbilityByTeam = new Map();
 
-    // One seat per team in a 1v1. Every part of a seat's loadout comes from the
-    // player who registered it, falling back to the defaults for a bot seat or
-    // a player who never opened the builders.
+    // One seat per team in a 1v1. A seat's loadout comes from the player who
+    // registered it, falling back to the defaults for a bot seat or a player
+    // who never opened the builder. There is no longer a branch on *who* is
+    // seated: both sides are four mages spending their own kits, and a bot seat
+    // differs from a human one only in whether anybody chose the postures.
     for (const team of [TEAM_A, TEAM_B] as Team[]) {
       const slot = this.room.slots().find((s) => s.team === team);
-      const cards = (slot?.playerId ? this.playerDecks.get(slot.playerId) : null) ?? defaultDeck();
-      this.decks.set(team, new Deck(cards, this.rng));
+      const playerId = slot?.isBot ? null : (slot?.playerId ?? null);
 
-      if (!slot || slot.isBot || !slot.playerId) {
-        // An empty or bot seat still gets an AI commander, so the match is
-        // always contested.
-        this.casters.set(team, new Commander(this.rng, (slot?.difficulty as Difficulty) ?? 'normal'));
-      } else {
-        // A human seat is played by the program its player wrote. Somebody who
-        // never opened the editor gets the heuristics written out as rules —
-        // which is a real program they can then go and edit, not a stub.
-        const strategy = this.playerStrategies.get(slot.playerId) ?? defaultStrategy(cards);
-        this.casters.set(team, new Tactician(strategy));
-      }
-
-      const squad = (slot?.playerId ? this.playerSquads.get(slot.playerId) : null) ?? defaultSquad();
-      world.initSquad(team, squad);
+      const squad = (playerId ? this.playerSquads.get(playerId) : null) ?? defaultSquad();
+      const stances = (playerId ? this.playerStances.get(playerId) : null) ?? {};
+      world.initSquad(team, squad, stances);
     }
+
+    // The one place a spell becomes visible above the sim: it leaves a kit deep
+    // inside `Brain.step`, so the world announces it rather than the session
+    // catching it on the way past.
+    world.onAbilityCast = (mageId, team, spellId) => {
+      this.lastAbilityByTeam.set(team, {
+        mageId,
+        spellId,
+        at: abilityPolicyFor(spellId)?.at ?? 'enemy_cluster',
+      });
+    };
 
     // Every mage on the board is permanent from tick one — Brain drives all
     // of them, since nobody steers a mage by hand (GDD §1).
     for (const id of world.mages.keys()) this.registerUnit(id);
-  }
-
-  /** Registers the deck a player brought, used on the next `startMatch`. */
-  setDeck(playerId: string, cards: CardId[]): void {
-    this.playerDecks.set(playerId, cards);
   }
 
   /** Registers the squad a player brought, used on the next `startMatch`. */
@@ -245,28 +209,20 @@ export class Session {
   }
 
   /**
-   * Registers the strategy program a player brought, used on the next
-   * `startMatch`. Already validated by the caller — `App.resolveStrategy` — for
-   * the same reason `setDeck` trusts `resolveDeck`.
+   * Registers the postures a player assigned their squad, used on the next
+   * `startMatch`. Already validated by the caller — `App.resolveStances` — for
+   * the same reason `setSquad` trusts `resolveSquad`.
    */
-  setStrategy(playerId: string, strategy: Strategy): void {
-    this.playerStrategies.set(playerId, strategy);
-  }
-
-  deckFor(team: Team): Deck | null {
-    return this.decks.get(team) ?? null;
+  setStances(playerId: string, stances: Partial<Record<RosterId, Stance>>): void {
+    this.playerStances.set(playerId, stances);
   }
 
   /**
-   * The rule that last put a spell down for a team, for that player's snapshot.
-   * Null until one has — an empty program never sets it.
+   * The ability that last put a spell down for a team, for that player's
+   * snapshot. Null until one has — a squad that has not cast never sets it.
    */
-  firedRuleFor(team: Team): FiredRuleDTO | null {
-    return this.lastRuleByTeam.get(team) ?? null;
-  }
-
-  manaFor(team: Team): number {
-    return this.world?.manaOf(team) ?? 0;
+  firedAbilityFor(team: Team): FiredAbilityDTO | null {
+    return this.lastAbilityByTeam.get(team) ?? null;
   }
 
   /** The team a player occupies, or null for a spectator. */
@@ -276,33 +232,26 @@ export class Session {
   }
 
   /**
-   * Spends mana to cast a spell on an area, returning the rejection reason so a
-   * caller can say why.
+   * Casts a spell on an area for a player's whole side, returning the rejection
+   * reason so a caller can say why.
    *
-   * No longer reachable from the wire: since the idle pivot `App` refuses the
-   * `cast` message, and a seat is played by its `Tactician`. It survives as the
-   * seam every by-hand caster would go through — the tests exercise the world's
-   * cast rules through it, and an override mode would arrive here rather than
-   * inventing a second path into `castSpell`.
+   * Not reachable from the wire: `App` refuses the `cast` message, and since
+   * v1.3 a spell belongs to the mage carrying it. It survives as the seam a
+   * by-hand caster would go through — an override mode would arrive here rather
+   * than inventing a second path into the world.
    */
   submitCast(
     playerId: string,
     cardId: string,
     position: Vec2,
-  ): { ok: true } | { ok: false; reason: CastRejection | 'not_in_hand' | 'not_a_player' } {
+  ): { ok: true } | { ok: false; reason: CastRejection | 'not_a_player' } {
     if (!this.world) throw new Error('match: not started yet');
 
     const team = this.teamOf(playerId);
     if (team === null) return { ok: false, reason: 'not_a_player' };
 
-    const deck = this.decks.get(team);
-    if (!deck || !deck.holds(cardId)) return { ok: false, reason: 'not_in_hand' };
-
     const result = this.world.castSpell(team, cardId, position);
     if (!result.ok) return { ok: false, reason: result.reason };
-
-    // Only cycle the deck once the world actually accepted and charged for it.
-    deck.play(cardId);
     return { ok: true };
   }
 
@@ -310,56 +259,10 @@ export class Session {
     this.bots.set(mageId, this.unitDifficulty);
   }
 
-  /**
-   * Runs every team's caster and applies whatever it asked for. This is the one
-   * place a spell is cast during a match now that no seat waits for a click.
-   *
-   * The squad plan is handed over because a Tactician's `posture` condition and
-   * its squad-relative selectors read it. Passing `Brain`'s own planner rather
-   * than building a second one is what keeps "defend" meaning the same thing to
-   * the program and to the mages carrying it out.
-   */
-  private stepCasters(dt: number): void {
-    const world = this.world;
-    if (!world) return;
-
-    for (const [team, caster] of this.casters) {
-      const deck = this.decks.get(team);
-      if (!deck) continue;
-
-      const intent = caster.step(world, team, deck, dt, this.brain?.planner.planFor(team));
-      if (!intent) continue;
-
-      // Read before casting: `castSpell` cannot change the decision, but taking
-      // it here keeps the rule and the cast that came from it in one statement.
-      const decision = caster.lastDecision ?? null;
-
-      const result = world.castSpell(team, intent.cardId, intent.position);
-      // A refused cast leaves the last *successful* rule standing rather than
-      // clearing it. The global cooldown refuses most of what a Tactician asks
-      // for — it thinks four times a second and may cast once every 0.75s — so
-      // clearing here would blink the HUD's trace on and off all match, and
-      // would drop true information to prevent an announcement that a rejection
-      // never makes in the first place.
-      if (!result.ok) continue;
-
-      deck.play(intent.cardId);
-      if (decision) {
-        this.lastRuleByTeam.set(team, {
-          ruleId: decision.ruleId,
-          index: decision.ruleIndex,
-          cardId: decision.cardId,
-          at: decision.at,
-        });
-      }
-    }
-  }
-
   /** Advances the simulation by one fixed step, if a match is running. */
   tick(): void {
     if (!this.world || !this.brain || this.matchEnded) return;
 
-    this.stepCasters(SIM_DT);
     this.brain.step(this.world, this.bots, SIM_DT);
     this.world.step(SIM_DT);
     this.tickCount++;

@@ -27,6 +27,15 @@ import type { World } from './World';
 /** What a rider is handed: the cast, and who it caught. */
 export interface SpellRiderContext {
   readonly team: Team;
+  /**
+   * The body that spent this spell, or null when nobody did.
+   *
+   * Null is not a defensive default: `castSpell` casts for a whole side and has
+   * no caster, and since v1.3 that door exists only for tests of *effect*. A
+   * rider that pays the caster therefore has to say what it does when there is
+   * none — see `tribute`.
+   */
+  readonly casterId: string | null;
   readonly spell: SpellCard;
   readonly app: SpellApplyRule;
   readonly position: Vec2;
@@ -123,22 +132,30 @@ const knockback: SpellRider = (w, { app, position, targets }) => {
 };
 
 /**
- * Tributo Obscuro: mana for blood, `magnitude` of it per body that answered.
+ * Tributo Obscuro: charge for blood, `magnitude` seconds of it per body that
+ * answered.
  *
- * The first resource trade in the game. Mana arrives on a fixed clock for both
- * sides, so no program has ever been able to get *ahead* on tempo — only to be
- * better at spending what the clock handed it. This card is a program saying
+ * The first resource trade in the game. Charges come back on a fixed clock for
+ * both sides, so no squad has ever been able to get *ahead* on tempo — only to
+ * be better at spending what the clock handed it. This card is a mage saying
  * "not yet" to that clock, and paying its own squad's health for the privilege.
+ *
+ * It pays the caster's own charges rather than the side's, which is the one
+ * real change from the mana version (plano v1.3 §3.3): a bar could be filled by
+ * anyone, and a charge belongs to whoever is waiting on it. With no caster —
+ * the `castSpell` door — the bargain simply does not happen, because there is
+ * nobody it could be struck with.
  *
  * Per body rather than flat, which is what makes it a decision instead of a
  * button: a scattered squad returns less than the card cost to ask, and a squad
  * tight enough to make it pay is a squad tight enough for the enemy's zone
- * cards to be worth their mana too. The damage is a separate `strike` in the
+ * cards to be worth their charge too. The damage is a separate `strike` in the
  * same card, so what bleeds and what pays stay two numbers a designer can move
  * independently.
  */
-const tribute: SpellRider = (w, { team, app, targets }) => {
-  w.grantMana(team, (app.magnitude ?? 0) * targets.length);
+const tribute: SpellRider = (w, { casterId, app, targets }) => {
+  if (!casterId) return;
+  w.refundCharge(casterId, (app.magnitude ?? 0) * targets.length);
 };
 
 /**
@@ -168,14 +185,17 @@ const rally: SpellRider = (w, { team, spell, app, position }) => {
 };
 
 /**
- * Fluxo de Mana: the caster's team regenerates `magnitude` times faster for
- * the card's duration.
+ * Fluxo de Mana: the caster's team recharges `magnitude` times faster for the
+ * card's duration.
  *
- * Tributo Obscuro's opposite number. That one buys mana with health, now; this
+ * Tributo Obscuro's opposite number. That one buys tempo with health, now; this
  * buys it with time, and so it is the only card in the catalog that gets worse
- * the later it is cast — three mana spent two seconds before a fight ends is
- * three mana burned. A program that plays it well is a program that decided the
- * match was going long.
+ * the later it is cast — a flow spent two seconds before a fight ends is a flow
+ * burned. A mage that plays it well is one whose side decided the match was
+ * going long.
+ *
+ * Team-wide rather than per body, unlike its opposite number, and deliberately:
+ * a squad wiped mid-flow should not lose an investment it had already paid for.
  *
  * It does nothing at all with nobody in the disc, which is the only thing
  * keeping an economy card on the map: without that, a rule could fire at a
@@ -183,7 +203,7 @@ const rally: SpellRider = (w, { team, spell, app, position }) => {
  */
 const attune: SpellRider = (w, { team, spell, app, targets }) => {
   if (targets.length === 0) return;
-  w.attuneMana(team, app.magnitude ?? 1, app.duration ?? spell.duration);
+  w.attuneCharge(team, app.magnitude ?? 1, app.duration ?? spell.duration);
 };
 
 /**

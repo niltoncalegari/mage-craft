@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bestComps, mostUsedCards, type MatchRecord } from './matchHistory';
+import { bestComps, castsByMage, mostUsedCards, type MatchRecord } from './matchHistory';
 
 function record(over: Partial<MatchRecord>): MatchRecord {
   return {
@@ -80,5 +80,45 @@ describe('mostUsedCards', () => {
 
   it('drops cards that were never cast', () => {
     expect(mostUsedCards([record({ cards: [{ cardId: 'blessing', casts: 0 }] })])).toEqual([]);
+  });
+});
+
+describe('castsByMage', () => {
+  /*
+   * The question the pivot made askable, and the reason `rosterId` rides along
+   * with `cardId` on every stored cast: not "which spell got spent" but "which
+   * body earned its slot".
+   */
+  it('credits a spell to the mage whose kit holds it', () => {
+    const r = record({
+      cards: [
+        { cardId: 'volcanic_eruption', rosterId: 'pyromancer', casts: 3 },
+        { cardId: 'meteor_shower', rosterId: 'pyromancer', casts: 2 },
+        { cardId: 'blessing', rosterId: 'cleric', casts: 7 },
+      ],
+    });
+
+    expect(castsByMage([r])).toEqual([
+      { rosterId: 'cleric', casts: 7 },
+      { rosterId: 'pyromancer', casts: 5 },
+    ]);
+  });
+
+  /*
+   * History predates the pivot, so most stored rows carry a `cardId` and no
+   * `rosterId` at all. Dropping them would make the panel go blank for exactly
+   * the players with the most history. Kits are disjoint and cover the
+   * catalog — `kits.test.ts` holds both — so the catalog can answer for them.
+   */
+  it('falls back to the catalog for records saved before mages owned spells', () => {
+    const legacy = record({ cards: [{ cardId: 'petrify', casts: 4 }] });
+
+    expect(castsByMage([legacy])).toEqual([{ rosterId: 'ice_sentinel', casts: 4 }]);
+  });
+
+  it('drops a cast whose card no kit claims, rather than inventing an owner', () => {
+    const orphan = record({ cards: [{ cardId: 'not_a_spell' as never, casts: 9 }] });
+
+    expect(castsByMage([orphan])).toEqual([]);
   });
 });

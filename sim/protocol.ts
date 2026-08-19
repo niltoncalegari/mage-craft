@@ -44,41 +44,38 @@ export type StartMatchMsg = { type: 'start_match' };
 export type JoinQueueMsg = {
   type: 'join_queue';
   name: string;
-  /** @deprecated Send `set_loadout` instead — it also covers custom rooms. */
-  deck?: string[];
   /** Current Elo, so a paired opponent can be told what they're facing. */
   rating?: number;
 };
 export type LeaveQueueMsg = { type: 'leave_queue' };
 
 /**
- * What the player brings to their next match: the 8-card deck, the 4-mage
- * squad, and — since the idle pivot — the strategy program that plays the deck
- * for them (GDD §7). Sent once after connecting, before joining a queue or a
- * room, because it has to apply to both paths — a room seat is claimed long
- * after any queue message would have been sent.
+ * What the player brings to their next match: the 4-mage squad and a posture
+ * for each of them (plano v1.3 §3.1, §3.4). Sent once after connecting, before
+ * joining a queue or a room, because it has to apply to both paths — a room
+ * seat is claimed long after any queue message would have been sent.
  *
  * Any part may be omitted, in which case the server keeps its default.
  *
- * `strategy` is deliberately `unknown` rather than `Strategy`: it is a nested
- * program authored on an untrusted client, so the wire type promises nothing
- * and `validateStrategy` on the server is what decides whether it is one.
+ * The deck and the strategy program are gone with the hand: a mage spends its
+ * own kit, so there is nothing left for a player to program. What survives of
+ * that decision is `stances`, keyed by roster id because that is the name a
+ * loadout knows a mage by — a mage the map has not spawned yet has no id.
  */
 export type SetLoadoutMsg = {
   type: 'set_loadout';
-  deck?: string[];
   squad?: string[];
-  strategy?: unknown;
+  /** Roster id → 'hold' | 'normal' | 'aggressive'; the server validates both halves. */
+  stances?: Record<string, string>;
 };
 
 /**
- * Spend mana to cast a spell at a chosen point.
+ * Cast a spell at a chosen point.
  *
- * @deprecated Since the idle pivot nobody casts by hand — a seat is played by
- * the `Tactician` running the player's program, and the server rejects this
- * message. It is kept because `MatchTransport` implements it on both sides and
- * it is the natural hook for a future override mode; delete it only once
- * something has replaced that seam.
+ * @deprecated Nobody casts by hand — since v1.3 a spell is spent by the mage
+ * that carries it, and the server rejects this message. It is kept because
+ * `MatchTransport` implements it on both sides and it is the natural hook for a
+ * future override mode; delete it only once something has replaced that seam.
  */
 export type CastMsg = { type: 'cast'; cardId: string; position: Vec2DTO };
 
@@ -179,6 +176,16 @@ export type MageSnapshotDTO = {
   kills: number;
   /** Times this mage has been put down; survives respawn. */
   deaths: number;
+  /**
+   * Seconds until each of this mage's abilities is ready, in the stable order
+   * of its roster entry's kit (plano v1.3 §3.1). Omitted when every one of them
+   * is ready, which is what a mage that has not cast yet looks like — the
+   * common case early, and the reason this is not sent flat.
+   *
+   * The client re-joins these to spell ids through `rosterId`; sending the ids
+   * too would repeat a catalog both sides already have, 20 times a second.
+   */
+  cd?: number[];
   /** Seconds until this mage returns. Omitted while it is alive. */
   respawnRemaining?: number;
   /** Post-respawn damage immunity is running. Omitted when false. */
@@ -250,16 +257,15 @@ export type PuddleSnapshotDTO = {
  * watching, a match is something that happens near them rather than something
  * they wrote — which is the difference between this game and a screensaver.
  *
- * Sent on the per-recipient channel next to `mana`/`hand`, never broadcast: a
- * player's program is theirs, and leaking the opponent's would turn reading
- * the wire into a strategy dump.
+ * Sent on the per-recipient channel, never broadcast: which of your mages just
+ * spent what is yours to read, and leaking the opponent's would turn reading
+ * the wire into a live account of their kit's cadence.
  */
-export type FiredRuleDTO = {
-  ruleId: string;
-  /** 0-based position in the program; the HUD says "Regra {index + 1}". */
-  index: number;
-  cardId: string;
-  /** The `TargetSelector` the rule named — where it aimed, in the player's words. */
+export type FiredAbilityDTO = {
+  /** The body that spent it — the HUD names the mage, not a rule number. */
+  mageId: string;
+  spellId: string;
+  /** The `TargetSelector` the policy named — where it aimed, in the kit's words. */
   at: string;
 };
 
@@ -275,23 +281,12 @@ export type SnapshotMsg = {
   /** Seconds of match time elapsed, for the countdown (GDD §4). */
   elapsed: number;
   suddenDeath: boolean;
-  /** The receiving player's own mana, 0..MANA_MAX (GDD §6). */
-  mana: number;
   /**
-   * The receiving player's own hand, in slot order (GDD §7). The server owns the
-   * deck and its cycle, so the client cannot derive this — it is sent every
-   * snapshot rather than as a separate event, which also makes a rejected cast
-   * self-correcting. Empty for a spectator.
+   * The last ability one of the receiving player's own mages actually spent.
+   * Omitted until one has — a squad standing at `hold` with nothing at stake
+   * never sets it, which is exactly what that posture should look like.
    */
-  hand: string[];
-  /** The card entering the hand next; omitted when the deck cannot say yet. */
-  next?: string;
-  /**
-   * The receiving player's last rule to actually cast. Omitted until one has —
-   * an empty program never sets it, which is exactly what an empty program
-   * should look like on screen.
-   */
-  firedRule?: FiredRuleDTO;
+  firedAbility?: FiredAbilityDTO;
 };
 
 export type MatchStartMsg = { type: 'match_start' };
@@ -300,7 +295,14 @@ export type RoundEndMsg = { type: 'round_end'; winnerTeam: number };
 export type ErrorMsg = { type: 'error'; message: string };
 
 export type MageStatDTO = { rosterId?: string; role: string; kills: number; deaths: number };
-export type CastStatDTO = { cardId: string; casts: number };
+/**
+ * `cardId` rather than `spellId`, and that is compatibility rather than
+ * carelessness: this is the shape `MatchLog.cards` has stored since before the
+ * pivot and what a player's lifetime stats aggregate over. `rosterId` is
+ * *added* beside it — which of the four bodies spent this — so v1.3 can answer
+ * "did this mage earn its place" without orphaning the history.
+ */
+export type CastStatDTO = { cardId: string; casts: number; rosterId?: string };
 export type TeamSummaryDTO = {
   squad: string[];
   kills: number;

@@ -12,7 +12,7 @@ export type {
   CastMsg,
   CastStatDTO,
   EmoteMsg,
-  FiredRuleDTO,
+  FiredAbilityDTO,
   JoinQueueMsg,
   JoinRoomMsg,
   ListRoomsMsg,

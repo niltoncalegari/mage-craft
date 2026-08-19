@@ -5,21 +5,17 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { damageTakenMultiplier, hasEffect, magnitudeOf, moveSpeedMultiplier, removeEffect } from './effects';
+import { damageTakenMultiplier, magnitudeOf, moveSpeedMultiplier } from './effects';
 import { defaultSquad } from './cards';
 import {
   CHARGE_TIME,
   EXECUTE_THRESHOLD,
   HEAL_INTERRUPT_DURATION,
-  MANA_MAX,
-  MANA_REGEN_INTERVAL,
-  MANA_START,
   MATCH_DURATION,
   PLAGUE_TICK_INTERVAL,
   SHIELD_AMOUNT,
   SIM_DT,
   SPELL_CAST_FX_DURATION,
-  SPELL_GLOBAL_COOLDOWN,
   SQUAD_SIZE,
   TOWER_RANGE,
 } from './config';
@@ -183,42 +179,6 @@ describe('structures', () => {
   });
 });
 
-describe('mana', () => {
-  it('starts both teams at the opening amount', () => {
-    const w = new World();
-    expect(w.manaOf(TEAM_A)).toBe(MANA_START);
-    expect(w.manaOf(TEAM_B)).toBe(MANA_START);
-  });
-
-  it('regenerates one mana per interval', () => {
-    const w = new World();
-    stepN(w, Math.ceil(MANA_REGEN_INTERVAL / SIM_DT) + 2);
-    expect(w.manaOf(TEAM_A)).toBe(MANA_START + 1);
-  });
-
-  it('caps at the maximum', () => {
-    const w = new World();
-    stepN(w, Math.ceil((MANA_REGEN_INTERVAL * (MANA_MAX + 4)) / SIM_DT));
-    expect(w.manaOf(TEAM_A)).toBe(MANA_MAX);
-  });
-
-  it('regenerates twice as fast in sudden death', () => {
-    // A couple of ticks of slack keeps this off the exact interval boundary,
-    // where float accumulation decides whether the last mana has landed yet.
-    const ticks = Math.ceil((MANA_REGEN_INTERVAL * 2) / SIM_DT) + 4;
-
-    const normal = new World();
-    stepN(normal, ticks);
-
-    const sudden = new World();
-    sudden.suddenDeath = true;
-    stepN(sudden, ticks);
-
-    expect(normal.manaOf(TEAM_A) - MANA_START).toBe(2);
-    expect(sudden.manaOf(TEAM_A) - MANA_START).toBe(4);
-  });
-});
-
 describe('squad (GDD §4, §7)', () => {
   it('gives each team its full, permanent squad at match start', () => {
     const w = new World();
@@ -246,7 +206,7 @@ describe('squad (GDD §4, §7)', () => {
 });
 
 describe('spells (GDD §9)', () => {
-  it('spends the spell cost and buffs allies in radius, not the enemy', () => {
+  it('buffs allies in radius, not the enemy', () => {
     const w = new World();
     const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
     const enemy = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0.5));
@@ -254,7 +214,6 @@ describe('spells (GDD §9)', () => {
     const result = w.castSpell(TEAM_A, 'blessing', ally.position);
 
     expect(result).toEqual({ ok: true });
-    expect(w.manaOf(TEAM_A)).toBe(MANA_START - spellFor('blessing')!.cost);
     expect(magnitudeOf(ally, 'haste')).toBeGreaterThan(0);
     expect(magnitudeOf(ally, 'cast_haste')).toBeGreaterThan(0);
     expect(magnitudeOf(enemy, 'haste')).toBe(0);
@@ -431,49 +390,6 @@ describe('spells (GDD §9)', () => {
     expect(victim.health).toBeLessThan(full);
   });
 
-  /**
-   * The reach of Petrificar, and the reason it is worth four mana.
-   *
-   * A squad that is entirely stone has no one left to channel through, so the
-   * player it belongs to cannot cast at all until someone cracks. That is the
-   * only hard lock in the game — nothing else stops a program from firing — and
-   * it is reachable exactly when the enemy has bunched up inside one area
-   * spell, which is the situation the card is asking you to wait for.
-   *
-   * Guarded on *living* mages: a team wiped to the last man is not petrified,
-   * it is dead, and blocking its casts would turn a lost fight into an
-   * unrecoverable one for a reason nobody could see.
-   */
-  it('locks a team out of casting only while its whole living squad is stone', () => {
-    const w = new World();
-    const a = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0));
-    const b = w.summon(TEAM_B, 'pyromancer', new Vec2(-10, 0.6));
-    w.summon(TEAM_A, 'pyromancer', new Vec2(10, 0));
-
-    expect(w.castSpell(TEAM_B, 'blessing', a.position)).toEqual({ ok: true });
-    stepN(w, Math.ceil(SPELL_GLOBAL_COOLDOWN / SIM_DT) + 2);
-
-    // One area cast catching both of them is what buys the lock.
-    w.castSpell(TEAM_A, 'petrify', a.position);
-    expect(hasEffect(a, 'petrify')).toBe(true);
-    expect(hasEffect(b, 'petrify')).toBe(true);
-
-    expect(w.castSpell(TEAM_B, 'blessing', a.position)).toEqual({
-      ok: false,
-      reason: 'squad_petrified',
-    });
-
-    // One of them cracking is enough to get the program running again.
-    removeEffect(b, 'petrify');
-    expect(w.castSpell(TEAM_B, 'blessing', b.position)).toEqual({ ok: true });
-  });
-
-  it('never locks a team that simply has no one standing', () => {
-    const w = new World();
-    // No squad at all: vacuously "all petrified" is the trap this guards.
-    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({ ok: true });
-  });
-
   it('shields absorb damage before health', () => {
     const w = new World();
     const ally = w.summon(TEAM_A, 'pyromancer', new Vec2(-10, 0));
@@ -499,16 +415,6 @@ describe('spells (GDD §9)', () => {
     expect(target.health).toBeLessThan(target.maxHealth);
     // Praga ignores the shield entirely — it is not merely absorbed.
     expect(magnitudeOf(target, 'shield')).toBeGreaterThan(0);
-  });
-
-  it('refuses a spell the team cannot afford', () => {
-    const w = new World();
-    w.castSpell(TEAM_A, 'plague', Vec2.zero); // cost 4 of the opening 5 mana
-
-    expect(w.castSpell(TEAM_A, 'slow_curse', Vec2.zero)).toEqual({
-      ok: false,
-      reason: 'not_enough_mana',
-    });
   });
 
   it('refuses an unknown spell', () => {
@@ -554,63 +460,6 @@ describe('spells (GDD §9)', () => {
     const w = new World();
     w.castSpell(TEAM_A, 'fireball_of_doom', new Vec2(-10, 0));
     expect(w.spellCasts.size).toBe(0);
-  });
-});
-
-/*
- * The global cooldown exists because the caster is about to stop being a pair
- * of human hands. A Tactician runs inside the 60 Hz tick, so a full mana bank
- * spent on 2-cost cards is five casts in five consecutive ticks — something no
- * player could ever do through the HUD. Rate-limiting inside the Tactician
- * would not do: this is the one seam every caster goes through (submitCast,
- * Commander, Tactician, and every headless harness), so it is the only place
- * the limit cannot be bypassed.
- */
-describe('spells — the global cast cooldown', () => {
-  it('refuses a second cast from the same team inside the cooldown', () => {
-    const w = new World();
-    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({ ok: true });
-
-    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({
-      ok: false,
-      reason: 'on_cooldown',
-    });
-  });
-
-  it('allows the next cast once the cooldown has run out', () => {
-    const w = new World();
-    w.castSpell(TEAM_A, 'blessing', Vec2.zero);
-    stepN(w, Math.ceil(SPELL_GLOBAL_COOLDOWN / SIM_DT) + 1);
-
-    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({ ok: true });
-  });
-
-  it('is per team — one side casting does not lock the other out', () => {
-    const w = new World();
-    w.castSpell(TEAM_A, 'blessing', Vec2.zero);
-
-    expect(w.castSpell(TEAM_B, 'blessing', Vec2.zero)).toEqual({ ok: true });
-  });
-
-  it('does not start on a rejected cast', () => {
-    const w = new World();
-    // A misnamed card must not cost the team its next cast window.
-    w.castSpell(TEAM_A, 'fireball_of_doom', Vec2.zero);
-
-    expect(w.castSpell(TEAM_A, 'blessing', Vec2.zero)).toEqual({ ok: true });
-  });
-
-  it('reports what is wrong with the request before it reports timing', () => {
-    const w = new World();
-    // Plague costs 4 of the opening 5, so the second cast is both broke and
-    // on cooldown. "Not enough mana" is the one the caster can act on, and it
-    // is what the pre-cooldown behaviour reported.
-    w.castSpell(TEAM_A, 'plague', Vec2.zero);
-
-    expect(w.castSpell(TEAM_A, 'slow_curse', Vec2.zero)).toEqual({
-      ok: false,
-      reason: 'not_enough_mana',
-    });
   });
 });
 

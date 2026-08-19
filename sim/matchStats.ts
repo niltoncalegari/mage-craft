@@ -10,7 +10,7 @@
  * session, a locally simulated practice match, and a headless harness run.
  */
 
-import type { RosterId } from './cards';
+import { rosterOwnerOf, type RosterId } from './cards';
 import { TEAM_A, TEAM_B, type Team } from './entities';
 import type { SpellId } from './spells';
 import type { World } from './World';
@@ -20,10 +20,20 @@ export interface MageStat {
   role: string;
   kills: number;
   deaths: number;
+  /** Abilities this body spent out of its own kit (plano v1.3 §7.1). */
+  casts: number;
 }
 
 export interface CastStat {
   cardId: SpellId;
+  /**
+   * The body whose kit this spell belongs to (plano v1.3 §7.1).
+   *
+   * Alongside `cardId` rather than replacing it: the team tally is the shape
+   * `MatchLog.cards` has stored since before the pivot, and a player's lifetime
+   * stats aggregate over it. Undefined only for an id no kit holds.
+   */
+  rosterId?: RosterId;
   casts: number;
 }
 
@@ -64,13 +74,17 @@ export function summarize(world: World): MatchSummary {
       deaths: mages.reduce((sum, m) => sum + m.deaths, 0),
       structuresDestroyed: world.structuresDestroyedBy(team),
       casts: [...(world.castsBySpell.get(team) ?? new Map<SpellId, number>())]
-        .map(([cardId, casts]) => ({ cardId, casts }))
+        .map(([cardId, casts]) => {
+          const rosterId = rosterOwnerOf(cardId);
+          return { cardId, ...(rosterId ? { rosterId } : {}), casts };
+        })
         .sort((a, b) => b.casts - a.casts),
       mages: mages.map((m) => ({
         rosterId: m.rosterId,
         role: m.role,
         kills: m.kills,
         deaths: m.deaths,
+        casts: world.castsOf(m.id),
       })),
     };
   }

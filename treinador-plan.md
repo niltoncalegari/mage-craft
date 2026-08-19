@@ -49,11 +49,22 @@ depois (kits com mais de uma skill, cabendo no catálogo que já existe).
 | 3 | Mão / ciclo / 2 cores? | **Leftover do CR** | Deck, mão e regra de cor saem. |
 | 4 | Quem dispara a habilidade? | **IA do mago (`Brain`)** | O programa `SE → carta` perde o emprego. |
 | 5 | Qual meta assusta mais? | **Um time só** (B) | Kits de 1 skill 1:1 *produzem* B. Por isso a 9 existe. |
-| 6 | Depois de perder, edita o quê além do time? | *Não respondida.* Default deste plano: **postura por mago** (§3.4) | Sem isso o loop curto morre. |
-| 7 | Mana de time continua? | *Não respondida.* Default deste plano: **cooldown por habilidade**, custo antigo vira duração de carga (§3.3) | Combina com a 2. |
-| 8 | Kit fixo ou o jogador escolhe? | *Não respondida.* Default deste plano: **kit fixo na v1.3.0**; escolha 2-de-3 só se a 5 (meta B) aparecer na medição | UI mínima primeiro. |
+| 6 | Depois de perder, edita o quê além do time? | **Postura por mago** (§3.4) — fechada 2026-08-17, default aceito | Sem isso o loop curto morre. |
+| 7 | Mana de time continua? | **Não** — cooldown por habilidade no corpo do mago + GCD por mago (§3.3). Fechada 2026-08-17 | Combina com a 2. |
+| 8 | Kit fixo ou o jogador escolhe? | **Kit fixo na v1.3.0**, fechada 2026-08-17; escolha 2-de-3 só se a 5 (meta B) aparecer na medição | UI mínima primeiro. |
 | 9 | Uma skill por mago? | **Não — o catálogo atual dá 2 ou 3 por mago** | 9 magos × ~2.8 ≈ as 25 cartas. Sem inventar sistema novo. |
 | 10 | Como não deixar o kit desbalanceado? | **Varredura IA-vs-IA**, a mesma família do `ai-report` (§5). A IA não “aprende” pesos; ela **joga** e o JSON muda | Sem isso, cooldown e `when` são chute. Sem o `Brain` gastar o kit, a varredura mente. |
+
+**Fechadas em 2026-08-17, junto com os dois buracos que a §3.2 e a §3.3 deixaram
+abertos:**
+
+| Buraco | Decisão |
+| --- | --- |
+| `mana_flow` / `dark_tribute` | **Riders re-apontados para a economia de recarga.** `attune` → `World.attuneCharge(team, mult, dur)`; `tribute` → `World.refundCharge(mageId, seg)`, ainda pago no sangue pelo `strike` da mesma carta. As duas ficam no kit, a tabela §3.2 segue inteira, e VFX/SFX/telegraph não mudam. |
+| Morte súbita sem mana | `SUDDEN_DEATH_MANA_MULTIPLIER` → **`SUDDEN_DEATH_COOLDOWN_MULTIPLIER`** (mesmo valor, 2). Mesma alavanca sobre o recurso novo. `SIEGE_RAMP_SUDDEN_DEATH` e o decay de estrutura continuam como estão. |
+
+A tabela §3.2 foi **conferida contra `ALL_SPELLS`**: 9 magos, 25 skills, kits
+disjuntos, catálogo inteiro coberto (7×3 + 2×2). Segue sem troca de par.
 
 Se 6, 7 ou 8 forem revertidas, anotar aqui antes de implementar. A 9 é
 direção de catálogo, não número sagrado: um mago pode ter 2, outro 3; o que

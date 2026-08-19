@@ -23,9 +23,6 @@ import {
   KNOCKBACK_STOP_SPEED,
   LAUNCH_HEIGHT,
   MAGE_RADIUS,
-  MANA_MAX,
-  MANA_REGEN_INTERVAL,
-  MANA_START,
   MATCH_DURATION,
   MAX_HEALTH,
   MAX_PROJECTILE_LIFETIME,
@@ -40,11 +37,11 @@ import {
   SPACING,
   SPAWN_MARGIN,
   SPELL_CAST_FX_DURATION,
-  SPELL_GLOBAL_COOLDOWN,
+  ABILITY_GCD,
+  SUDDEN_DEATH_COOLDOWN_MULTIPLIER,
   STRUCTURE_DAMAGE_MULTIPLIER,
   STRUCTURE_TOP_HEIGHT,
   SUDDEN_DEATH_DURATION,
-  SUDDEN_DEATH_MANA_MULTIPLIER,
   SUDDEN_DEATH_STRUCTURE_DECAY,
   THROW_COOLDOWN,
   TOWER_ATTACK_INTERVAL,
@@ -88,17 +85,23 @@ import { PathGrid } from './PathGrid';
 import { type Role } from './roles';
 import { spellFor, type SpellApplication, type SpellCard, type SpellId } from './spells';
 import { spellRiderFor } from './spellRiders';
+import { DEFAULT_STANCE, abilityPolicyFor, type Stance } from './abilityPolicy';
 import { Vec2 } from './Vec2';
 
 /** Why a `castSpell()` call was rejected — surfaced to the client for UI feedback. */
 export type CastRejection =
   | 'unknown_card'
-  | 'not_enough_mana'
+  /* The per-mage rejections (plano v1.3 §7.1) — every one of them a fact about
+   * the body being asked, which is what the pivot moved permission onto. */
+  | 'unknown_mage'
+  | 'not_owner'
+  | 'mage_dead'
+  | 'mage_petrified'
+  | 'out_of_range'
+  | 'ability_on_cooldown'
+  | 'on_gcd'
   | 'out_of_bounds'
-  | 'match_over'
-  | 'on_cooldown'
-  /** Every mage this team has standing is stone; see {@link World.squadPetrified}. */
-  | 'squad_petrified';
+  | 'match_over';
 
 export type CastResult = { ok: true } | { ok: false; reason: CastRejection };
 
@@ -153,6 +156,8 @@ export interface SpellCastFx {
  */
 interface PendingApplication {
   readonly team: Team;
+  /** Carried through the delay so a rider still knows who paid for the cast. */
+  readonly casterId: string | null;
   readonly spell: SpellCard;
   readonly app: SpellApplication;
   readonly position: Vec2;
@@ -179,6 +184,32 @@ export class World {
    */
   readonly castsBySpell = new Map<Team, Map<SpellId, number>>();
 
+  /**
+   * The same successful casts, credited to the body that spent them.
+   *
+   * Kept alongside the team tally rather than replacing it. The team tally is
+   * what `MatchLog.cards` has been storing since before the pivot and what the
+   * player's lifetime card stats aggregate over, so its shape is not ours to
+   * change. This answers the question v1.3 actually made askable — which of the
+   * four mages earned its place — and only a cast that came out of a kit can
+   * appear here: `castSpell` casts for a whole side and has nobody to credit.
+   */
+  readonly castsByMage = new Map<string, Map<SpellId, number>>();
+
+  /**
+   * Told about every accepted kit cast, if anyone is listening.
+   *
+   * A spell leaves a kit from inside `Brain.step`, deep in the tick, so a
+   * caller above the sim cannot see it happen by reading a return value the way
+   * it could when a player cast by hand. The session needs it for the one line
+   * the HUD puts on screen — which body just spent what — and a hook is
+   * cheaper than making every caller diff two snapshots to find out.
+   *
+   * Never fired for {@link castSpell}, which casts for a whole side and has
+   * nobody to credit.
+   */
+  onAbilityCast: ((mageId: string, team: Team, spellId: SpellId) => void) | null = null;
+
   /** Seconds of match time elapsed (GDD §4). */
   elapsed = 0;
   /** Set once normal time ends level on structures; doubles mana regen. */
@@ -192,10 +223,6 @@ export class World {
    */
   private nextCastFxId = 0;
   private readonly teamCounts = new Map<Team, number>();
-  private readonly mana = new Map<Team, number>();
-  private readonly manaAccum = new Map<Team, number>();
-  /** Seconds until each team may cast again; see {@link SPELL_GLOBAL_COOLDOWN}. */
-  private readonly castCooldown = new Map<Team, number>();
   /**
    * Card applications waiting out their `delay`. Not cosmetic and not a marker:
    * this is damage that has been paid for and has not landed yet, so it is
@@ -203,8 +230,8 @@ export class World {
    * runs inside `step` rather than off a timer.
    */
   private readonly pendingApplications: PendingApplication[] = [];
-  /** A team's raised mana regeneration, while it lasts; see {@link attuneMana}. */
-  private readonly manaFlow = new Map<Team, { multiplier: number; remaining: number }>();
+  /** A team's raised kit recharge, while it lasts; see {@link attuneCharge}. */
+  private readonly chargeFlow = new Map<Team, { multiplier: number; remaining: number }>();
   /** Re-entrancy guard for the pain bond; see {@link spreadBondedPain}. */
   private bondEcho = false;
   /**
@@ -223,11 +250,6 @@ export class World {
 
   /** Pass an arena to play on a specific map; omit for the default one. */
   constructor(readonly arena: Arena = defaultArena()) {
-    for (const team of [TEAM_A, TEAM_B] as Team[]) {
-      this.mana.set(team, MANA_START);
-      this.manaAccum.set(team, 0);
-      this.castCooldown.set(team, 0);
-    }
     this.buildStructures();
   }
 
@@ -276,106 +298,28 @@ export class World {
     return n;
   }
 
-  /* ---- Mana (GDD §6) ------------------------------------------------------ */
-
-  manaOf(team: Team): number {
-    return this.mana.get(team) ?? 0;
-  }
-
-  private spendMana(team: Team, amount: number): void {
-    this.mana.set(team, Math.max(0, this.manaOf(team) - amount));
-  }
-
-  /**
-   * Mana from something other than the clock (GDD §7) — Tributo Obscuro, so
-   * far, which buys it with its own squad's health.
-   *
-   * Clamped at {@link MANA_MAX}, and the clamp is the point. Nothing in
-   * `updateMana` ever brings an over-full bar back down: it stops *adding* at
-   * the ceiling and otherwise leaves the number alone. A grant that overshot
-   * would therefore park a team above the ceiling for the rest of the match,
-   * which is not a stronger card, it is a broken economy.
-   */
-  grantMana(team: Team, amount: number): void {
-    if (amount <= 0) return;
-    this.mana.set(team, Math.min(MANA_MAX, this.manaOf(team) + amount));
-  }
-
-  /** Seconds a team must still wait before its next cast; 0 when it may cast now. */
-  castCooldownOf(team: Team): number {
-    return this.castCooldown.get(team) ?? 0;
-  }
-
-  private updateCastCooldown(dt: number): void {
-    for (const team of [TEAM_A, TEAM_B] as Team[]) {
-      const left = this.castCooldownOf(team);
-      if (left > 0) this.castCooldown.set(team, decay(left, dt));
-    }
-  }
-
-  /**
-   * Raises a team's mana regeneration for a while (GDD §7) — Fluxo de Mana.
-   *
-   * A team-level timer rather than an effect on the mages, because the thing
-   * being changed belongs to the team and not to any body: mana is not carried
-   * by anybody, and a squad wiped mid-flow would otherwise lose an investment
-   * it had already paid for, for a reason no readout on the field explains.
-   *
-   * The stronger flow wins and the longer one lasts, independently — the same
-   * `refresh_strongest` bargain the effect catalog makes, kept the same here so
-   * two casts of an economy card behave the way two casts of a slow do.
-   */
-  attuneMana(team: Team, multiplier: number, duration: number): void {
-    if (multiplier <= 1 || duration <= 0) return;
-    const running = this.manaFlow.get(team);
-    this.manaFlow.set(team, {
-      multiplier: Math.max(multiplier, running?.multiplier ?? 0),
-      remaining: Math.max(duration, running?.remaining ?? 0),
-    });
-  }
-
-  private manaRateOf(team: Team): number {
-    const flow = this.manaFlow.get(team);
-    return flow && flow.remaining > 0 ? flow.multiplier : 1;
-  }
-
-  private updateMana(dt: number): void {
-    // Sudden death and a card multiply rather than replace each other: one is
-    // the clock the whole match runs on and the other is something a player
-    // paid for, and picking a winner would quietly refund whichever lost.
-    const global = this.suddenDeath ? SUDDEN_DEATH_MANA_MULTIPLIER : 1;
-    for (const team of [TEAM_A, TEAM_B] as Team[]) {
-      const rate = global * this.manaRateOf(team);
-      const flow = this.manaFlow.get(team);
-      if (flow && flow.remaining > 0) flow.remaining = decay(flow.remaining, dt);
-
-      if (this.manaOf(team) >= MANA_MAX) {
-        this.manaAccum.set(team, 0);
-        continue;
-      }
-      let acc = (this.manaAccum.get(team) ?? 0) + dt * rate;
-      let mana = this.manaOf(team);
-      while (acc >= MANA_REGEN_INTERVAL && mana < MANA_MAX) {
-        acc -= MANA_REGEN_INTERVAL;
-        mana++;
-      }
-      this.mana.set(team, mana);
-      this.manaAccum.set(team, mana >= MANA_MAX ? 0 : acc);
-    }
-  }
-
   /* ---- Squad (GDD §4, §7) -------------------------------------------------- */
 
   /**
    * Creates a team's permanent squad at match start, one mage per roster
-   * entry, on the map's spawn points. Never gated by mana — picking a squad
-   * costs a slot, not mana (GDD §7).
+   * entry, on the map's spawn points. Never gated by a resource — picking a
+   * squad costs a slot (GDD §7).
+   *
+   * `stances` is the whole of what the player still authors at the table
+   * (§3.4), keyed by roster entry because that is what a loadout names; a
+   * mage nobody assigned stands at {@link DEFAULT_STANCE}. Applied here rather
+   * than by a later setter so a squad is never briefly playing a posture its
+   * owner did not choose.
    */
-  initSquad(team: Team, roster: readonly RosterId[]): void {
+  initSquad(
+    team: Team,
+    roster: readonly RosterId[],
+    stances?: Partial<Record<RosterId, Stance>>,
+  ): void {
     roster.forEach((id, idx) => {
       const entry = rosterFor(id);
       if (!entry) throw new Error(`sim: unknown roster entry ${JSON.stringify(id)}`);
-      this.insertMage({
+      const m = this.insertMage({
         id: `mage-${++this.nextId}`,
         team,
         element: entry.element,
@@ -386,6 +330,7 @@ export class World {
         position: this.findClearSpawn(team, idx),
         isBot: true,
       });
+      m.stance = stances?.[entry.id] ?? DEFAULT_STANCE;
     });
   }
 
@@ -442,6 +387,11 @@ export class World {
     position: Vec2;
     isBot: boolean;
   }): Mage {
+    // A bare mage — `addMage`, the pre-pivot combat-test shape — has no roster
+    // entry and therefore no kit. That is right rather than a gap: the kit is a
+    // property of *who this mage is*, and those tests are about elements and
+    // collision, not about who is allowed to cast what.
+    const abilities = spec.rosterId ? (rosterFor(spec.rosterId)?.abilities ?? []) : [];
     const m: Mage = {
       id: spec.id,
       team: spec.team,
@@ -450,6 +400,10 @@ export class World {
       role: spec.role,
       rosterId: spec.rosterId,
       moveSpeed: spec.moveSpeed,
+      abilities,
+      abilityCooldowns: abilities.map(() => 0),
+      abilityGcd: 0,
+      stance: DEFAULT_STANCE,
       position: spec.position,
       facing: new Vec2(facingSignForTeam(spec.team), 0),
       velocity: Vec2.zero,
@@ -479,72 +433,171 @@ export class World {
     return m;
   }
 
+  /* ---- Abilities (plano v1.3 §3.3) ------------------------------------------ */
+
+  /** Seconds until `spellId` is ready on this mage; 0 when it may go now. */
+  abilityCooldownOf(mageId: string, spellId: string): number {
+    const m = this.mages.get(mageId);
+    if (!m) return 0;
+    const i = m.abilities.indexOf(spellId as SpellId);
+    return i < 0 ? 0 : m.abilityCooldowns[i];
+  }
+
+  /**
+   * One mage spends one of its own abilities — the only way a spell reaches the
+   * field in v1.3 (plano §7.1).
+   *
+   * Every rejection below names something about *this body*, which is the whole
+   * of the pivot: `castSpell` asked whether the side could afford it, and this
+   * asks whether the mage is alive, awake, carrying the skill, charged for it,
+   * and close enough. The order follows the same rule the old method wrote down
+   * — what is wrong with the *request* first, because the caller can act on it,
+   * and what is only a matter of time last, because it resolves on its own.
+   */
+  castAbility(mageId: string, spellId: string, position: Vec2): CastResult {
+    if (this.roundOver) return { ok: false, reason: 'match_over' };
+
+    const m = this.mages.get(mageId);
+    if (!m) return { ok: false, reason: 'unknown_mage' };
+
+    const spell = spellFor(spellId);
+    if (!spell) return { ok: false, reason: 'unknown_card' };
+
+    const slot = m.abilities.indexOf(spell.id);
+    if (slot < 0) return { ok: false, reason: 'not_owner' };
+
+    if (!m.alive) return { ok: false, reason: 'mage_dead' };
+    // Per body rather than per squad, unlike the old `squadPetrified` gate:
+    // stone is something done to a mage, and the rest of its squad losing their
+    // kits because one of them was caught was an artefact of a team-wide bar.
+    if (hasEffect(m, 'petrify')) return { ok: false, reason: 'mage_petrified' };
+
+    if (this.arena.outOfBounds(position)) return { ok: false, reason: 'out_of_bounds' };
+    const policy = abilityPolicyFor(spell.id);
+    if (policy && m.position.distanceTo(position) > policy.range) {
+      return { ok: false, reason: 'out_of_range' };
+    }
+
+    if (m.abilityCooldowns[slot] > 0) return { ok: false, reason: 'ability_on_cooldown' };
+    if (m.abilityGcd > 0) return { ok: false, reason: 'on_gcd' };
+
+    m.abilityCooldowns[slot] = policy?.cooldown ?? 0;
+    m.abilityGcd = ABILITY_GCD;
+    this.applySpellEffect(m.team, spell, position, m.id);
+    this.recordCastFx(m.team, spell, position);
+    this.recordCast(m.team, spell.id, m.id);
+    this.onAbilityCast?.(m.id, m.team, spell.id);
+    return { ok: true };
+  }
+
+  /**
+   * Advances one mage's charges. Called from `updateMage` *after* the dead and
+   * petrified have already returned, which is what implements "as cargas
+   * daquele mago não andam" without a second liveness check.
+   */
+  private updateAbilityCooldowns(m: Mage, dt: number): void {
+    const rate =
+      (this.suddenDeath ? SUDDEN_DEATH_COOLDOWN_MULTIPLIER : 1) * this.chargeRateOf(m.team);
+    const step = dt * rate;
+    if (m.abilityGcd > 0) m.abilityGcd = decay(m.abilityGcd, dt);
+    for (let i = 0; i < m.abilityCooldowns.length; i++) {
+      if (m.abilityCooldowns[i] > 0) m.abilityCooldowns[i] = decay(m.abilityCooldowns[i], step);
+    }
+  }
+
+  /**
+   * Raises a team's recharge rate for a while — Fluxo de Mana, re-pointed.
+   *
+   * The card bought tempo with mana; with the bar gone it buys the same tempo
+   * out of the resource that replaced it. A team-level timer rather than an
+   * effect on the mages, for the reason the mana version gave: a squad wiped
+   * mid-flow should not lose an investment it had already paid for.
+   */
+  attuneCharge(team: Team, multiplier: number, duration: number): void {
+    if (multiplier <= 1 || duration <= 0) return;
+    const running = this.chargeFlow.get(team);
+    this.chargeFlow.set(team, {
+      multiplier: Math.max(multiplier, running?.multiplier ?? 0),
+      remaining: Math.max(duration, running?.remaining ?? 0),
+    });
+  }
+
+  /**
+   * Hands one mage `seconds` back off every charge it is waiting on — Tributo
+   * Obscuro, re-pointed the same way, and still paid for in its squad's blood
+   * by the `strike` rider printed on the same card.
+   */
+  refundCharge(mageId: string, seconds: number): void {
+    if (seconds <= 0) return;
+    const m = this.mages.get(mageId);
+    if (!m) return;
+    for (let i = 0; i < m.abilityCooldowns.length; i++) {
+      m.abilityCooldowns[i] = Math.max(0, m.abilityCooldowns[i] - seconds);
+    }
+  }
+
+  private chargeRateOf(team: Team): number {
+    const flow = this.chargeFlow.get(team);
+    return flow && flow.remaining > 0 ? flow.multiplier : 1;
+  }
+
+  private updateChargeFlow(dt: number): void {
+    for (const [team, flow] of this.chargeFlow) {
+      if (flow.remaining > 0) flow.remaining = decay(flow.remaining, dt);
+      else this.chargeFlow.delete(team);
+    }
+  }
+
   /* ---- Spells (GDD §5, §9) -------------------------------------------------- */
 
   /**
-   * The whole of the player's agency in one method (GDD §13): spend mana to
-   * buff an area of your own squad or curse an area of the enemy's. There is
-   * no deploy zone any more (GDD §5) — a spell lands wherever it is aimed, as
-   * long as it is inside the arena.
+   * Lands a spell for a whole side, with no economy in the way (`@internal`).
+   *
+   * Was the whole of the player's agency; v1.3 moved permission onto the body
+   * that carries the spell, so {@link castAbility} is the only door the game
+   * knocks on. What survives here is the *effect* half — the arena bounds and
+   * the application — which is what the effect tests and the dev range
+   * sessions were ever really asking for. Nothing checks a resource, because
+   * there is no longer a resource to check.
+   *
+   * @internal
    */
   castSpell(team: Team, spellId: string, position: Vec2): CastResult {
     if (this.roundOver) return { ok: false, reason: 'match_over' };
 
     const spell = spellFor(spellId);
     if (!spell) return { ok: false, reason: 'unknown_card' };
-    // Ahead of the mana check, unlike everything else: a team whose whole squad
-    // is stone has no one to channel through, and answering "not enough mana"
-    // would send the player looking at the wrong readout entirely. It is also
-    // the one rejection that is *about the opponent* — it names something they
-    // did to you rather than something you got wrong.
-    if (this.squadPetrified(team)) return { ok: false, reason: 'squad_petrified' };
-    if (this.manaOf(team) < spell.cost) return { ok: false, reason: 'not_enough_mana' };
     if (this.arena.outOfBounds(position)) return { ok: false, reason: 'out_of_bounds' };
-    // Checked last on purpose: every rejection above says something is wrong
-    // with the *request*, which the caster can act on. This one is only about
-    // timing and resolves on its own, so it is the least useful thing to hear.
-    if (this.castCooldownOf(team) > 0) return { ok: false, reason: 'on_cooldown' };
 
-    this.castCooldown.set(team, SPELL_GLOBAL_COOLDOWN);
-    this.spendMana(team, spell.cost);
-    this.applySpellEffect(team, spell, position);
+    this.applySpellEffect(team, spell, position, null);
     this.recordCastFx(team, spell, position);
     this.recordCast(team, spell.id);
     return { ok: true };
   }
 
-  /**
-   * Whether every mage this team still has standing is stone (GDD §9).
-   *
-   * The only hard lock on casting in the game. Petrificar is an area card, so
-   * this is reachable exactly when the enemy has bunched up inside one cast —
-   * which is the situation the card asks a program to wait for, and the reason
-   * it is worth four mana against two and a half seconds of protecting what it
-   * caught.
-   *
-   * Guarded on *living* mages, and false for a team with none. A squad wiped to
-   * the last man is not petrified, it is dead: blocking its casts would turn a
-   * lost fight into an unrecoverable one for a reason nothing on screen
-   * explains. The empty case matters beyond taste, too — every test that casts
-   * before summoning anybody would otherwise be vacuously locked out.
-   */
-  squadPetrified(team: Team): boolean {
-    let living = 0;
-    for (const m of this.mages.values()) {
-      if (m.team !== team || !m.alive) continue;
-      living++;
-      if (!hasEffect(m, 'petrify')) return false;
-    }
-    return living > 0;
-  }
-
-  private recordCast(team: Team, spellId: SpellId): void {
+  /** `mageId` is absent only for `castSpell`, which casts for a whole side. */
+  private recordCast(team: Team, spellId: SpellId, mageId?: string): void {
     let byTeam = this.castsBySpell.get(team);
     if (!byTeam) {
       byTeam = new Map();
       this.castsBySpell.set(team, byTeam);
     }
     byTeam.set(spellId, (byTeam.get(spellId) ?? 0) + 1);
+
+    if (mageId === undefined) return;
+    let byMage = this.castsByMage.get(mageId);
+    if (!byMage) {
+      byMage = new Map();
+      this.castsByMage.set(mageId, byMage);
+    }
+    byMage.set(spellId, (byMage.get(spellId) ?? 0) + 1);
+  }
+
+  /** How many abilities this body has spent all match. */
+  castsOf(mageId: string): number {
+    let n = 0;
+    for (const count of this.castsByMage.get(mageId)?.values() ?? []) n += count;
+    return n;
   }
 
   /** Leaves a short-lived, gameplay-free trace of the cast for clients (GDD §17). */
@@ -576,14 +629,19 @@ export class World {
    * touch the world rather than a mage. Adding a card is a `balance.json`
    * edit, and only a new *kind* of behaviour reaches code.
    */
-  private applySpellEffect(team: Team, spell: SpellCard, position: Vec2): void {
+  private applySpellEffect(
+    team: Team,
+    spell: SpellCard,
+    position: Vec2,
+    casterId: string | null,
+  ): void {
     for (const app of spell.apply) {
       const delay = app.delay ?? 0;
       if (delay > 0) {
-        this.pendingApplications.push({ team, spell, app, position, remaining: delay });
+        this.pendingApplications.push({ team, casterId, spell, app, position, remaining: delay });
         continue;
       }
-      this.applyOneApplication(team, spell, app, position);
+      this.applyOneApplication(team, spell, app, position, casterId);
     }
   }
 
@@ -608,12 +666,24 @@ export class World {
       if (pending.remaining > 0) continue;
 
       this.pendingApplications.splice(i, 1);
-      this.applyOneApplication(pending.team, pending.spell, pending.app, pending.position);
+      this.applyOneApplication(
+        pending.team,
+        pending.spell,
+        pending.app,
+        pending.position,
+        pending.casterId,
+      );
     }
   }
 
   /** One entry of a card's `apply` list, against whoever it catches right now. */
-  private applyOneApplication(team: Team, spell: SpellCard, app: SpellApplication, position: Vec2): void {
+  private applyOneApplication(
+    team: Team,
+    spell: SpellCard,
+    app: SpellApplication,
+    position: Vec2,
+    casterId: string | null,
+  ): void {
     const targets = this.spellTargets(team, spell, position);
 
     if (isEffectKind(app.effect)) {
@@ -638,7 +708,7 @@ export class World {
       }
       return;
     }
-    spellRiderFor(app.effect)?.(this, { team, spell, app, position, targets });
+    spellRiderFor(app.effect)?.(this, { team, casterId, spell, app, position, targets });
   }
 
   /**
@@ -825,8 +895,9 @@ export class World {
     if (this.roundOver) return;
 
     this.elapsed += dt;
-    this.updateMana(dt);
-    this.updateCastCooldown(dt);
+    // Before the mages are stepped, so every kit this tick recharges at the
+    // rate the flow was running at when the tick opened.
+    this.updateChargeFlow(dt);
     // Before movement, so a card that was warning about this tick catches the
     // squad where the player last saw them standing rather than a step on.
     this.updatePendingApplications(dt);
@@ -897,8 +968,16 @@ export class World {
       m.knockbackVelocity = Vec2.zero;
       m.charge = 0;
       m.state = 'petrified';
+      // Returns without advancing the kit, like the dead branch above it: stone
+      // is silence, so the charges wait with the body rather than quietly
+      // coming back while it cannot spend them.
       return;
     }
+
+    // Alive and not stone: from here the kit is charging. A stun does not stop
+    // it — being knocked down is not the same as being silenced, and a squad
+    // that lost its charges every time it was shoved would never cast at all.
+    this.updateAbilityCooldowns(m, dt);
 
     if (m.stunTimer > 0) {
       // Knockback is a decaying slide over the stun window (mirroring the

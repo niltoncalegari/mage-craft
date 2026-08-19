@@ -30,8 +30,22 @@ import {
 import { ROLE_BEHAVIOR } from '../roles';
 import type { Rng } from '../rng';
 import type { World } from '../World';
+import type { StrategyFacts } from '../abilityPolicy';
+import { buildFacts } from '../strategyFacts';
 import { prefersSquadFocus } from './focus';
+import { chooseAbility, selfFacts } from './kit';
 import { coveringTower, isOurGround, SquadPlanner, type SquadPlan } from './Squad';
+
+/**
+ * Seconds between two passes over the squad's kits (plano v1.3 §3.4).
+ *
+ * Not every tick, for the same reason `DECISION_INTERVAL` is not every tick:
+ * sixty evaluations a second is sixty chances for a hair's difference in a
+ * float to pick a different skill, and the balance harness rests on a match
+ * replaying byte-for-byte from its seed. Four a second is far quicker than the
+ * shortest cooldown in the catalog, so nothing is actually waiting on it.
+ */
+export const ABILITY_EVAL_INTERVAL = 0.25;
 
 /** Mirrors the client's easy/normal/hard AI tuning (AISystem's AI_TUNING). */
 export type Difficulty = 'easy' | 'normal' | 'hard';
@@ -348,6 +362,9 @@ export class Brain {
    */
   readonly planner = new SquadPlanner();
 
+  /** Accumulated `dt` since the last pass over the kits; see `spendKits`. */
+  private abilityTimer = 0;
+
   constructor(private readonly rng: Rng) {}
 
   private state(id: string): BotState {
@@ -388,6 +405,50 @@ export class Brain {
       const mage = w.mage(id);
       if (!mage || !mage.alive) continue;
       w.setInput(id, this.decide(w, mage, difficulty, dt, focus));
+    }
+
+    // After the inputs, so a mage casts against the same world it just decided
+    // how to move in, and on its own slower clock.
+    this.abilityTimer += dt;
+    if (this.abilityTimer >= ABILITY_EVAL_INTERVAL) {
+      this.abilityTimer -= ABILITY_EVAL_INTERVAL;
+      this.spendKits(w, bots);
+    }
+  }
+
+  /**
+   * Walks the squads once and lets each body spend one of its own abilities —
+   * what replaced the player playing a card (plano §7.1).
+   *
+   * Both sides' facts are read *before* any of them casts. Building them lazily
+   * would hand the side that happens to go second a view of the field the first
+   * side had already changed, which is a real advantage decided by nothing more
+   * than mage-id ordering. Within one pass every mage sees the same instant;
+   * the next pass is 0.25 s away.
+   */
+  private spendKits(w: World, bots: ReadonlyMap<string, Difficulty>): void {
+    const ids = sortedIds(bots.keys());
+
+    const facts = new Map<Team, StrategyFacts>();
+    for (const id of ids) {
+      const m = w.mage(id);
+      if (m && !facts.has(m.team)) {
+        facts.set(m.team, buildFacts(w, m.team, this.planner.planFor(m.team)));
+      }
+    }
+
+    for (const id of ids) {
+      const m = w.mage(id);
+      if (!m || !m.alive || m.abilities.length === 0) continue;
+
+      const f = facts.get(m.team);
+      if (!f) continue;
+
+      const intent = chooseAbility(m, f, selfFacts(m));
+      // A rejection is not worth handling: `chooseAbility` already checked
+      // everything the mage can know, and what is left — the round ending
+      // mid-pass — is the world's business rather than the squad's.
+      if (intent) w.castAbility(m.id, intent.spellId, intent.position);
     }
   }
 
