@@ -872,13 +872,13 @@ describe('Brain — roles inside the plan', () => {
  */
 describe('Brain — spending the squad’s kits', () => {
   /** Two full squads on the default map, every mage bot-driven. */
-  function contest(): { w: World; brain: Brain; bots: Map<string, Difficulty> } {
+  function contest(seed = 1): { w: World; brain: Brain; bots: Map<string, Difficulty> } {
     const w = new World();
     w.initSquad(TEAM_A, defaultSquad());
     w.initSquad(TEAM_B, defaultSquad());
     const bots = new Map<string, Difficulty>();
     for (const m of w.mages.values()) bots.set(m.id, 'normal');
-    return { w, brain: new Brain(rng()), bots };
+    return { w, brain: new Brain(new Rng(seed)), bots };
   }
 
   function run(w: World, brain: Brain, bots: Map<string, Difficulty>, seconds: number): void {
@@ -923,16 +923,36 @@ describe('Brain — spending the squad’s kits', () => {
    * The baseline the plan calls "vazio" (§4): a squad told to hold everything
    * is the closest thing v1.3 has to a player who authored nothing, and it has
    * to be visibly worse off than the default rather than merely slower.
+   *
+   * Measured *within* each match, across paired seats and four seeds — not by
+   * comparing team A's count in one 20-second match against team A's count in
+   * a different one. Those two matches are different worlds after the first
+   * second, so what that comparison reported was partly where the fighting
+   * happened to be standing at t=20, and `HOLD_GUARD` unlocks on `intruder`:
+   * any change that drags the scrap into the held side's own half hands the
+   * held squad casts it would not otherwise have spent, and at n=1 that is
+   * enough to read the dial backwards. One side holding and the other not, in
+   * the same world, cancels the trajectory; paired seats cancel the map, the
+   * same correction `agency.test.ts` already carries.
    */
   it('spends far less on a side ordered to hold than on one left at normal', () => {
-    const held = contest();
-    for (const m of held.w.mages.values()) if (m.team === TEAM_A) m.stance = 'hold';
-    run(held.w, held.brain, held.bots, 20);
+    let held = 0;
+    let free = 0;
+    for (let seed = 1; seed <= 4; seed++) {
+      for (const holdsA of [true, false]) {
+        const c = contest(seed);
+        const holder = holdsA ? TEAM_A : TEAM_B;
+        for (const m of c.w.mages.values()) if (m.team === holder) m.stance = 'hold';
+        run(c.w, c.brain, c.bots, 20);
+        held += castsOf(c.w, holder);
+        free += castsOf(c.w, holdsA ? TEAM_B : TEAM_A);
+      }
+    }
 
-    const normal = contest();
-    run(normal.w, normal.brain, normal.bots, 20);
-
-    expect(castsOf(held.w, TEAM_A)).toBeLessThan(castsOf(normal.w, TEAM_A));
+    // A floor, not the measurement: the ratio sits near 0.6-0.75 over a real
+    // sweep (n=40 sides), and asserting the ratio itself would make this a
+    // balance test that goes red every time a kit is tuned.
+    expect(held).toBeLessThan(free);
   });
 
   /**
