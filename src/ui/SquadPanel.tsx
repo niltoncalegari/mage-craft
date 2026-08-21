@@ -6,6 +6,7 @@ import type { SquadMemberView } from '../net/SnapshotSync';
 import { SQUAD_SIZE } from '../../sim/config';
 import { isRosterId, rosterFor } from '../../sim/cards';
 import { abilityPolicyFor } from '../../sim/abilityPolicy';
+import { insetFor, mergeInsets, NO_INSETS, type ViewInsets } from './hudInsets';
 import styles from './SquadPanel.module.css';
 
 /** What a mage's role means to someone reading the panel (GDD §8). */
@@ -140,7 +141,7 @@ function RowView({ refs }: { refs: RowRefs }): JSX.Element {
 
 function SideView({ refs }: { refs: SideRefs }): JSX.Element {
   return (
-    <div class={styles.panel} ref={keep(refs, 'root')}>
+    <div class={styles.panel} data-testid="squad-panel" ref={keep(refs, 'root')}>
       <div class={styles.header}>
         <button type="button" class={styles.toggle} ref={keep(refs, 'toggle')}>
           <span class={styles.headerLabel} ref={keep(refs, 'label')} />
@@ -242,6 +243,21 @@ export class SquadPanel implements GameRenderer {
     this.host.remove();
   }
 
+  /**
+   * The bands the two dashboards have taken out of `container`, for the camera
+   * to frame the arena around (see src/ui/hudInsets.ts). Docked, that is a
+   * column down each side; on a phone it is one strip along the bottom — and
+   * neither this class nor the camera has to know which, because each panel is
+   * measured where it actually landed.
+   */
+  viewInsets(container: HTMLElement): ViewInsets {
+    if (this.host.hidden) return NO_INSETS;
+    const box = container.getBoundingClientRect();
+    return mergeInsets(
+      ...this.refs.sides.map((s) => insetFor(s.root.getBoundingClientRect(), box)),
+    );
+  }
+
   private toggleSide(side: number): void {
     this.collapsed[side] = !this.collapsed[side];
     const refs = this.refs.sides[side];
@@ -319,9 +335,10 @@ export class SquadPanel implements GameRenderer {
    * difference is the kit, and it is the thing the player is being shown.
    */
   private updateCharges(refs: RowRefs, member: SquadMemberView): void {
-    const abilities = member.rosterId && isRosterId(member.rosterId)
-      ? (rosterFor(member.rosterId)?.abilities ?? [])
-      : [];
+    const abilities =
+      member.rosterId && isRosterId(member.rosterId)
+        ? (rosterFor(member.rosterId)?.abilities ?? [])
+        : [];
 
     for (const [i, charge] of refs.charges.entries()) {
       const spellId = abilities[i];

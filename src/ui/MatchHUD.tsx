@@ -7,6 +7,7 @@ import { teamFill, teamInk } from './teamInk';
 import { MATCH_DURATION, SUDDEN_DEATH_DURATION } from '../../sim/config';
 import { spellFor, type CardId, type SpellCard } from '../../sim/spells';
 import { selectorLabel } from './strategyText';
+import { insetFor, mergeInsets, NO_INSETS, type ViewInsets } from './hudInsets';
 import styles from './MatchHUD.module.css';
 
 export interface MatchHudDeps {
@@ -54,6 +55,7 @@ interface HudRefs {
   left: SideRefs;
   right: SideRefs;
   trace: HTMLElement;
+  top: HTMLElement;
   bar: HTMLElement;
 }
 
@@ -106,10 +108,16 @@ function SideView({ refs, mirrored }: { refs: SideRefs; mirrored: boolean }): JS
  * Mounted once; every leaf the per-frame update writes to comes back through
  * `refs`, so a 60fps HUD never re-renders Preact (same approach as {@link HUD}).
  */
-function MatchHudView({ refs, onToggleMute }: { refs: HudRefs; onToggleMute: () => void }): JSX.Element {
+function MatchHudView({
+  refs,
+  onToggleMute,
+}: {
+  refs: HudRefs;
+  onToggleMute: () => void;
+}): JSX.Element {
   return (
     <>
-      <div class={styles.top}>
+      <div class={styles.top} data-testid="match-top" ref={keep(refs, 'top')}>
         <SideView refs={refs.left} mirrored={false} />
         <div class={styles.clockBox}>
           <span class={styles.clock} ref={keep(refs, 'clock')} />
@@ -120,7 +128,12 @@ function MatchHudView({ refs, onToggleMute }: { refs: HudRefs; onToggleMute: () 
             minutes at a stretch, so the way to silence it cannot live behind a
             pause menu in a match that does not actually pause.
           */}
-          <button class={styles.sound} type="button" onClick={onToggleMute} ref={keep(refs, 'sound')} />
+          <button
+            class={styles.sound}
+            type="button"
+            onClick={onToggleMute}
+            ref={keep(refs, 'sound')}
+          />
         </div>
         <SideView refs={refs.right} mirrored />
       </div>
@@ -132,7 +145,7 @@ function MatchHudView({ refs, onToggleMute }: { refs: HudRefs; onToggleMute: () 
         account of what their own squad just did. The full kit readout, with a
         charge per skill, is the squad panel's job in Fase 4.
       */}
-      <div class={styles.bar} ref={keep(refs, 'bar')}>
+      <div class={styles.bar} data-testid="match-bar" ref={keep(refs, 'bar')}>
         <span class={styles.trace} ref={keep(refs, 'trace')} />
       </div>
     </>
@@ -186,7 +199,10 @@ export class MatchHUD implements GameRenderer {
     // move in the game: silencing the match is not something the program does.
     this.host.style.pointerEvents = 'none';
     container.append(this.host);
-    render(<MatchHudView refs={this.refs} onToggleMute={() => this.deps.onToggleMute()} />, this.host);
+    render(
+      <MatchHudView refs={this.refs} onToggleMute={() => this.deps.onToggleMute()} />,
+      this.host,
+    );
   }
 
   sync(alpha: number): void {
@@ -205,6 +221,20 @@ export class MatchHUD implements GameRenderer {
   dispose(): void {
     render(null, this.host);
     this.host.remove();
+  }
+
+  /**
+   * The bands this HUD has taken out of `container`, for the camera to frame
+   * the arena around (see src/ui/hudInsets.ts). The trace line reports itself
+   * too: it is a thin pill, but it is a thin pill sitting on the board.
+   */
+  viewInsets(container: HTMLElement): ViewInsets {
+    if (this.host.hidden) return NO_INSETS;
+    const box = container.getBoundingClientRect();
+    return mergeInsets(
+      insetFor(this.refs.top.getBoundingClientRect(), box),
+      insetFor(this.refs.bar.getBoundingClientRect(), box),
+    );
   }
 
   /**

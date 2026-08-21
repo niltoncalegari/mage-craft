@@ -23,6 +23,7 @@ import { EmoteBar } from '../ui/EmoteBar';
 import { MatchHUD } from '../ui/MatchHUD';
 import { Menus } from '../ui/Menus';
 import { SquadPanel } from '../ui/SquadPanel';
+import { mergeInsets, NO_INSETS, sameInsets, type ViewInsets } from '../ui/hudInsets';
 import { SnapshotSync } from './SnapshotSync';
 import type { SnapshotMsg } from './protocol';
 
@@ -61,6 +62,17 @@ const ONLINE_MAP = 'siege1.json';
 /** How far a press must travel before it counts as dragging the view, not clicking. */
 const DRAG_THRESHOLD_PX = 5;
 
+/**
+ * Frames between HUD measurements — about twice a second at 60fps. See
+ * {@link OnlineMatch.measureHud} for why this is not every frame.
+ */
+const HUD_MEASURE_FRAMES = 30;
+
+/** What {@link OnlineMatch} needs from a HUD renderer that reserves space. */
+interface HudSurface {
+  viewInsets(container: HTMLElement): ViewInsets;
+}
+
 /** Swapped in over the arena's default open-hand cursor (src/style.css) while panning the camera. */
 const GRAB_CURSOR = `url(${import.meta.env.BASE_URL}cursors/hand-grab.png) 8 8, grabbing`;
 
@@ -71,12 +83,16 @@ let mapDataPromise: Promise<MapData> | null = null;
  * every match and rematch rebuilds its arena from it.
  */
 export function loadOnlineMapData(): Promise<MapData> {
-  mapDataPromise ??= fetch(`${import.meta.env.BASE_URL}maps/${ONLINE_MAP}`).then(async (response) => {
-    if (!response.ok) {
-      throw new Error(`Failed to load online map "${ONLINE_MAP}": ${response.status} ${response.statusText}`);
-    }
-    return (await response.json()) as MapData;
-  });
+  mapDataPromise ??= fetch(`${import.meta.env.BASE_URL}maps/${ONLINE_MAP}`).then(
+    async (response) => {
+      if (!response.ok) {
+        throw new Error(
+          `Failed to load online map "${ONLINE_MAP}": ${response.status} ${response.statusText}`,
+        );
+      }
+      return (await response.json()) as MapData;
+    },
+  );
   return mapDataPromise;
 }
 
@@ -102,6 +118,14 @@ export class OnlineMatch {
   private readonly sync: SnapshotSync;
   private readonly arenaRenderer: ArenaRenderer;
   private readonly renderers: GameRenderer[];
+  /**
+   * The HUD surfaces that take part of the canvas away from the board. Empty
+   * when the match is rendered without chrome (the firing range).
+   */
+  private hudSurfaces: readonly HudSurface[] = [];
+  private hudInsets: ViewInsets = NO_INSETS;
+  /** Frames left before the next measurement; see {@link measureHud}. */
+  private insetCountdown = 0;
   private readonly settings = new Settings();
   private readonly audio: AudioManager;
   private readonly menus: Menus;
@@ -212,25 +236,28 @@ export class OnlineMatch {
      * opts out and gets the bare arena.
      */
     if (opts.chrome !== false) {
-      this.renderers.push(
-        new MatchHUD(container, this.world, {
-          getState: () => this.sync.matchState,
-          isVisible: () => !this.paused,
-          isSpectating: () => this.spectating,
-          getMySide: () => this.sync.mySide,
-          getSideName: (team) => this.teamName(team),
-          isMuted: () => this.settings.get('muted'),
-          onToggleMute: () => this.setMuted(!this.settings.get('muted')),
-        }),
-        new SquadPanel(container, {
-          getSquad: () => this.sync.squad,
-          getHighlighted: () => this.highlightedMageId,
-          getMySide: () => this.sync.mySide,
-          onSelect: (wireId) => this.watchMage(wireId),
-          isVisible: () => !this.paused,
-          getSideName: (team) => this.teamName(team),
-        }),
-      );
+      const matchHud = new MatchHUD(container, this.world, {
+        getState: () => this.sync.matchState,
+        isVisible: () => !this.paused,
+        isSpectating: () => this.spectating,
+        getMySide: () => this.sync.mySide,
+        getSideName: (team) => this.teamName(team),
+        isMuted: () => this.settings.get('muted'),
+        onToggleMute: () => this.setMuted(!this.settings.get('muted')),
+      });
+      const squadPanel = new SquadPanel(container, {
+        getSquad: () => this.sync.squad,
+        getHighlighted: () => this.highlightedMageId,
+        getMySide: () => this.sync.mySide,
+        onSelect: (wireId) => this.watchMage(wireId),
+        isVisible: () => !this.paused,
+        getSideName: (team) => this.teamName(team),
+      });
+      this.renderers.push(matchHud, squadPanel);
+      // Everything on the HUD floats over the canvas, so the camera has to be
+      // told how much of it is left. Measured rather than declared: which edge
+      // a dashboard reserves is a CSS decision that changes with the viewport.
+      this.hudSurfaces = [matchHud, squadPanel];
       if (opts.onSendEmote) {
         this.emoteBar = new EmoteBar(container, opts.onSendEmote);
       }
@@ -285,10 +312,37 @@ export class OnlineMatch {
       if (!this.paused) this.onTick?.(dt);
       this.sync.tick(dt);
       for (const r of this.renderers) r.sync(0);
+      this.measureHud(container);
       this.renderer.render();
       this.raf = requestAnimationFrame(tick);
     };
     this.raf = requestAnimationFrame(tick);
+  }
+
+  /**
+   * Re-reads how much of the canvas the HUD is standing on and hands it to the
+   * camera, which frames the arena in the rest (see src/ui/hudInsets.ts).
+   *
+   * Twice a second, not every frame: `getBoundingClientRect` forces layout, and
+   * nothing it watches moves faster than that. The bands change on a resize, on
+   * an orientation flip, when a webfont finally lands, and when a commander
+   * folds a dashboard away — all of them things a player does, none of them
+   * things that happen at 60Hz.
+   */
+  private measureHud(container: HTMLElement): void {
+    if (this.hudSurfaces.length === 0) return;
+    if (this.insetCountdown-- > 0) return;
+    this.insetCountdown = HUD_MEASURE_FRAMES;
+
+    // Whether the HUD claims its bands at all is a CSS decision — see
+    // `--hud-reserve` in src/style.css for why the docked layout declines.
+    const reserving = getComputedStyle(container).getPropertyValue('--hud-reserve').trim() === '1';
+    const next = reserving
+      ? mergeInsets(...this.hudSurfaces.map((surface) => surface.viewInsets(container)))
+      : NO_INSETS;
+    if (sameInsets(next, this.hudInsets)) return;
+    this.hudInsets = next;
+    this.renderer.setHudInsets(next);
   }
 
   setSpectating(spectating: boolean): void {
@@ -302,7 +356,12 @@ export class OnlineMatch {
 
   /** Shows a quick-react bubble over whichever side sent it — including the local player's own. */
   showEmote(playerId: string, emoteId: string): void {
-    const side = playerId === this.localPlayerId ? this.sync.mySide : this.sync.mySide === 'left' ? 'right' : 'left';
+    const side =
+      playerId === this.localPlayerId
+        ? this.sync.mySide
+        : this.sync.mySide === 'left'
+          ? 'right'
+          : 'left';
     this.emoteBar?.showBubble(side, emoteId);
   }
 
@@ -311,7 +370,15 @@ export class OnlineMatch {
     this.roundEnded = true;
     const won = this.sync.isMyTeam(winnerTeam);
     this.events.emit('RoundEnded', { winner: won ? Team.Player : Team.Enemy });
-    this.menus.showResult({ won, score: 0, rank: -1, timeSeconds: this.world.time, livesSpent: 0, difficulty: '', showScore: false });
+    this.menus.showResult({
+      won,
+      score: 0,
+      rank: -1,
+      timeSeconds: this.world.time,
+      livesSpent: 0,
+      difficulty: '',
+      showScore: false,
+    });
   }
 
   dispose(): void {
@@ -357,9 +424,7 @@ export class OnlineMatch {
    */
   private updateStatus(): void {
     this.statusEl.hidden = !this.spectating;
-    this.statusEl.textContent = this.spectating
-      ? 'Spectating — you play the next match'
-      : '';
+    this.statusEl.textContent = this.spectating ? 'Spectating — you play the next match' : '';
   }
 
   /**
