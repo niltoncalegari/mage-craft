@@ -177,6 +177,8 @@ describe('buildFacts — targets', () => {
       objective,
       rally,
       threat: null,
+      intruders: [],
+      defenderIds: [],
       anchorId: '',
       committed: false,
     });

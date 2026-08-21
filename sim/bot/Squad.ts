@@ -11,7 +11,13 @@
  * 2. **Know whether you are ahead.** Two squads that both push are in a *race*,
  *    and a race resolves — that is how a match ends. Two squads that both turn
  *    around to defend deadlock, which is the 100%-draw failure GDD §14 flags.
- *    So only the side that is *losing* the race defends.
+ *    So only the side that is *losing* the race turns the whole squad around.
+ * 3. **Answer a raider without leaving the race.** Rule 2 on its own has a hole
+ *    you can drive a match through: two squads sieging at the same pace are
+ *    both "not behind", so both keep pushing and *nobody* ever walks back to
+ *    the Tower being dismantled behind them. The posture is one word for four
+ *    mages and it cannot say "two of you go home". `chooseDefenders` can — a
+ *    detachment sized to the intrusion peels off and the rest keep pushing.
  *
  * The plan is advisory: `Brain` still scores its own actions, and a mage being
  * shot at still dodges, takes cover and runs. This only supplies the intent
@@ -31,7 +37,9 @@ import type { World } from '../World';
  *   structures are the only thing that wins.
  * - `defend` — the enemy is further along its own push than we are along ours,
  *   and it is standing in our ground. Turning around is worth more than another
- *   scratch on their Tower.
+ *   scratch on their Tower. This is the *whole* squad turning; a raider met
+ *   while we are still level is answered by `defenderIds` instead, without the
+ *   posture ever leaving `push`.
  * - `regroup` — we are outnumbered on the field. Walking in one at a time is
  *   how a deficit becomes a lost Core; fall back under our own Tower and let
  *   the respawns catch up (GDD §4 — mages always come back).
@@ -46,6 +54,19 @@ export interface SquadPlan {
   readonly rally: Vec2;
   /** The enemy deepest into our ground, and the thing `defend` answers. */
   readonly threat: Mage | null;
+  /** Every living enemy loose in our ground, nearest one of our structures first. */
+  readonly intruders: readonly Mage[];
+  /**
+   * The mages peeled off the push to answer those intruders.
+   *
+   * The posture above is one word for four mages, and that is exactly what it
+   * could not say: with both squads sieging at the same pace neither is
+   * "behind", so both keep pushing and nobody ever walks back to the Tower
+   * being taken down behind them. Turning the whole squad around loses the
+   * race; leaving it loses the Tower. This is the third answer — a piece of the
+   * squad sized to the intrusion goes home and the rest keep pushing.
+   */
+  readonly defenderIds: readonly string[];
   /**
    * The mage that is supposed to be *nearest* the objective, and therefore the
    * one its Tower shoots (`World.towerTarget` picks the closest body it can
@@ -130,13 +151,15 @@ export class SquadPlanner {
     const enemies = livingOf(w, opponentOf(team));
 
     const objective = chooseObjective(w, team, living, previous?.objective?.id ?? null);
-    const threat = deepestIntruder(w, team);
+    const intruders = intrudersOf(w, team);
+    const threat = intruders[0] ?? null;
     const posture = choosePosture(w, team, living, enemies, threat);
     const anchorId = chooseAnchor(living, objective);
     const rally = rallyPoint(w, team, objective);
     const committed = isCommitted(living, objective);
+    const defenderIds = chooseDefenders(living, intruders, posture, anchorId);
 
-    return { posture, objective, rally, threat, anchorId, committed };
+    return { posture, objective, rally, threat, intruders, defenderIds, anchorId, committed };
   }
 }
 
@@ -145,6 +168,8 @@ const IDLE_PLAN: SquadPlan = {
   objective: null,
   rally: Vec2.zero,
   threat: null,
+  intruders: [],
+  defenderIds: [],
   anchorId: '',
   committed: false,
 };
@@ -229,24 +254,129 @@ function choosePosture(
   return 'push';
 }
 
-/** The living enemy closest to any of our live structures, if one is close enough to matter. */
-function deepestIntruder(w: World, team: Team): Mage | null {
+/**
+ * Every living enemy loose in our ground, deepest first.
+ *
+ * "Deepest" is distance to the nearest structure of ours, so the mage actually
+ * hitting a Tower sorts ahead of one merely inside its range. The list is built
+ * from `livingOf`, which walks sorted ids, and the sort below is stable — two
+ * enemies at the same depth resolve by id, the same way on both servers.
+ */
+function intrudersOf(w: World, team: Team): Mage[] {
   const ours = w.structuresOf(team).filter((s) => s.alive);
-  if (ours.length === 0) return null;
+  if (ours.length === 0) return [];
 
-  let best: Mage | null = null;
-  let bestDist = HOME_RADIUS;
+  const found: { mage: Mage; depth: number }[] = [];
   for (const m of livingOf(w, opponentOf(team))) {
+    let best = Infinity;
     for (const s of ours) {
       const d = m.position.distanceTo(s.position) - s.radius;
-      if (d < bestDist) {
-        bestDist = d;
+      if (d < best) best = d;
+    }
+    if (best < HOME_RADIUS) found.push({ mage: m, depth: best });
+  }
+  found.sort((a, b) => a.depth - b.depth);
+  return found.map((f) => f.mage);
+}
+
+/* ---- the detachment ------------------------------------------------------- */
+
+/**
+ * How many mages peel off, and which.
+ *
+ * Two rules do the work:
+ *
+ * - **One defender per intruder, never more.** Sending four home to chase one
+ *   straggler is how a squad talks itself out of the race it was winning.
+ * - **Somebody always stays on the push**, so the race still resolves and the
+ *   deadlock GDD §14 warns of stays impossible. The only exception is the whole
+ *   squad already having been told to turn around: at `defend` posture the
+ *   detachment *is* the squad, because by then what is at stake is the Core.
+ *
+ * `regroup` gets nobody — that squad is walking to the rally, which sits under
+ * our own Tower, so it is already going to meet whatever followed it home.
+ */
+function chooseDefenders(
+  living: readonly Mage[],
+  intruders: readonly Mage[],
+  posture: Posture,
+  anchorId: string,
+): string[] {
+  if (intruders.length === 0 || posture === 'regroup') return [];
+
+  const able = living.filter((m) => ROLE_BEHAVIOR[m.role].attacks);
+  if (able.length === 0) return [];
+
+  const wanted =
+    posture === 'defend' ? able.length : Math.min(intruders.length, Math.max(0, able.length - 1));
+  if (wanted === 0) return [];
+
+  // Greedy pairing, deepest intruder first: each one takes the best body still
+  // unassigned. Ranking everyone against `intruders[0]` instead would send both
+  // defenders at the same raider and leave the second one taking a Tower apart
+  // unopposed — the dogpile is worse than the split it was meant to fix.
+  const chosen: string[] = [];
+  const taken = new Set<string>();
+  for (const intruder of intruders) {
+    if (chosen.length >= wanted) break;
+
+    let best: Mage | null = null;
+    let bestScore = -Infinity;
+    for (const m of able) {
+      if (taken.has(m.id)) continue;
+      const score = defenderScore(m, intruder, anchorId);
+      if (score > bestScore) {
+        bestScore = score;
         best = m;
       }
     }
+    if (!best) break;
+    taken.add(best.id);
+    chosen.push(best.id);
   }
-  return best;
+
+  // Every intruder answered and bodies still spare — at `defend` posture the
+  // squad was told to come home wholesale, so the rest follow the deepest one.
+  for (const m of able) {
+    if (chosen.length >= wanted) break;
+    if (!taken.has(m.id)) {
+      taken.add(m.id);
+      chosen.push(m.id);
+    }
+  }
+  return chosen.sort();
 }
+
+/**
+ * How good a candidate this mage is for the trip home. Higher goes first.
+ *
+ * Distance is most of it — the nearest body answers fastest, and a mage already
+ * halfway back is not giving up much push by turning. The anchor is pushed to
+ * the back of the queue: it is the one soaking the objective's Tower fire, and
+ * recalling it re-derives every other mage's standoff mid-siege (see
+ * `Brain.siegeStandoff`). Pushed back, not excluded — when the whole squad is
+ * needed the anchor comes too.
+ */
+function defenderScore(m: Mage, threat: Mage, anchorId: string): number {
+  let score = -m.position.distanceTo(threat.position);
+  if (m.id === anchorId) score -= ANCHOR_RECALL_PENALTY;
+  if (ROLE_BEHAVIOR[m.role].escorts) score -= SUPPORT_RECALL_PENALTY;
+  return score;
+}
+
+/** How much further away the anchor is treated as being, so it is recalled last. */
+const ANCHOR_RECALL_PENALTY = 1000;
+
+/**
+ * The same, for a support — but a nudge rather than a veto.
+ *
+ * Answering a raider with the healer answers it twice over: the raider is still
+ * fought by exactly one body, and the push it walked away from loses the only
+ * thing keeping the anchor standing under Tower fire. A throwing range's worth
+ * of penalty says that plainly and still lets a support that is the only body
+ * anywhere near the intrusion go and deal with it.
+ */
+const SUPPORT_RECALL_PENALTY = 8;
 
 /* ---- roles within the plan ----------------------------------------------- */
 

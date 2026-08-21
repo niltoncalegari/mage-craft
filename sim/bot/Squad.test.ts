@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultSquad } from '../cards';
 import { SIM_DT, TOWER_RANGE } from '../config';
 import { TEAM_A, TEAM_B, type Structure } from '../entities';
+import { ROLE_BEHAVIOR } from '../roles';
 import { Vec2 } from '../Vec2';
 import { World } from '../World';
 import { coveringTower, isOurGround, siegeProgress, SquadPlanner } from './Squad';
@@ -207,5 +208,125 @@ describe('siegeProgress — who is winning the race', () => {
     const w = new World();
     expect(siegeProgress(w, TEAM_A)).toBe(0);
     expect(siegeProgress(w, TEAM_B)).toBe(0);
+  });
+});
+
+describe('SquadPlanner — the detachment', () => {
+  /*
+   * The failure this answers: two squads sieging each other's Towers at the
+   * same pace are, by `choosePosture`, both "not behind", so both keep pushing
+   * and *nobody* ever walks back to a Tower being dismantled behind them. The
+   * whole-squad posture could not express it — turning the squad around loses
+   * the race, and not turning loses the Tower. So the answer is neither: a
+   * sized piece of the squad peels off and the rest keep pushing.
+   */
+  it('sends someone home to an intruder even while the squad is pushing', () => {
+    const { w, planner } = planned((w) => {
+      // Level race — neither side is behind, so posture stays `push`…
+      const raider = [...w.mages.values()].find((m) => m.team === TEAM_B && m.role === 'damage')!;
+      // …and one of B's mages is standing on A's Tower anyway.
+      raider.position = towersOf(w, TEAM_A)[0].position.add(new Vec2(2, 0));
+    });
+    planner.step(w, SIM_DT);
+    const plan = planner.planFor(TEAM_A);
+
+    expect(plan.posture).toBe('push');
+    expect(plan.defenderIds.length).toBe(1);
+  });
+
+  /*
+   * The guard that keeps this from re-introducing the deadlock the posture
+   * model was shaped to avoid. If a whole enemy squad piling into our ground
+   * could recall our whole squad, then two squads doing it to each other is
+   * four mages walking home on both sides and neither Tower ever falling.
+   */
+  it('always leaves someone on the push, however many crossed', () => {
+    const { w, planner } = planned((w) => {
+      const tower = towersOf(w, TEAM_A)[0];
+      let n = 0;
+      for (const m of w.mages.values()) {
+        if (m.team === TEAM_B) m.position = tower.position.add(new Vec2(2 + n++ * 0.5, 0));
+      }
+    });
+    planner.step(w, SIM_DT);
+    const plan = planner.planFor(TEAM_A);
+
+    const attackers = [...w.mages.values()].filter(
+      (m) => m.team === TEAM_A && m.alive && ROLE_BEHAVIOR[m.role].attacks,
+    );
+    expect(plan.intruders.length).toBeGreaterThanOrEqual(attackers.length);
+    expect(plan.defenderIds.length).toBe(attackers.length - 1);
+  });
+
+  it('recalls the anchor last — it is the one soaking the objective', () => {
+    const { w, planner } = planned((w) => {
+      const raider = [...w.mages.values()].find((m) => m.team === TEAM_B && m.role === 'damage')!;
+      raider.position = towersOf(w, TEAM_A)[0].position.add(new Vec2(2, 0));
+      // Park the tank right on top of the raider, so distance alone would
+      // elect it — and it is the anchor, so it must still be passed over.
+      const tank = [...w.mages.values()].find((m) => m.team === TEAM_A && m.role === 'tank')!;
+      tank.position = raider.position.add(new Vec2(-1, 0));
+    });
+    planner.step(w, SIM_DT);
+    const plan = planner.planFor(TEAM_A);
+
+    expect(plan.anchorId).not.toBe('');
+    expect(plan.defenderIds).not.toContain(plan.anchorId);
+  });
+
+  /*
+   * Sizing the detachment is only half of it: two defenders both walking at the
+   * *deepest* raider leaves the second one taking a Tower apart unopposed. Each
+   * intruder gets its own answer, nearest body first.
+   */
+  it('pairs each defender to an intruder rather than dogpiling the deepest', () => {
+    const w = new World();
+    const [south, north] = towersOf(w, TEAM_A);
+
+    // Two raiders, one on each of our Towers; the southern one is deeper, so
+    // it is `threat` and the naive pick would send everyone at it.
+    w.summon(TEAM_B, 'pyromancer', south.position.add(new Vec2(2, 0)));
+    w.summon(TEAM_B, 'pyromancer', north.position.add(new Vec2(3, 0)));
+
+    // Two of ours are near the southern raider, one near the northern.
+    const southA = w.summon(TEAM_A, 'pyromancer', south.position.add(new Vec2(2, 2)));
+    w.summon(TEAM_A, 'pyromancer', south.position.add(new Vec2(2, -2)));
+    const northA = w.summon(TEAM_A, 'pyromancer', north.position.add(new Vec2(3, -2)));
+
+    const planner = new SquadPlanner();
+    planner.step(w, SIM_DT);
+    const plan = planner.planFor(TEAM_A);
+
+    expect(plan.defenderIds).toEqual([southA.id, northA.id].sort());
+  });
+
+  /*
+   * A squad that answers a raider by sending its healer has answered it twice
+   * over: the raider still gets fought by one body, and the push it left loses
+   * the only thing keeping the anchor alive under Tower fire. So a support goes
+   * home only when it is the one that is meaningfully closer.
+   */
+  it('sends the damage dealer home and keeps the support on the push', () => {
+    const w = new World();
+    const home = towersOf(w, TEAM_A)[0];
+    const raider = w.summon(TEAM_B, 'pyromancer', home.position.add(new Vec2(2, 0)));
+
+    // The support is nearer the raider than the damage dealer is…
+    const support = w.summon(TEAM_A, 'cleric', raider.position.add(new Vec2(3, 0)));
+    const dealer = w.summon(TEAM_A, 'pyromancer', raider.position.add(new Vec2(6, 0)));
+    // …and a third body, so the "someone always pushes" floor leaves room for one.
+    w.summon(TEAM_A, 'pyromancer', new Vec2(8, 0));
+
+    const planner = new SquadPlanner();
+    planner.step(w, SIM_DT);
+    const plan = planner.planFor(TEAM_A);
+
+    expect(plan.defenderIds).toContain(dealer.id);
+    expect(plan.defenderIds).not.toContain(support.id);
+  });
+
+  it('leaves nobody behind when nobody has crossed', () => {
+    const { planner } = planned();
+    expect(planner.planFor(TEAM_A).defenderIds).toEqual([]);
   });
 });
