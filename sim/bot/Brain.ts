@@ -109,6 +109,14 @@ const TOWER_ESCAPE_URGE = 0.86;
 const TOWER_STANDOFF = 0.75;
 
 /**
+ * What being named to the defence is worth. Above every `siege` score — a mage
+ * that was told to come home has to outrank the push it is being pulled off,
+ * or the assignment is advice nobody takes — and below `retreat`, because a
+ * defender that dies on the way home defends nothing.
+ */
+const DEFEND_URGE = 0.9;
+
+/**
  * How far *outside* a Tower's reach a non-anchor stands while shooting it.
  *
  * A Tower measures range from its centre (`World.towerTarget`) while a siege
@@ -739,12 +747,19 @@ export class Brain {
     }
 
     /*
-     * The two plan-driven actions. `Squad.ts` has already decided *whether*
-     * the squad should be defending or falling back and applied the hysteresis
-     * that stops the two sides flip-flopping; all that is left here is to
-     * outrank a push.
+     * The two plan-driven actions. `Squad.ts` has already decided *who* should
+     * be defending and *whether* the squad should be falling back, and applied
+     * the hysteresis that stops the two sides flip-flopping; all that is left
+     * here is to outrank a push.
+     *
+     * Defence is keyed on the mage, not on the posture. The posture is one word
+     * for four mages and it could not say "two of you go home", which is how a
+     * Tower could be taken apart with its whole squad at the far end of the map
+     * — neither side was *behind*, so neither side turned around.
+     * `chooseDefenders` names the mages instead, and names all of them when the
+     * posture really is `defend`, so this still covers the case it used to.
      */
-    const defend = p.plan.posture === 'defend' && p.plan.threat ? 0.9 : 0;
+    const defend = p.plan.defenderIds.includes(bot.id) && p.plan.threat ? DEFEND_URGE : 0;
     const regroup = p.plan.posture === 'regroup' ? 0.8 : 0;
 
     // Wander is a genuine last resort: with an objective on the map there is
@@ -1005,6 +1020,12 @@ export class Brain {
    * Answer an enemy standing in our own ground. Our Towers are shooting it
    * already, so meeting it here is the one fight the AI takes on purpose: we
    * have the range support and it does not.
+   *
+   * *Which* enemy is this mage's own nearest intruder, not the squad's deepest
+   * one. The plan pairs a defender to each raider (`Squad.chooseDefenders`) and
+   * that pairing is worth nothing if every defender then walks at `threat`: the
+   * mage sent to the northern Tower would cross the map to the southern raider,
+   * past the one it was sent for.
    */
   private defend(
     w: World,
@@ -1013,7 +1034,7 @@ export class Brain {
     tune: Tuning,
     st: BotState,
   ): { move: Vec2; aim: AimPoint | null } {
-    const threat = p.plan.threat;
+    const threat = nearestIntruder(bot, p.plan);
     if (!threat) return { move: this.steerTo(w, bot, p.plan.rally, st), aim: null };
 
     const distance = bot.position.distanceTo(threat.position);
@@ -1631,6 +1652,26 @@ function findIncomingThreat(w: World, bot: Mage): Projectile | null {
     best = p;
   }
   return best;
+}
+
+/**
+ * The intruder this mage is closest to, or the plan's deepest as a fallback.
+ *
+ * Ties resolve by id — `plan.intruders` is built from a sorted walk and the
+ * comparison below is strictly less-than, so two servers pick the same body.
+ */
+function nearestIntruder(bot: Mage, plan: SquadPlan): Mage | null {
+  let best: Mage | null = null;
+  let bestDist = Infinity;
+  for (const m of plan.intruders) {
+    if (!m.alive) continue;
+    const d = bot.position.distanceTo(m.position);
+    if (d < bestDist) {
+      bestDist = d;
+      best = m;
+    }
+  }
+  return best ?? plan.threat;
 }
 
 /**

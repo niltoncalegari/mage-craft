@@ -690,6 +690,63 @@ describe('Brain — strategy', () => {
     expect(brain.states.get(bot.id)?.last.action).toBe('siege');
   });
 
+  /*
+   * The bug this closes: with both squads sieging at the same pace neither is
+   * "behind", so `choosePosture` left both on `push` and a raider could take a
+   * Tower apart with the whole squad that owned it standing at the far end of
+   * the map. The squad does not turn around — one mage does.
+   */
+  it('peels one mage off the push to answer a raider on our own Tower', () => {
+    const { w, objective } = oneObjectiveWorld();
+    const home = w.structuresOf(TEAM_A).filter((s) => s.kind === 'tower' && s.alive)[0];
+
+    // One of ours working the enemy Tower from outside its range…
+    const pusher = w.summon(TEAM_A, 'pyromancer', objective.position.add(new Vec2(-9.6, 0)));
+    // …and one further back, the natural answer to what is happening at home.
+    const nearHome = w.summon(TEAM_A, 'pyromancer', home.position.add(new Vec2(12, 0)));
+    // The raider, chewing on our Tower while the race is otherwise level.
+    w.summon(TEAM_B, 'pyromancer', home.position.add(new Vec2(2, 0)));
+
+    const brain = runBrain(w, 1, [pusher.id, nearHome.id]);
+
+    // The squad is still pushing — that is the whole point of the split.
+    expect(brain.planner.planFor(TEAM_A).posture).toBe('push');
+    expect(brain.states.get(nearHome.id)?.last.action).toBe('defend');
+    expect(brain.states.get(pusher.id)?.last.action).toBe('siege');
+  });
+
+  /*
+   * The plan pairs each defender to an intruder; this is that pairing surviving
+   * into the mage's own hands. Aiming at `plan.threat` instead means the mage
+   * sent to the northern Tower walks the length of the map to the southern
+   * raider, past the one it was sent for.
+   */
+  it('a defender answers the intruder nearest it, not the deepest one', () => {
+    const w = new World();
+    const [south, north] = w
+      .structuresOf(TEAM_A)
+      .filter((s) => s.kind === 'tower' && s.alive);
+
+    // The southern raider is deeper, so it is the plan's `threat`…
+    const deep = w.summon(TEAM_B, 'pyromancer', south.position.add(new Vec2(2, 0)));
+    // …but this is the one in our northern defender's face.
+    const near = w.summon(TEAM_B, 'pyromancer', north.position.add(new Vec2(3, 0)));
+
+    w.summon(TEAM_A, 'pyromancer', south.position.add(new Vec2(2, 2)));
+    const northA = w.summon(TEAM_A, 'pyromancer', north.position.add(new Vec2(3, -2)));
+    const pusher = w.summon(TEAM_A, 'pyromancer', new Vec2(8, 0));
+
+    const brain = runBrain(w, 1, [northA.id, pusher.id]);
+
+    expect(brain.planner.planFor(TEAM_A).threat?.id).toBe(deep.id);
+    expect(brain.states.get(northA.id)?.last.action).toBe('defend');
+    // Charging at all is the signal: the deep raider is 14 units away, well out
+    // of ENGAGE_RANGE, so a mage still pointed at `plan.threat` throws nothing.
+    const input = w.mage(northA.id)!.input;
+    expect(input.charging).toBe(true);
+    expect(input.aim.distanceTo(near.position)).toBeLessThan(2);
+  });
+
   it('stops and fights an enemy defending the structure it came to break', () => {
     const { w, objective } = oneObjectiveWorld();
     // Just outside the Tower's reach, where a damage dealer belongs…
