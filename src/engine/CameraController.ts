@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Arena } from '../game/types';
+import { NO_INSETS, type ViewInsets } from '../ui/hudInsets';
 import { ShakeRig } from './ShakeRig';
 
 /**
@@ -49,6 +50,20 @@ export class CameraController {
   private zoomTarget = 0;
   private aspect = 1;
   private arena: Arena | null = null;
+  /**
+   * The share of the canvas the HUD has taken, per edge, as a fraction of the
+   * canvas. Set by {@link setInsets}; zero everywhere until something asks.
+   */
+  private insets: ViewInsets = NO_INSETS;
+  /**
+   * Where the framed arena sits relative to the canvas centre, in gameplay
+   * coords. Derived from {@link insets} in {@link applyFrustum} and applied in
+   * {@link applyPosition} — deliberately *not* folded into `focus`, which is
+   * the gameplay point the view is following and what `getView` and the arena
+   * clamps are written against.
+   */
+  private offsetX = 0;
+  private offsetZ = 0;
   private halfW = 10;
   private halfH = 10;
   private readonly focus = new THREE.Vector3(0, 0, 0);
@@ -89,6 +104,22 @@ export class CameraController {
   resize(aspect: number): void {
     this.aspect = aspect;
     if (this.arena) this.applyFrustum();
+  }
+
+  /**
+   * Reserves part of the canvas for the HUD, as a fraction of the canvas on
+   * each edge, so the arena is framed in what is left rather than under it.
+   *
+   * The canvas itself is untouched — it still fills the viewport and still
+   * draws sky to the corners. Only the board moves, which is the point: glass
+   * panels over sky look like glass panels, and glass panels over a Tower look
+   * like a bug.
+   */
+  setInsets(insets: ViewInsets): void {
+    this.insets = insets;
+    if (!this.arena) return;
+    this.applyFrustum();
+    this.applyPosition();
   }
 
   /**
@@ -141,11 +172,7 @@ export class CameraController {
   update(target: { x: number; y: number } | null): void {
     this.animateZoom();
     this.shake.update(RENDER_DT);
-    this.desired.set(
-      (target?.x ?? 0) + this.panOffset.x,
-      0,
-      (target?.y ?? 0) + this.panOffset.y,
-    );
+    this.desired.set((target?.x ?? 0) + this.panOffset.x, 0, (target?.y ?? 0) + this.panOffset.y);
     this.clampToArena(this.desired);
 
     if (this.panSnap) {
@@ -170,8 +197,7 @@ export class CameraController {
     const beforeZ = this.halfH / Math.sin(this.tilt);
 
     const diff = this.zoomTarget - this.zoomT;
-    this.zoomT =
-      Math.abs(diff) < 1e-4 ? this.zoomTarget : this.zoomT + diff * this.zoomLerp;
+    this.zoomT = Math.abs(diff) < 1e-4 ? this.zoomTarget : this.zoomT + diff * this.zoomLerp;
     this.applyFrustum();
 
     this.holdAnchorUnderCursor(beforeX, beforeZ);
@@ -205,8 +231,8 @@ export class CameraController {
   /** The visible ground rectangle in gameplay coords (for the minimap viewport). */
   getView(): CameraView {
     return {
-      x: this.focus.x,
-      y: this.focus.z,
+      x: this.focus.x + this.offsetX,
+      y: this.focus.z + this.offsetZ,
       halfX: this.halfW,
       halfY: this.halfH / Math.sin(this.tilt),
     };
@@ -224,32 +250,57 @@ export class CameraController {
   private applyPosition(): void {
     const offY = Math.sin(this.tilt) * this.distance;
     const offZ = Math.cos(this.tilt) * this.distance;
-    this.camera.position.set(
-      this.focus.x + this.shake.offsetX,
-      offY + this.shake.offsetY,
-      this.focus.z + offZ,
-    );
-    this.camera.lookAt(this.focus.x, 0, this.focus.z);
+    // The HUD offset moves the eye and its aim by the same amount, so it pans
+    // the view without tilting it — unlike the shake, which moves only the eye.
+    const x = this.focus.x + this.offsetX;
+    const z = this.focus.z + this.offsetZ;
+    this.camera.position.set(x + this.shake.offsetX, offY + this.shake.offsetY, z + offZ);
+    this.camera.lookAt(x, 0, z);
   }
 
+  /**
+   * Sizes the frustum, and offsets it by whatever the HUD has reserved.
+   *
+   * With no insets this is the plain fit it always was. With them, the arena is
+   * fitted to the *free* rectangle — hence `freeAspect`, which is the canvas
+   * aspect skewed by how much of each dimension survives — and then the frustum
+   * is scaled back up by `1 / freeW` so that free rectangle occupies its real
+   * share of a canvas that still spans the whole viewport. Dividing by `freeW`
+   * on the width alone is enough for both axes: the ortho frustum's own aspect
+   * has to stay the canvas aspect, so the height follows from it.
+   */
   private applyFrustum(): void {
     const arena = this.arena;
     if (!arena) return;
     const aspect = this.aspect;
 
+    const freeW = Math.max(0.1, 1 - this.insets.left - this.insets.right);
+    const freeH = Math.max(0.1, 1 - this.insets.top - this.insets.bottom);
+    const freeAspect = aspect * (freeW / freeH);
+
     // Min zoom: the half-width that fits the whole arena for this aspect (depth
     // is foreshortened by the tilt). Max zoom: the close follow width.
-    const fitHalfW = Math.max(
-      arena.width / 2,
-      (arena.height / 2) * Math.sin(this.tilt) * aspect,
-    ) * this.fitMargin;
+    const fitHalfW =
+      Math.max(arena.width / 2, (arena.height / 2) * Math.sin(this.tilt) * freeAspect) *
+      this.fitMargin;
     const tightHalfW = Math.min(this.maxZoomWidth / 2, fitHalfW);
 
-    const halfW = THREE.MathUtils.lerp(fitHalfW, tightHalfW, this.zoomT);
+    const halfW = THREE.MathUtils.lerp(fitHalfW, tightHalfW, this.zoomT) / freeW;
     const halfH = halfW / aspect;
 
     this.halfW = halfW;
     this.halfH = halfH;
+
+    /*
+     * Slide the board into the middle of the free rectangle. A HUD band on the
+     * left pushes the board right, which means the camera moves left — hence
+     * the negation. The vertical one is divided by sin(tilt) because a step
+     * across the ground is foreshortened by the tilt before it reaches the
+     * screen, and what has to end up centred is the screen distance.
+     */
+    this.offsetX = -(this.insets.left - this.insets.right) * halfW;
+    this.offsetZ = -((this.insets.top - this.insets.bottom) * halfH) / Math.sin(this.tilt);
+
     this.camera.left = -halfW;
     this.camera.right = halfW;
     this.camera.top = halfH;

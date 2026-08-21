@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CameraController } from './CameraController';
 import type { Arena } from '../game/types';
+import { NO_INSETS, type ViewInsets } from '../ui/hudInsets';
 
 /**
  * Owns the Three.js scene, WebGL renderer, camera and lighting (design §8).
@@ -19,6 +20,8 @@ export class Renderer {
   private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly ndc = new THREE.Vector2();
   private readonly hit = new THREE.Vector3();
+  /** HUD bands in CSS pixels; kept here so a resize can re-derive fractions. */
+  private hudInsets: ViewInsets = NO_INSETS;
 
   constructor(private readonly container: HTMLElement) {
     this.webgl = new THREE.WebGLRenderer({ antialias: true });
@@ -46,6 +49,29 @@ export class Renderer {
   /** Frames the camera on the arena once it is loaded. */
   frameArena(arena: Arena): void {
     this.cameraController.fit(arena, this.aspect());
+    this.applyHudInsets();
+  }
+
+  /**
+   * Tells the camera how much of the canvas the HUD has taken, in CSS pixels
+   * per edge, so the arena is framed in the hole rather than behind the panels.
+   * Pixels rather than fractions because that is what the HUD can measure, and
+   * because they have to be re-divided by the canvas on every resize.
+   */
+  setHudInsets(insets: ViewInsets): void {
+    this.hudInsets = insets;
+    this.applyHudInsets();
+  }
+
+  private applyHudInsets(): void {
+    const w = Math.max(1, this.container.clientWidth);
+    const h = Math.max(1, this.container.clientHeight);
+    this.cameraController.setInsets({
+      top: this.hudInsets.top / h,
+      right: this.hudInsets.right / w,
+      bottom: this.hudInsets.bottom / h,
+      left: this.hudInsets.left / w,
+    });
   }
 
   /** Sets the follow-camera target provider (returns gameplay coords or null). */
@@ -92,6 +118,7 @@ export class Renderer {
     const h = this.container.clientHeight;
     this.webgl.setSize(w, h);
     this.cameraController.resize(this.aspect());
+    this.applyHudInsets();
   };
 
   /**
