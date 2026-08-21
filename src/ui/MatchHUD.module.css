@@ -6,20 +6,20 @@
   justify-content: center;
   left: 50%;
   position: absolute;
-  top: 10px;
+  top: calc(10px + var(--hud-safe-top));
   transform: translateX(-50%);
-  width: min(760px, calc(100% - 24px));
+  /* The notch is on a *side* when a phone is held landscape, not on top, so
+     what the top bar owes the safe area is width, not headroom. */
+  width: min(760px, calc(100% - 24px - var(--hud-safe-left) - var(--hud-safe-right)));
 }
 
 /*
  * The pane every readout sits on. Tokens are shared with SquadPanel (see
- * src/style.css) so the top bar, the card bar and the side dashboards are
+ * src/style.css) so the top bar, the trace line and the squad dashboards are
  * plainly the same sheet of glass rather than three lookalike panels.
  */
 .side,
-.clockBox,
-.nextBox,
-.manaBox {
+.clockBox {
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   background: linear-gradient(158deg, var(--glass-tint-lit), var(--glass-tint) 58%);
@@ -158,6 +158,7 @@
   margin-top: 3px;
   padding: 2px 8px;
   pointer-events: auto;
+  position: relative;
   text-transform: uppercase;
 }
 
@@ -171,16 +172,23 @@
   color: var(--copper);
 }
 
-/* ---- bottom command bar ------------------------------------------------- */
+/* ---- bottom trace line -------------------------------------------------- */
 
+/*
+ * Rides above whatever the squad dashboards reserve along the bottom edge:
+ * nothing on a desktop, where they dock to the sides, and the height of the
+ * squad strip on a phone. `--hud-strip-h` is declared in src/style.css because
+ * this is a separate Preact root from SquadPanel and cannot measure it.
+ */
 .bar {
   align-items: center;
-  bottom: 12px;
+  bottom: calc(var(--hud-strip-h) + 12px + var(--hud-safe-bottom));
   display: flex;
   flex-direction: column;
   font-family: 'Segoe UI', system-ui, sans-serif;
   gap: 6px;
   left: 50%;
+  max-width: calc(100% - 24px - var(--hud-safe-left) - var(--hud-safe-right));
   position: absolute;
   transform: translateX(-50%);
 }
@@ -190,10 +198,10 @@
 }
 
 /*
- * The trace: which of the player's own rules last cast. It sits where the
+ * The trace: which of the player's own kits last fired. It sits where the
  * "pick a card and click" hint used to, because it answers the same question
  * that hint did — what do I do now — for a game where the answer is "nothing,
- * watch your program work".
+ * watch your squad work".
  */
 .trace {
   -webkit-backdrop-filter: blur(14px) saturate(150%);
@@ -204,184 +212,94 @@
   color: #f2f7fc;
   font-size: 11px;
   font-weight: 700;
-  padding: 3px 12px;
-}
-
-.barRow {
-  align-items: stretch;
-  display: flex;
-  gap: 10px;
-}
-
-.nextBox {
-  align-items: flex-start;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  justify-content: center;
-  padding: 8px 10px;
-  width: 96px;
-}
-
-.nextLabel {
-  color: var(--glass-ink-soft);
-  font-size: 9px;
-  font-weight: 900;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
-}
-
-.nextName {
-  font-size: 11px;
-  font-weight: 900;
-  line-height: 1.2;
-}
-
-.hand {
-  display: flex;
-  gap: 8px;
-}
-
-.card {
-  -webkit-backdrop-filter: var(--glass-blur);
-  align-items: flex-start;
-  backdrop-filter: var(--glass-blur);
-  background: linear-gradient(158deg, rgba(255, 255, 255, 0.38), var(--glass-tint) 62%);
-  border: 1px solid var(--glass-edge);
-  border-radius: 14px;
-  box-shadow: var(--glass-specular), var(--glass-shadow);
-  color: var(--glass-ink);
-  display: flex;
-  flex-direction: column;
-  font: inherit;
-  gap: 2px;
-  padding: 8px 10px 6px;
-  position: relative;
-  text-align: left;
-  text-shadow: var(--glass-halo);
-  /* Only the greying transitions now — nothing here lifts under a cursor,
-     because nothing here is pressable since the idle pivot. */
-  transition: filter 90ms ease, opacity 90ms ease;
-  width: 104px;
-}
-
-.card[hidden] {
-  display: none;
-}
-
-/* Not a refusal — a readout. It says the bank is short, which is the usual
-   answer to "why has my rule gone quiet?". */
-.cardBroke {
-  filter: grayscale(0.65);
-  opacity: 0.55;
-}
-
-.cardCost {
-  background: #3d7bb8;
-  border-radius: 999px;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 20px;
-  text-align: center;
-  width: 20px;
-}
-
-.cardName {
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 1.15;
-}
-
-.cardRole {
-  color: var(--glass-ink-soft);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.manaBox {
-  align-items: center;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  justify-content: center;
-  padding: 8px 10px;
-  width: 74px;
-}
-
-.manaMeter {
-  background: var(--glass-track);
-  border-radius: 999px;
-  box-shadow: inset 0 1px 2px rgba(11, 24, 41, 0.25);
-  height: 12px;
+  max-width: 100%;
   overflow: hidden;
-  width: 100%;
+  padding: 3px 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.manaFill {
-  background: linear-gradient(90deg, #4aa3ff, #9b6bff);
-  border-radius: inherit;
-  height: 100%;
-  transition: width 120ms linear;
-  width: 0;
-}
-
-.manaText {
-  font-size: 12px;
-  font-weight: 900;
-}
-
-@media (max-width: 620px) {
+/*
+ * ---- phone --------------------------------------------------------------
+ *
+ * Gate explained in src/style.css, where `--hud-strip-h` and the safe-area
+ * tokens are declared. Everything here is about giving the arena back the
+ * middle of a 393px-tall viewport: the top bar tightens up and moves to the
+ * edge, and the trace line thins out so the band it and the squad strip share
+ * along the bottom stays under a quarter of the screen.
+ */
+@media (pointer: coarse) and (max-width: 960px), (max-height: 480px), (max-width: 620px) {
   .top {
     gap: 6px;
-    top: 8px;
+    top: calc(var(--hud-edge) + var(--hud-safe-top));
   }
 
-  .card {
-    padding: 6px 8px;
-    width: 84px;
+  /*
+   * Everything below is the top bar on a diet, and the diet is the point: on a
+   * 393px-tall viewport this bar was 65px, and every pixel of it is a pixel the
+   * camera has to give up to frame the board under it (see hudInsets.ts).
+   */
+  .side {
+    gap: 2px;
+    padding: 3px 8px;
   }
 
-  .nextBox {
-    display: none;
+  .sideLabel {
+    font-size: 11px;
+  }
+
+  .sideRole {
+    font-size: 8px;
+  }
+
+  .coreMeter {
+    height: 12px;
+  }
+
+  .coreText {
+    font-size: 9px;
+    line-height: 12px;
+  }
+
+  .towers {
+    font-size: 9px;
+    letter-spacing: 1px;
+  }
+
+  .clockBox {
+    padding: 2px 10px;
+  }
+
+  .clock {
+    font-size: 16px;
+  }
+
+  .phase {
+    font-size: 9px;
+  }
+
+  .sound {
+    font-size: 8px;
+    margin-top: 1px;
+    padding: 1px 6px;
+  }
+
+  .trace {
+    font-size: 10px;
+    padding: 2px 10px;
   }
 }
 
 /*
- * A phone in landscape is wide but short (~380-430px tall) — the width-only
- * query above does nothing for that case. Pulls the top bar and bottom bar
- * both toward the edges and shrinks their own padding so the 3D viewport in
- * between keeps a usable amount of room.
+ * A fingertip needs a bigger target than a cursor. The mute toggle is a 19px
+ * strip of text hanging under the clock, and growing it to 44px would push the
+ * top bar that much further down the board — so the *hit area* grows instead
+ * of the button, which is what the guideline is actually about.
  */
-@media (max-height: 480px) {
-  .top {
-    top: 4px;
-  }
-
-  .side {
-    padding: 4px 8px;
-  }
-
-  .clockBox {
-    padding: 3px 10px;
-  }
-
-  .clock {
-    font-size: 18px;
-  }
-
-  .bar {
-    bottom: 4px;
-    gap: 3px;
-  }
-
-  .card {
-    padding: 5px 8px 4px;
-  }
-
-  .nextBox,
-  .manaBox {
-    padding: 5px 8px;
+@media (pointer: coarse) {
+  .sound::after {
+    content: '';
+    inset: -13px -12px;
+    position: absolute;
   }
 }
-

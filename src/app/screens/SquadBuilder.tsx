@@ -38,7 +38,9 @@ function kitNames(abilities: readonly SpellId[]): string {
  */
 export function SquadBuilder(props: { onSaved?: () => void } = {}): JSX.Element {
   const [squad, setSquad] = useState<RosterId[]>(() => loadLoadout().squad);
-  const [stances, setStances] = useState<Partial<Record<RosterId, Stance>>>(() => loadLoadout().stances);
+  const [stances, setStances] = useState<Partial<Record<RosterId, Stance>>>(
+    () => loadLoadout().stances,
+  );
   const [filter, setFilter] = useState<RoleFilter>('all');
   const [saved, setSaved] = useState(false);
 
@@ -76,8 +78,8 @@ export function SquadBuilder(props: { onSaved?: () => void } = {}): JSX.Element 
   return (
     <div>
       <p class={appStyles.panelHint}>
-        Four mages, all three roles, no duplicates. Each one carries its own kit and spends it itself — the
-        stance is how hard you let it.
+        Four mages, all three roles, no duplicates. Each one carries its own kit and spends it
+        itself — the stance is how hard you let it.
       </p>
 
       <div class={styles.slots}>
@@ -97,7 +99,11 @@ export function SquadBuilder(props: { onSaved?: () => void } = {}): JSX.Element 
             <div
               key={entry.id}
               class={`${styles.slot} ${styles.slotFilled} ${styles.slotBody}`}
-              style={{ '--element-color': toCssColor(getElement(entry.element).color) } as JSX.CSSProperties}
+              style={
+                {
+                  '--element-color': toCssColor(getElement(entry.element).color),
+                } as JSX.CSSProperties
+              }
             >
               <div class={styles.slotTop}>
                 <span class={styles.slotName}>{entry.name}</span>
@@ -109,7 +115,11 @@ export function SquadBuilder(props: { onSaved?: () => void } = {}): JSX.Element 
                   <button
                     type="button"
                     key={s}
-                    class={s === stance ? `${styles.stanceBtn} ${styles.stanceBtnActive}` : styles.stanceBtn}
+                    class={
+                      s === stance
+                        ? `${styles.stanceBtn} ${styles.stanceBtnActive}`
+                        : styles.stanceBtn
+                    }
                     title={STANCE_HINT[s]}
                     onClick={() => setStance(entry.id, s)}
                   >
@@ -147,21 +157,30 @@ export function SquadBuilder(props: { onSaved?: () => void } = {}): JSX.Element 
             <button
               type="button"
               key={id}
+              data-testid="roster-card"
               class={picked ? `${styles.card} ${styles.cardPicked}` : styles.card}
-              style={{ '--element-color': toCssColor(getElement(entry.element).color) } as JSX.CSSProperties}
+              style={
+                {
+                  '--element-color': toCssColor(getElement(entry.element).color),
+                } as JSX.CSSProperties
+              }
               disabled={picked || full}
               onClick={() => add(id)}
             >
               <div class={styles.cardHead}>
                 <h4 class={styles.cardName}>{entry.name}</h4>
-                <span class={picked ? `${appStyles.badge} ${appStyles.badgeTeal}` : appStyles.badge}>
+                <span
+                  class={picked ? `${appStyles.badge} ${appStyles.badgeTeal}` : appStyles.badge}
+                >
                   {picked ? 'In squad' : entry.role}
                 </span>
               </div>
               <p class={styles.cardMeta}>
                 {entry.health} HP · {entry.moveSpeed} speed · {getElement(entry.element).name}
                 {entry.healPerSecond ? <> · heals {entry.healPerSecond}/s</> : null}
-                {entry.auraChargeBonus ? <> · +{Math.round(entry.auraChargeBonus * 100)}% ally charge</> : null}
+                {entry.auraChargeBonus ? (
+                  <> · +{Math.round(entry.auraChargeBonus * 100)}% ally charge</>
+                ) : null}
               </p>
               <p class={styles.cardMeta}>{kitNames(entry.abilities)}</p>
             </button>
@@ -172,7 +191,9 @@ export function SquadBuilder(props: { onSaved?: () => void } = {}): JSX.Element 
       <div class={styles.saveBar}>
         {validation.ok ? (
           <span class={saved ? styles.saveState : styles.saveHint}>
-            {saved ? 'Squad saved — it ships with your next match.' : 'Legal squad. Save to bring it.'}
+            {saved
+              ? 'Squad saved — it ships with your next match.'
+              : 'Legal squad. Save to bring it.'}
           </span>
         ) : (
           <span class={appStyles.error}>{validation.reason}</span>
@@ -187,7 +208,12 @@ export function SquadBuilder(props: { onSaved?: () => void } = {}): JSX.Element 
         >
           Clear
         </button>
-        <button type="button" class={`${appStyles.btn} ${appStyles.btnTeal}`} disabled={!validation.ok} onClick={save}>
+        <button
+          type="button"
+          class={`${appStyles.btn} ${appStyles.btnTeal}`}
+          disabled={!validation.ok}
+          onClick={save}
+        >
           Save squad
         </button>
       </div>

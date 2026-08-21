@@ -42,7 +42,9 @@ canvas {
   /* The pointer over the arena is a hand, not an arrow — it's a stand-in
      for reaching into the fight, not a UI cursor. Swapped for a fist
      mid-drag by OnlineMatch's camera-pan handler. */
-  cursor: url('/cursors/hand-open.png') 8 8, pointer;
+  cursor:
+    url('/cursors/hand-open.png') 8 8,
+    pointer;
   display: block;
 }
 
@@ -64,8 +66,8 @@ canvas {
   --glass-edge: rgba(255, 255, 255, 0.45);
   /* Bright hairline along the top edge, dim one along the bottom: the single
      strongest cue that a surface is a pane rather than a painted rectangle. */
-  --glass-specular: inset 0 1px 0 rgba(255, 255, 255, 0.75),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.18);
+  --glass-specular:
+    inset 0 1px 0 rgba(255, 255, 255, 0.75), inset 0 -1px 0 rgba(255, 255, 255, 0.18);
   --glass-shadow: 0 10px 30px rgba(11, 24, 41, 0.28);
   /* Inset panels (rows, meters) — a second, thinner sheet on the first. */
   --glass-inset: rgba(255, 255, 255, 0.16);
@@ -75,4 +77,81 @@ canvas {
   --glass-ink: #14212e;
   --glass-ink-soft: #3f556c;
   --glass-halo: 0 1px 2px rgba(255, 255, 255, 0.65);
+}
+
+/*
+ * Where the in-match HUD is allowed to be.
+ *
+ * Two things live here rather than in a module because MatchHUD and SquadPanel
+ * have to agree on them: they are separate Preact roots in separate hosts, so
+ * neither can measure the other, and the trace line has to know how tall the
+ * squad strip is to sit above it.
+ *
+ * `--hud-strip-h` is 0 on a desktop, where the dashboards dock to the sides
+ * and nothing is reserved along the bottom. On a phone it is the height of the
+ * squad strip — see the phone block in SquadPanel.module.css.
+ */
+:root {
+  --hud-strip-h: 0px;
+  /*
+   * 1 when the HUD's bands are taken off the camera's framing, 0 when it is
+   * allowed to float over the board.
+   *
+   * The docked layout deliberately floats. Its panels are glass and
+   * collapsible precisely because covering a lane was the accepted price of
+   * keeping the dashboards beside the fight, and a desktop has the room for
+   * that: making the camera honour them would shrink an 1280px board to the
+   * 836px between them and strand the difference as empty sky. The phone strip
+   * is the opposite case — the bands are small, the board has nowhere to go,
+   * and floating is what made the HUD unreadable in the first place.
+   */
+  --hud-reserve: 0;
+  /* Distance from the HUD to the viewport edge, before the notch is counted. */
+  --hud-edge: 8px;
+  --hud-safe-top: env(safe-area-inset-top, 0px);
+  --hud-safe-right: env(safe-area-inset-right, 0px);
+  --hud-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --hud-safe-left: env(safe-area-inset-left, 0px);
+}
+
+/*
+ * The phone gate, repeated verbatim in MatchHUD.module.css and
+ * SquadPanel.module.css. Three arms, and each one is load-bearing:
+ *
+ * - `(pointer: coarse) and (max-width: 960px)` is the real case. It catches a
+ *   phone in either orientation, including a Pro Max held landscape at 932px,
+ *   and stops short of a tablet (1024px and up), which has room for the docked
+ *   layout. It also catches a phone held *portrait*: `.force-landscape` below
+ *   rotates the app with a transform, so media queries still see the physical
+ *   393x852 viewport, not the 852x393 box the player is looking at.
+ * - `(max-height: 480px)` is a desktop window squashed flat, which has exactly
+ *   the same problem for exactly the same reason.
+ * - `(max-width: 620px)` is a desktop window squeezed narrow — this used to be
+ *   the only arm, which is why nothing ever fired on an 852px-wide phone.
+ */
+@media (pointer: coarse) and (max-width: 960px), (max-height: 480px), (max-width: 620px) {
+  :root {
+    --hud-strip-h: 56px;
+    --hud-edge: 6px;
+    --hud-reserve: 1;
+  }
+}
+
+/*
+ * `.force-landscape` rotates the whole app 90°, which scrambles the safe-area
+ * insets: they are reported against the *physical* screen, so the notch the
+ * browser calls "top" is along the app's left edge once the transform lands.
+ *
+ * With `transform: rotate(90deg) translateY(-100%)` and a top-left origin, a
+ * point (x, y) in the app's own box lands at (H - y, x) on screen, where H is
+ * the app's height. So the app's left edge maps to the screen's top, its bottom
+ * to the screen's left, its top to the screen's right, and its right to the
+ * screen's bottom — which is the rotation applied below. Without it the home
+ * indicator's inset would be padding the wrong side of the HUD.
+ */
+#app.force-landscape {
+  --hud-safe-top: env(safe-area-inset-right, 0px);
+  --hud-safe-right: env(safe-area-inset-bottom, 0px);
+  --hud-safe-bottom: env(safe-area-inset-left, 0px);
+  --hud-safe-left: env(safe-area-inset-top, 0px);
 }

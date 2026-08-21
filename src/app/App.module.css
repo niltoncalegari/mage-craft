@@ -32,7 +32,12 @@
 
 .vignette {
   background:
-    radial-gradient(ellipse at 50% 40%, transparent 20%, rgba(4, 8, 12, 0.55) 70%, rgba(4, 8, 12, 0.88) 100%),
+    radial-gradient(
+      ellipse at 50% 40%,
+      transparent 20%,
+      rgba(4, 8, 12, 0.55) 70%,
+      rgba(4, 8, 12, 0.88) 100%
+    ),
     linear-gradient(180deg, rgba(4, 8, 12, 0.15), rgba(4, 8, 12, 0.55));
   inset: 0;
   pointer-events: none;
@@ -68,7 +73,9 @@
   letter-spacing: 0.06em;
   line-height: 0.95;
   margin: 0;
-  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.55), 0 18px 40px rgba(62, 207, 191, 0.18);
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.55),
+    0 18px 40px rgba(62, 207, 191, 0.18);
 }
 
 .tag {
@@ -111,7 +118,9 @@
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 16px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
   padding: clamp(18px, 3vw, 28px);
 }
 
@@ -125,6 +134,65 @@
 .panelNarrow {
   margin: auto;
   width: min(420px, calc(100% - 24px));
+}
+
+/* ---- Home ---- */
+
+/*
+ * Home is the one screen that is a *page* rather than a dialog, and it was
+ * wearing `.panelWide`'s 920px measure like everything else: on a 1512px
+ * window that left ~40% of the screen as background and turned the whole thing
+ * into one phone-shaped column you scrolled for a minute to reach the ranking.
+ * The lobby and the forms keep the 920 — a dialog with two team columns has
+ * nothing to do with more room. Home does.
+ */
+.homeWide {
+  max-height: min(94vh, 1100px);
+  width: min(1440px, calc(100% - 48px));
+}
+
+/*
+ * One column until there is genuinely room for two, and the rail is last in the
+ * DOM so that column reads dashboard → loadout → ranking on a phone. Past the
+ * breakpoint the ranking lifts out into a rail beside the builder and stays put
+ * while the builder scrolls under it.
+ */
+.homeBody {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.homeMain {
+  min-width: 0;
+}
+
+@media (min-width: 1180px) {
+  .homeBody {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+
+  .homeRail {
+    align-self: start;
+    /* The scroll container is `.panel` itself, so this sticks to the top of the
+       page rather than to the viewport. */
+    position: sticky;
+    top: 0;
+  }
+
+  /*
+   * The rail's header is the first thing in it, so it drops the 28px the
+   * loadout header needs to clear the dashboard above it. It also stops
+   * spreading: `space-between` is right for a header the width of the page and
+   * wrong for one 340px wide, where it just flings "Ranking" at the far edge.
+   * Stacked, it reads like the "Welcome / DevMage" pair at the top.
+   */
+  .homeRail .panelHeader {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0;
+    margin-bottom: 12px;
+  }
 }
 
 .panelHeader {
@@ -175,14 +243,18 @@
   background: linear-gradient(180deg, #e0a45a, #b87333);
   border: 0;
   border-radius: 10px;
-  box-shadow: 0 5px 0 #6a4018, 0 12px 24px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    0 5px 0 #6a4018,
+    0 12px 24px rgba(0, 0, 0, 0.35);
   color: #17120c;
   cursor: pointer;
   font: inherit;
   font-size: 15px;
   font-weight: 700;
   padding: 12px 20px;
-  transition: transform 120ms ease, filter 120ms ease;
+  transition:
+    transform 120ms ease,
+    filter 120ms ease;
 }
 
 .btn:hover {
@@ -192,7 +264,9 @@
 
 .btn:active {
   transform: translateY(3px);
-  box-shadow: 0 2px 0 #6a4018, 0 6px 14px rgba(0, 0, 0, 0.3);
+  box-shadow:
+    0 2px 0 #6a4018,
+    0 6px 14px rgba(0, 0, 0, 0.3);
 }
 
 .btn:focus-visible {
@@ -212,7 +286,9 @@
 
 .btnTeal {
   background: linear-gradient(180deg, #5eead4, #2a9f92);
-  box-shadow: 0 5px 0 #17665e, 0 12px 24px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    0 5px 0 #17665e,
+    0 12px 24px rgba(0, 0, 0, 0.35);
   color: #061412;
 }
 
@@ -392,7 +468,10 @@
   cursor: pointer;
   padding: 16px;
   text-align: left;
-  transition: border-color 140ms ease, transform 140ms ease, background 140ms ease;
+  transition:
+    border-color 140ms ease,
+    transform 140ms ease,
+    background 140ms ease;
 }
 
 .actionCard:hover {
@@ -440,7 +519,9 @@
   grid-template-columns: 1fr auto auto;
   padding: 12px 14px;
   text-align: left;
-  transition: border-color 120ms ease, background 120ms ease;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
 }
 
 .roomRow:hover {

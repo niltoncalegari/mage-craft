@@ -73,7 +73,7 @@ export function HomeScreen(props: {
   const squad = (playedSquad.length ? playedSquad : defaultSquad()).map((id) => rosterFor(id));
 
   return (
-    <div class={`${styles.panel} ${styles.panelWide}`}>
+    <div class={`${styles.panel} ${styles.panelWide} ${styles.homeWide}`} data-testid="home-panel">
       <div class={styles.panelHeader}>
         <div>
           <p class={styles.tag}>Welcome</p>
@@ -117,7 +117,11 @@ export function HomeScreen(props: {
                 <span
                   key={`${entry.id}-${i}`}
                   class={styles.squadIcon}
-                  style={{ '--element-color': toCssColor(getElement(entry.element).color) } as JSX.CSSProperties}
+                  style={
+                    {
+                      '--element-color': toCssColor(getElement(entry.element).color),
+                    } as JSX.CSSProperties
+                  }
                   title={`${entry.name} · ${getElement(entry.element).name} · ${entry.role}`}
                 >
                   {entry.name[0]}
@@ -129,44 +133,65 @@ export function HomeScreen(props: {
 
         <div>
           <div class={styles.actionGrid}>
-            <button type="button" class={`${styles.actionCard} ${styles.actionCardPrimary}`} onClick={props.onFindMatch}>
+            <button
+              type="button"
+              class={`${styles.actionCard} ${styles.actionCardPrimary}`}
+              onClick={props.onFindMatch}
+            >
               <h3>Find Match</h3>
               <p>
-                Queue for a 1v1 siege. Paired by arrival — no code, no ready-up. If nobody is searching, an AI commander
-                takes the seat so you still play.
+                Queue for a 1v1 siege. Paired by arrival — no code, no ready-up. If nobody is
+                searching, an AI commander takes the seat so you still play.
               </p>
             </button>
             <button type="button" class={styles.actionCard} onClick={props.onPractice}>
               <h3>Practice</h3>
-              <p>The same siege against an AI commander, run locally. No server, no queue, no ranking.</p>
+              <p>
+                The same siege against an AI commander, run locally. No server, no queue, no
+                ranking.
+              </p>
             </button>
           </div>
         </div>
       </div>
 
-      <div class={styles.panelHeader} style={{ marginTop: 28 }}>
-        <p class={styles.tag}>Loadout</p>
-      </div>
-      <div class={styles.tabs}>
-        {LOADOUT_TABS.map(([id, label]) => (
-          <button
-            type="button"
-            key={id}
-            class={loadoutTab === id ? `${styles.tab} ${styles.tabActive}` : styles.tab}
-            onClick={() => setLoadoutTab(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {loadoutTab === 'squad' ? <SquadBuilder onSaved={pushLoadout} /> : null}
-      {loadoutTab === 'history' ? <HistoryPanel user={props.user} /> : null}
+      <div class={styles.homeBody}>
+        <div class={styles.homeMain}>
+          <div class={styles.panelHeader} style={{ marginTop: 28 }}>
+            <p class={styles.tag}>Loadout</p>
+          </div>
+          <div class={styles.tabs}>
+            {LOADOUT_TABS.map(([id, label]) => (
+              <button
+                type="button"
+                key={id}
+                class={loadoutTab === id ? `${styles.tab} ${styles.tabActive}` : styles.tab}
+                onClick={() => setLoadoutTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div data-testid="home-loadout">
+            {loadoutTab === 'squad' ? <SquadBuilder onSaved={pushLoadout} /> : null}
+            {loadoutTab === 'history' ? <HistoryPanel user={props.user} /> : null}
+          </div>
+        </div>
 
-      <div class={styles.panelHeader} style={{ marginTop: 28 }}>
-        <p class={styles.tag}>Global</p>
-        <h3 class={styles.panelTitle}>Ranking</h3>
+        {/*
+          Last in the DOM, so a narrow window still reads dashboard → loadout →
+          ranking down one column. On a desktop the grid lifts it into a rail
+          beside the builder instead, which is the whole difference between a
+          page and a phone screen scrolled sideways onto a monitor.
+        */}
+        <aside class={styles.homeRail} data-testid="home-ranking">
+          <div class={styles.panelHeader}>
+            <p class={styles.tag}>Global</p>
+            <h3 class={styles.panelTitle}>Ranking</h3>
+          </div>
+          <RankingPanel />
+        </aside>
       </div>
-      <RankingPanel />
     </div>
   );
 }

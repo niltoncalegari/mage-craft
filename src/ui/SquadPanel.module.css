@@ -1,10 +1,14 @@
 /*
- * Docked squad dashboards, one per side, sitting below MatchHUD's `.top` bar.
+ * The two squad dashboards, in their two layouts.
  *
- * Glass rather than an opaque card, and that is a gameplay decision: these two
- * panels cover the lanes the Towers stand in, so a dashboard you cannot see past
- * is one you keep collapsed. The tokens live in src/style.css, shared with
- * MatchHUD, so the whole HUD stays one material.
+ * Docked (below) is the desktop one: a panel per side, under MatchHUD's `.top`
+ * bar. Glass rather than an opaque card, and that is a gameplay decision —
+ * these panels cover the lanes the Towers stand in, so a dashboard you cannot
+ * see past is one you keep collapsed. The tokens live in src/style.css, shared
+ * with MatchHUD, so the whole HUD stays one material.
+ *
+ * On a phone the same two panels become one strip along the bottom edge; see
+ * the phone block at the end of this file for why glass was not enough there.
  */
 
 .panel {
@@ -23,16 +27,16 @@
   padding: 9px;
   position: absolute;
   text-shadow: var(--glass-halo);
-  top: 92px;
+  top: calc(92px + var(--hud-safe-top));
   width: 210px;
 }
 
 .left {
-  left: 12px;
+  left: calc(12px + var(--hud-safe-left));
 }
 
 .right {
-  right: 12px;
+  right: calc(12px + var(--hud-safe-right));
 }
 
 /* The header stays readable when the body is folded away — that is the point. */
@@ -113,7 +117,9 @@
   padding: 5px 7px;
   pointer-events: auto;
   text-align: left;
-  transition: background-color 120ms linear, border-color 120ms linear;
+  transition:
+    background-color 120ms linear,
+    border-color 120ms linear;
   width: 100%;
 }
 
@@ -124,7 +130,9 @@
 .rowActive {
   background: rgba(255, 226, 106, 0.42);
   border-color: rgba(214, 168, 24, 0.9);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 0 0 1px rgba(214, 168, 24, 0.35);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 0 0 1px rgba(214, 168, 24, 0.35);
 }
 
 /* Down but not out: squads are permanent, so a dead mage keeps its row. */
@@ -276,40 +284,173 @@
   background: rgba(210, 216, 226, 0.95);
 }
 
-@media (max-width: 620px) {
-  .panel {
-    gap: 4px;
-    padding: 6px;
-    top: 78px;
-    width: 150px;
-  }
-
-  .role,
-  .healthText {
-    display: none;
-  }
-}
-
 /*
- * A landscape phone is short (~380-430px tall), and this panel stacks up to
- * four mage rows below a header — tall enough to run into the card bar at
- * the bottom of the screen if left alone. Pulls the panel closer to the top
- * edge and caps its height with a scroll as a hard backstop: a squad row
- * that needs a scroll to reach is still better than one pushed off-screen
- * entirely.
+ * ---- phone: the dashboards come off the lanes ----------------------------
+ *
+ * Gate explained in src/style.css, where `--hud-strip-h` and the safe-area
+ * tokens are declared.
+ *
+ * Docked, these panels are unusable on a phone held landscape: 210px each is
+ * 49% of an 852px viewport, and the two halves they cover are exactly the two
+ * lanes the Towers stand in. Glass was supposed to make that survivable and
+ * does not — what reads through a 20px blur is colour, not a Tower's health.
+ *
+ * So on a phone they stop being side panels. Both fold down into one strip
+ * along the bottom edge — the edge this HUD has had spare since the card bar
+ * and the mana meter were buried in v1.3 — split down the middle so each
+ * commander still reads their own squad on their own half of the board. Height
+ * is the scarce dimension here (a landscape phone is ~390px tall) and width is
+ * the abundant one, which is why the strip is a row of four short chips and
+ * not anything taller.
+ *
+ * Collapsing still works and still hides the rows, but it no longer saves the
+ * board any room, because the strip was never on the board. It is a quiet
+ * button now, not a way out of an unreadable panel.
  */
-@media (max-height: 480px) {
+@media (pointer: coarse) and (max-width: 960px), (max-height: 480px), (max-width: 620px) {
   .panel {
-    top: 56px;
-    max-height: calc(100vh - 120px);
+    bottom: calc(var(--hud-edge) + var(--hud-safe-bottom));
+    flex-direction: row;
+    gap: 5px;
+    height: var(--hud-strip-h);
+    padding: 5px;
+    top: auto;
+    width: auto;
+  }
+
+  .left {
+    left: calc(var(--hud-edge) + var(--hud-safe-left));
+    right: calc(50% + 3px);
+  }
+
+  /* Row-reverse, so each commander's name sits on the outer end of the strip
+     and their four mages run in towards the middle — the same outward-in
+     reading the docked panels had. */
+  .right {
+    flex-direction: row-reverse;
+    left: calc(50% + 3px);
+    right: calc(var(--hud-edge) + var(--hud-safe-right));
+  }
+
+  .header {
+    flex: 0 0 auto;
+    width: 74px;
+  }
+
+  .toggle {
+    align-content: center;
+    flex-wrap: wrap;
+    gap: 1px 4px;
+    height: 100%;
+    /* Apple HIG's floor for a fingertip; the strip is sized so this fits. */
+    min-height: 44px;
+  }
+
+  .right .toggle {
+    justify-content: flex-end;
+  }
+
+  .headerLabel {
+    /* Its own line, so the kill tally beside it never clips the nick. */
+    flex: 1 0 100%;
+    font-size: 10px;
+  }
+
+  .right .headerLabel {
+    text-align: right;
+  }
+
+  .headerKills {
+    font-size: 9px;
+    padding: 1px 6px;
   }
 
   .body {
-    gap: 3px;
-    overflow-y: auto;
+    flex: 1 1 auto;
+    flex-direction: row;
+    gap: 4px;
+    min-width: 0;
   }
 
+  /*
+   * A chip is three lines: the name, the health bar, the kit's charges. Grid
+   * rather than the column flex the docked row uses, so the health readout —
+   * a later sibling than the bar, and below it when docked — can be dropped
+   * into the *same* cell as the bar and ride on top of it.
+   *
+   * That is the whole reason a name fits here. A chip is about 80px wide on an
+   * 852px viewport, and "Stone Golem 242/280" on one line left roughly four
+   * characters for the name. On the bar, the number costs no width at all, and
+   * it is the same treatment MatchHUD gives the Core meter.
+   */
   .row {
-    padding: 3px 6px;
+    align-content: center;
+    display: grid;
+    flex: 1 1 0;
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 44px;
+    min-width: 0;
+    padding: 4px 6px;
+    row-gap: 3px;
+  }
+
+  /*
+   * Every one of these names its column as well as its row, and that is not
+   * redundant: auto-placement refuses to put two items in one cell, so a
+   * `.rowBottom` with only a row would be pushed into an implicit second
+   * column — which is exactly what happened, and it left the name 19px wide.
+   */
+  .rowTop {
+    grid-area: 1 / 1;
+    min-width: 0;
+  }
+
+  .healthMeter {
+    grid-area: 2 / 1;
+    /* Tall enough to carry the readout, which is what the docked layout uses
+       a fourth line for. */
+    height: 12px;
+  }
+
+  .rowBottom {
+    grid-area: 2 / 1;
+    justify-content: center;
+    min-height: 0;
+    /* Stacked on the meter, so it must not eat the row's own tap. */
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .charges {
+    grid-area: 3 / 1;
+  }
+
+  /*
+   * Cut for room, and none of the three is actually lost: the role was picked
+   * in the builder and is on the squad screen, the kill tally is on the header
+   * of this very strip, and every buff already draws its own ring on the
+   * ground under the mage (PlayerRenderer) — which is where someone playing on
+   * a phone is looking anyway.
+   */
+  .role,
+  .kd,
+  .chip {
+    display: none;
+  }
+
+  .name {
+    font-size: 11px;
+  }
+
+  /* On the recessed track now, not on the pane, so it carries its own shadow
+     — same reason `.coreText` does in MatchHUD.module.css. */
+  .healthText,
+  .respawn {
+    color: #f4f9ff;
+    font-size: 9px;
+    font-weight: 900;
+    line-height: 12px;
+    margin-right: 0;
+    text-shadow: 0 1px 2px rgba(9, 20, 34, 0.8);
   }
 }
